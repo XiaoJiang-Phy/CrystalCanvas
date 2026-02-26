@@ -79,3 +79,6 @@ Thumbs.db
 # ----- 日志和临时文件 -----
 *.log
 /tmp/
+
+# ----- AI Agent Rules and Docs -----
+.agents/
