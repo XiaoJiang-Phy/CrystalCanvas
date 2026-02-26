@@ -1,10 +1,18 @@
 [package]
-name = "src-tauri"
+name = "crystal-canvas"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-cxx = "1.0.194"
-serde = { version = "1.0.228", features = ["derive"] }
+cxx = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 tauri = "2.0"
+
+[build-dependencies]
+cxx-build = "1.0"
 tauri-build = "2.0"
+
+[[bin]]
+name = "parse_cif"
+path = "bin/parse_cif.rs"

@@ -1,0 +1,21 @@
+{
+    "$schema": "https://raw.githubusercontent.com/nicknisi/dotfiles/refs/heads/main/config/tauri.conf.json",
+    "productName": "CrystalCanvas",
+    "version": "0.1.0",
+    "identifier": "com.crystalcanvas.app",
+    "build": {
+        "frontendDist": "../dist",
+        "devUrl": "http://localhost:5173",
+        "beforeDevCommand": "",
+        "beforeBuildCommand": ""
+    },
+    "app": {
+        "windows": [
+            {
+                "title": "CrystalCanvas",
+                "width": 1280,
+                "height": 800
+            }
+        ]
+    }
+}
