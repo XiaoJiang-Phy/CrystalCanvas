@@ -1,0 +1,10 @@
+[package]
+name = "src-tauri"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cxx = "1.0.194"
+serde = { version = "1.0.228", features = ["derive"] }
+tauri = "2.0"
+tauri-build = "2.0"

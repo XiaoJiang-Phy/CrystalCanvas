@@ -1,0 +1,9 @@
+[submodule "cpp/third_party/spglib"]
+	path = cpp/third_party/spglib
+	url = https://github.com/spglib/spglib.git
+[submodule "cpp/third_party/gemmi"]
+	path = cpp/third_party/gemmi
+	url = https://github.com/project-gemmi/gemmi.git
+[submodule "cpp/third_party/eigen"]
+	path = cpp/third_party/eigen
+	url = https://gitlab.com/libeigen/eigen.git

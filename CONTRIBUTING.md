@@ -17,7 +17,7 @@ CrystalCanvas is a cross-language project (Rust + C++ + TypeScript). We recommen
 1. Fork the repository on GitHub.
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/your-username/CrystalCanvas.git
+   git clone https://github.com/XiaoJiang-Phy/CrystalCanvas.git
    cd CrystalCanvas
    ```
 
