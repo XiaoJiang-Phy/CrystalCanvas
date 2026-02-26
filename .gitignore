@@ -1,0 +1,81 @@
+# ===========================
+# CrystalCanvas .gitignore
+# ===========================
+
+# ----- 项目内部文档（不上传 GitHub）-----
+# 路线图、技术设计文档、项目概述、环境配置
+roadmap.md
+Overview.md
+docs/
+.env
+.env.*
+
+# ----- Rust / Cargo -----
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# ----- C++ 构建产物 -----
+/build/
+/cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
+*.obj
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# ----- Tauri -----
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/WixTools/
+/src-tauri/Frameworks/
+
+# ----- Node / React -----
+node_modules/
+/dist/
+/out/
+*.tsbuildinfo
+.next/
+
+# ----- 本地环境配置（安装在项目内）-----
+# Rust toolchain (rustup)
+/.rustup/
+/.cargo/
+
+# Node.js (nvm / volta / fnm)
+/.node/
+/.nvm/
+/.volta/
+
+# Python (venv, 若有脚本工具)
+/.venv/
+__pycache__/
+*.pyc
+
+# ----- IDE / 编辑器 -----
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ----- 数据文件 -----
+*.h5
+*.hdf5
+*.cif.bak
+*.xyz.bak
+
+# ----- 日志和临时文件 -----
+*.log
+/tmp/
