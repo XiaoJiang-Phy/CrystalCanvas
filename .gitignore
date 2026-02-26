@@ -2,8 +2,8 @@
 # CrystalCanvas .gitignore
 # ===========================
 
-# ----- 项目内部文档（不上传 GitHub）-----
-# 路线图、技术设计文档、项目概述、环境配置
+# ----- Internal project docs (not for GitHub) -----
+# Roadmap, design docs, overview, and env config
 roadmap.md
 Overview.md
 docs/
@@ -15,7 +15,7 @@ docs/
 **/*.rs.bk
 Cargo.lock
 
-# ----- C++ 构建产物 -----
+# ----- C++ Build Artifacts -----
 /build/
 /cmake-build-*/
 *.o
@@ -44,7 +44,7 @@ node_modules/
 *.tsbuildinfo
 .next/
 
-# ----- 本地环境配置（安装在项目内）-----
+# ----- Local Environment Configuration (in-project) -----
 # Rust toolchain (rustup)
 /.rustup/
 /.cargo/
@@ -54,12 +54,12 @@ node_modules/
 /.nvm/
 /.volta/
 
-# Python (venv, 若有脚本工具)
+# Python (venv, for script tools)
 /.venv/
 __pycache__/
 *.pyc
 
-# ----- IDE / 编辑器 -----
+# ----- IDE / Editors -----
 .vscode/
 !.vscode/settings.json
 !.vscode/extensions.json
@@ -70,13 +70,13 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# ----- 数据文件 -----
+# ----- Data Files -----
 *.h5
 *.hdf5
 *.cif.bak
 *.xyz.bak
 
-# ----- 日志和临时文件 -----
+# ----- Logs and Temp Files -----
 *.log
 /tmp/
 
