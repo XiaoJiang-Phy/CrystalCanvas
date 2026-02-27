@@ -33,3 +33,7 @@ harness = false
 [[bin]]
 name = "parse_cif"
 path = "bin/parse_cif.rs"
+
+[[bin]]
+name = "render_demo"
+path = "bin/render_demo.rs"
