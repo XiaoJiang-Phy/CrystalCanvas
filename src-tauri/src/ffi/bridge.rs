@@ -1,7 +1,15 @@
-//! CIF file parsing FFI bridge — cxx bindings between Rust and C++ Gemmi wrapper
+//! Rust ↔ C++ FFI bridge — cxx bindings for CIF parsing and coordinate transforms
 
 #[cxx::bridge]
 pub mod ffi {
+    /// FFI-safe 3D coordinate (f32) for GPU-oriented data transfer
+    #[derive(Clone, Debug, PartialEq)]
+    struct FfiVec3f {
+        x: f32,
+        y: f32,
+        z: f32,
+    }
+
     /// FFI-safe atom site data from C++ parser
     struct FfiAtomSite {
         label: String,
@@ -36,5 +44,10 @@ pub mod ffi {
         /// Parse a CIF file and return crystal data.
         /// Returns Err if the file cannot be read or parsed.
         fn parse_cif_file(path: &str) -> Result<FfiCrystalData>;
+
+        /// Translate all positions by a uniform offset.
+        /// Each coordinate component (x, y, z) is shifted by `offset`.
+        /// Returns a new Vec with translated positions.
+        fn translate_positions(positions: &Vec<FfiVec3f>, offset: f32) -> Vec<FfiVec3f>;
     }
 }

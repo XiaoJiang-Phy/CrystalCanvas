@@ -60,3 +60,22 @@ FfiCrystalData parse_cif_file(rust::Str path) {
     throw std::runtime_error(std::string("CIF parse error: ") + e.what());
   }
 }
+
+rust::Vec<FfiVec3f> translate_positions(
+    rust::Vec<FfiVec3f> const& positions, float offset) {
+  try {
+    rust::Vec<FfiVec3f> result;
+    result.reserve(positions.size());
+    for (const auto& pos : positions) {
+      FfiVec3f translated;
+      translated.x = pos.x + offset;
+      translated.y = pos.y + offset;
+      translated.z = pos.z + offset;
+      result.push_back(std::move(translated));
+    }
+    return result;
+  } catch (const std::exception &e) {
+    throw std::runtime_error(
+        std::string("translate_positions error: ") + e.what());
+  }
+}

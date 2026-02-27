@@ -1,68 +1,75 @@
-//! [Node 1.1] 跨语言内存边界与基础传输测试 (Rust ↔ C++)
+//! [Node 1.1] FFI round-trip test: Rust ↔ C++ coordinate translation via translate_positions
 //!
-//! 验收标准:
-//! - 1,000 原子坐标 (f32×3) Rust→C++→Rust 往返延迟 < 0.5ms
-//! - ASan 内存泄漏检测通过
+//! Acceptance criteria:
+//! - 1,000 atom coordinates (f32×3) Rust→C++→Rust round-trip latency < 0.5ms
+//! - ASan memory leak detection passes
 //!
-//! 当前状态: #[ignore] — 等待 `translate_positions` FFI 函数实现
+//! Status: ACTIVE — translate_positions FFI implemented in M2
 
-// TODO: uncomment when FFI translate_positions is implemented
-// use crystal_canvas::ffi;
+use crystal_canvas::ffi;
+
+/// Helper: create FfiVec3f from components
+fn vec3f(x: f32, y: f32, z: f32) -> ffi::FfiVec3f {
+    ffi::FfiVec3f { x, y, z }
+}
 
 // ===========================================================================
-// 正确性测试
+// Correctness tests
 // ===========================================================================
 
-/// 1,000 atoms coordinate round-trip: Rust → C++ (translate +1.0) → Rust
+/// 1,000 atoms coordinate round-trip: Rust → C++ (translate +1.0) → Rust.
 /// Verifies every coordinate is correctly shifted.
 #[test]
-#[ignore = "Awaiting translate_positions FFI implementation"]
 fn test_roundtrip_1000_atoms_correctness() {
-    // Generate 1,000 atom positions with diverse values
     let n_atoms = 1000;
-    let input: Vec<[f32; 3]> = (0..n_atoms)
+    let input: Vec<ffi::FfiVec3f> = (0..n_atoms)
         .map(|i| {
             let f = i as f32;
-            [f * 0.1, f * 0.2 - 50.0, f * 0.3 + 100.0]
+            vec3f(f * 0.1, f * 0.2 - 50.0, f * 0.3 + 100.0)
         })
         .collect();
 
-    // TODO: Call FFI function
-    // let output = ffi::translate_positions(&input, 1.0);
-    let output = input.clone(); // placeholder
+    let output = ffi::translate_positions(&input, 1.0);
 
     assert_eq!(output.len(), n_atoms, "Output atom count mismatch");
+    // Use 1e-5 tolerance: f32 has ~7 significant digits, so at magnitude ~100+
+    // the ULP can reach ~1.5e-5. This tolerance is still strict but realistic.
+    let tol = 1e-5_f32;
     for (i, (inp, out)) in input.iter().zip(output.iter()).enumerate() {
-        let dx = (out[0] - inp[0] - 1.0).abs();
-        let dy = (out[1] - inp[1] - 1.0).abs();
-        let dz = (out[2] - inp[2] - 1.0).abs();
+        let ex = inp.x + 1.0;
+        let ey = inp.y + 1.0;
+        let ez = inp.z + 1.0;
+        // Relative tolerance: allow up to ~2 ULP of f32 at the expected magnitude
+        let tol_x = ex.abs().max(1.0) * 1e-6;
+        let tol_y = ey.abs().max(1.0) * 1e-6;
+        let tol_z = ez.abs().max(1.0) * 1e-6;
         assert!(
-            dx < f32::EPSILON && dy < f32::EPSILON && dz < f32::EPSILON,
-            "Atom {i}: expected [{}, {}, {}], got [{}, {}, {}]",
-            inp[0] + 1.0, inp[1] + 1.0, inp[2] + 1.0,
-            out[0], out[1], out[2]
+            (out.x - ex).abs() < tol_x
+            && (out.y - ey).abs() < tol_y
+            && (out.z - ez).abs() < tol_z,
+            "Atom {i}: expected [{ex}, {ey}, {ez}], got [{}, {}, {}]",
+            out.x, out.y, out.z
         );
     }
 }
 
 // ===========================================================================
-// 性能测试
+// Performance tests
 // ===========================================================================
 
 /// Round-trip latency for 1,000 atoms must be < 0.5ms (500 µs).
 #[test]
-#[ignore = "Awaiting translate_positions FFI implementation"]
 fn test_roundtrip_1000_atoms_latency() {
     let n_atoms = 1000;
-    let input: Vec<[f32; 3]> = (0..n_atoms)
-        .map(|i| [i as f32, 0.0, 0.0])
+    let input: Vec<ffi::FfiVec3f> = (0..n_atoms)
+        .map(|i| vec3f(i as f32, 0.0, 0.0))
         .collect();
 
     // Warm up
-    // let _ = ffi::translate_positions(&input, 0.0);
+    let _ = ffi::translate_positions(&input, 0.0);
 
     let start = std::time::Instant::now();
-    // let _output = ffi::translate_positions(&input, 1.0);
+    let _output = ffi::translate_positions(&input, 1.0);
     let elapsed = start.elapsed();
 
     assert!(
@@ -73,37 +80,33 @@ fn test_roundtrip_1000_atoms_latency() {
 }
 
 // ===========================================================================
-// 边界条件测试
+// Boundary condition tests
 // ===========================================================================
 
 /// Empty input should return empty output without error.
 #[test]
-#[ignore = "Awaiting translate_positions FFI implementation"]
 fn test_roundtrip_empty_array() {
-    let input: Vec<[f32; 3]> = vec![];
-    // let output = ffi::translate_positions(&input, 1.0);
-    let output: Vec<[f32; 3]> = vec![]; // placeholder
+    let input: Vec<ffi::FfiVec3f> = vec![];
+    let output = ffi::translate_positions(&input, 1.0);
     assert_eq!(output.len(), 0);
 }
 
 /// Single atom round-trip.
 #[test]
-#[ignore = "Awaiting translate_positions FFI implementation"]
 fn test_roundtrip_single_atom() {
-    let input = vec![[1.0f32, 2.0, 3.0]];
-    // let output = ffi::translate_positions(&input, 5.0);
-    let output = vec![[6.0f32, 7.0, 8.0]]; // placeholder
-    assert!((output[0][0] - 6.0).abs() < f32::EPSILON);
-    assert!((output[0][1] - 7.0).abs() < f32::EPSILON);
-    assert!((output[0][2] - 8.0).abs() < f32::EPSILON);
+    let input = vec![vec3f(1.0, 2.0, 3.0)];
+    let output = ffi::translate_positions(&input, 5.0);
+    assert!((output[0].x - 6.0).abs() < f32::EPSILON);
+    assert!((output[0].y - 7.0).abs() < f32::EPSILON);
+    assert!((output[0].z - 8.0).abs() < f32::EPSILON);
 }
 
 /// Negative translation values should work correctly.
 #[test]
-#[ignore = "Awaiting translate_positions FFI implementation"]
 fn test_roundtrip_negative_translation() {
-    let input = vec![[10.0f32, 20.0, 30.0]];
-    // let output = ffi::translate_positions(&input, -5.0);
-    let output = vec![[5.0f32, 15.0, 25.0]]; // placeholder
-    assert!((output[0][0] - 5.0).abs() < f32::EPSILON);
+    let input = vec![vec3f(10.0, 20.0, 30.0)];
+    let output = ffi::translate_positions(&input, -5.0);
+    assert!((output[0].x - 5.0).abs() < f32::EPSILON);
+    assert!((output[0].y - 15.0).abs() < f32::EPSILON);
+    assert!((output[0].z - 25.0).abs() < f32::EPSILON);
 }

@@ -10,3 +10,9 @@
 // Parse a CIF file at the given path and return crystal data.
 // Throws std::runtime_error on failure (converted to rust::Error by cxx).
 FfiCrystalData parse_cif_file(rust::Str path);
+
+// Translate all atom positions by a uniform offset.
+// Each coordinate component (x, y, z) is shifted by `offset`.
+// Returns a new Vec with translated positions.
+rust::Vec<FfiVec3f> translate_positions(
+    rust::Vec<FfiVec3f> const& positions, float offset);
