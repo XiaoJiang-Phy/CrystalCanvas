@@ -46,8 +46,8 @@ node_modules/
 
 # ----- Local Environment Configuration (in-project) -----
 # Rust toolchain (rustup)
-/.rustup/
-/.cargo/
+.rustup/
+.cargo/
 
 # Node.js (nvm / volta / fnm)
 /.node/
