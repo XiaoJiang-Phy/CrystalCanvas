@@ -2,3 +2,4 @@
 
 pub mod ffi;
 pub mod crystal_state;
+pub mod renderer;
