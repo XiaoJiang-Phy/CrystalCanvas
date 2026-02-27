@@ -42,30 +42,43 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### Build & Run
 
-- **macOS** (primary): Xcode Command Line Tools
-  ```bash
-  xcode-select --install
-  ```
-- **Ubuntu** (secondary): GCC 12+, CMake 3.20+, libgtk-3-dev, libwebkit2gtk-4.1-dev
+CrystalCanvas is currently in active development.
 
-### Build
+#### Run Rendering Demo (Standalone)
+We have just completed the **M3: High-Performance Rendering Engine** phase. You can run the standalone GPU-accelerated demo now:
 
 ```bash
-# Clone the repository
-git clone https://github.com/XiaoJiang-Phy/CrystalCanvas.git
-cd CrystalCanvas
+# 1. Setup local environment (if not already done)
+# source dev_env.sh (if you use our local toolchain setup)
 
-# Build the project (Rust + C++ compiled together via cargo)
-cargo build
+# 2. Run the demo
+cd src-tauri
+RUST_LOG=info cargo run --bin render_demo
+```
+*Controls: Left-click drag to rotate, scroll to zoom.*
 
-# Run in development mode (with Tauri)
+#### Full App Development (M4+)
+```bash
+# Install Node dependencies
 npm install
+
+# Run in development mode
 npm run tauri dev
 ```
 
 > **Note**: The C++ kernel (Spglib, Gemmi) is compiled automatically via `build.rs` — no manual CMake step required.
+
+---
+
+## 🗺️ Roadmap & Progress
+
+- [x] **M1-M2: Infrastructure & Data Model** — Rust/C++ bridge, CIF parsing.
+- [x] **M3: High-Performance Rendering (wgpu)** — Impostor spheres, ray-picking, orbital camera.
+- [ ] **M4: UI Integration (Tauri + React)** — (In Progress) Hybrid window, sidebars, file loading.
+- [ ] **M5-M6: Geometry Algorithms** — Slab cleaving, supercells.
+- [ ] **M9+: AI Agent Integration** — Natural language modeling commands.
 
 ---
 
