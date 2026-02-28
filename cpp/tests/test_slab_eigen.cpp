@@ -47,6 +47,27 @@ SlabInput make_sc_cell() {
     return cell;
 }
 
+/// Create Face-Centered Cubic cell
+SlabInput make_fcc_cell() {
+    SlabInput cell;
+    double a = 4.0;  // Å
+
+    cell.lattice[0][0] = a;  cell.lattice[0][1] = 0;  cell.lattice[0][2] = 0;
+    cell.lattice[1][0] = 0;  cell.lattice[1][1] = a;  cell.lattice[1][2] = 0;
+    cell.lattice[2][0] = 0;  cell.lattice[2][1] = 0;  cell.lattice[2][2] = a;
+
+    cell.positions = {
+        {0.0, 0.0, 0.0},
+        {0.5, 0.5, 0.0},
+        {0.5, 0.0, 0.5},
+        {0.0, 0.5, 0.5},
+    };
+
+    cell.types = {1, 1, 1, 1};
+    cell.n_atoms = 4;
+    return cell;
+}
+
 // Wrapper to call build_slab with simplified interface
 SlabResultTest run_slab(const SlabInput& input, const int32_t miller[3], int layers, double vacuum_A) {
     int n_new = get_slab_size(
@@ -125,6 +146,38 @@ TEST(SlabTest, SC_100_3Layers) {
         result.lattice[2][2]*result.lattice[2][2]
     );
     EXPECT_NEAR(c_len, 22.0, 1e-5);
+    
+    // Check atoms are within boundaries
+    for (int i = 0; i < result.n_atoms; ++i) {
+        for (int dim=0; dim<3; ++dim) {
+            EXPECT_GE(result.positions[i][dim], 0.0);
+            EXPECT_LT(result.positions[i][dim], 1.0);
+        }
+    }
+}
+
+/// FCC (1 0 0) surface, 3 layers, 15A vacuum
+TEST(SlabTest, FCC_100_3Layers) {
+    auto input = make_fcc_cell();
+    int32_t miller[3] = {1, 0, 0};
+    int layers = 3;
+    double vacuum_A = 15.0;
+    
+    auto result = run_slab(input, miller, layers, vacuum_A);
+    
+    // FCC conventional cell has 4 atoms. A 3-layer (100) slab of the conventional cell 
+    // means repeating 3 unit cells along the new c-axis, giving 12 atoms.
+    EXPECT_EQ(result.n_atoms, 12) << "(100) surface of FCC with 3 layers should have 12 atoms";
+    
+    // Check vacuum padding on c-axis
+    double c_len = std::sqrt(
+        result.lattice[2][0]*result.lattice[2][0] + 
+        result.lattice[2][1]*result.lattice[2][1] + 
+        result.lattice[2][2]*result.lattice[2][2]
+    );
+    // Original a=4.0. c-axis before vacuum = 3 * 4.0 = 12.0.
+    // After vacuum = 12.0 + 15.0 = 27.0
+    EXPECT_NEAR(c_len, 27.0, 1e-5);
     
     // Check atoms are within boundaries
     for (int i = 0; i < result.n_atoms; ++i) {

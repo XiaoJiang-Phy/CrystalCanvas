@@ -39,14 +39,18 @@ pub fn set_camera_projection(
 pub fn load_cif_file(
     path: String,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<(), String> {
     log::info!("load_cif_file: {}", path);
     // 1. Parse CIF via C++ FFI
     let out = crate::ffi::bridge::ffi::parse_cif_file(&path).map_err(|e| e.to_string())?;
 
-    // 2. Build Crystal State and convert fractional to cartesian
     let mut state = crate::crystal_state::CrystalState::from_ffi(out);
     state.fractional_to_cartesian();
+
+    if let Ok(mut cs) = crystal_state.try_lock() {
+        *cs = state.clone();
+    }
 
     // 3. Build instance data for the Renderer
     let instances = crate::renderer::instance::build_instance_data(
@@ -70,3 +74,96 @@ pub fn load_cif_file(
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn add_atom(
+    element_symbol: String,
+    atomic_number: u8,
+    fract_pos: [f64; 3],
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
+    
+    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    cs.add_atom(&element_symbol, atomic_number, fract_pos);
+    
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+    );
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_atoms(&instances);
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_atoms(
+    indices: Vec<usize>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    log::info!("delete_atoms: {:?}", indices);
+    
+    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    cs.delete_atoms(&indices);
+    
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+    );
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_atoms(&instances);
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn substitute_atoms(
+    indices: Vec<usize>,
+    new_element_symbol: String,
+    new_atomic_number: u8,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    log::info!("substitute_atoms: {:?} -> {}", indices, new_element_symbol);
+    
+    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    cs.substitute_atoms(&indices, &new_element_symbol, new_atomic_number);
+    
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+    );
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_atoms(&instances);
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+pub fn preview_slab(
+    miller: [i32; 3],
+    layers: i32,
+    vacuum_a: f64,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<crate::crystal_state::CrystalState, String> {
+    log::info!("preview_slab: miller={:?} layers={} vacuum={}", miller, layers, vacuum_a);
+    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    cs.generate_slab(miller, layers, vacuum_a)
+}
+
+#[tauri::command]
+pub fn preview_supercell(
+    expansion: [i32; 9],
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<crate::crystal_state::CrystalState, String> {
+    log::info!("preview_supercell: {:?}", expansion);
+    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    cs.generate_supercell(&expansion)
+}
+

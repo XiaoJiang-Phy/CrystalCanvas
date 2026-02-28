@@ -16,6 +16,9 @@ mod ffi;
 mod renderer;
 mod commands;
 
+// Prevent macOS linker from stripping CXX exception handling symbols
+extern crate cxx;
+
 fn main() {
     env_logger::init();
 
@@ -42,13 +45,19 @@ fn main() {
 
             // Store it in Tauri managed state so commands and the event loop can access it
             app.manage(std::sync::Mutex::new(renderer));
+            app.manage(std::sync::Mutex::new(crystal_state::CrystalState::default()));
             
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::update_viewport_size,
             commands::set_camera_projection,
-            commands::load_cif_file
+            commands::load_cif_file,
+            commands::add_atom,
+            commands::delete_atoms,
+            commands::substitute_atoms,
+            commands::preview_slab,
+            commands::preview_supercell
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
