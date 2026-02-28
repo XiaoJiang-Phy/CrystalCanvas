@@ -1,14 +1,10 @@
-// [Node 3.1] Spglib 空间群推断的鲁棒性测试
+// [Node 3.1] Spglib spacegroup identification robustness test
 //
-// 验收标准:
-// - 标准金刚石晶胞 (Fd-3m, No. 227) → 正确返回 227
-// - 注入 0.001Å 随机噪音后，调整 symprec 仍返回 227
-// - 畸形输入不引发 Segfault
+// Acceptance Criteria:
+// - Standard diamond cell (Fd-3m, No. 227) → return 227 correctly
+// - After injecting 0.001Å random noise, still returns 227 with adjusted symprec
+// - Malformed input does not trigger Segfault
 //
-// 当前状态: DISABLED_ 前缀 — 等待 Spglib 集成封装完成
-//
-// 编译: cd cpp/tests && cmake -B build && cmake --build build
-// 运行: cd cpp/tests/build && ctest -R SpglibTest
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -19,7 +15,7 @@
 #include "physics_kernel.hpp"
 
 // ===========================================================================
-// Helper: 金刚石晶胞数据 (Fd-3m, No. 227)
+// Helper: Diamond cell data (Fd-3m, No. 227)
 // ===========================================================================
 
 namespace {
@@ -98,7 +94,7 @@ int get_spacegroup_test(const TestCell& cell, double symprec) {
 }  // anonymous namespace
 
 // ===========================================================================
-// 正确性测试
+// Accuracy Tests
 // ===========================================================================
 
 /// Exact diamond cell → must return space group 227 (Fd-3m)
