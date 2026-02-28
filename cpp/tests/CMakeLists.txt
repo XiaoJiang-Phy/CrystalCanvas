@@ -44,13 +44,28 @@ set(SPGLIB_INCLUDE_DIR "${THIRD_PARTY_DIR}/spglib/src")
 # ---------------------------------------------------------------------------
 # [Node 3.1] Spglib Robustness Tests
 # ---------------------------------------------------------------------------
-add_executable(test_spglib_robustness test_spglib_robustness.cpp)
-target_link_libraries(test_spglib_robustness PRIVATE GTest::gtest_main)
+add_executable(test_spglib_robustness 
+    test_spglib_robustness.cpp
+    ../src/physics_kernel.cpp
+)
 target_include_directories(test_spglib_robustness PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${SPGLIB_INCLUDE_DIR}
+    ${THIRD_PARTY_DIR}/spglib/include
 )
-# TODO: target_link_libraries(test_spglib_robustness PRIVATE spglib)
+
+# We also need to build Spglib so we can link it
+# For tests standalone CMake, we can add it as a subdirectory from here
+# Spglib's CMakeLists.txt defines the `symspg` target.
+if (NOT TARGET symspg)
+    # Enable static library for spglib to avoid rpath issues in tests
+    set(SPGLIB_SHARED_LIBS OFF CACHE BOOL "Build spglib as a static library" FORCE)
+    add_subdirectory(${THIRD_PARTY_DIR}/spglib spglib_test_build)
+endif()
+
+# Now link the targets
+target_link_libraries(test_spglib_robustness PRIVATE GTest::gtest_main Spglib_symspg)
 
 add_test(NAME SpglibTest COMMAND test_spglib_robustness)
 

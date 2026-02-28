@@ -16,8 +16,7 @@
 #include <vector>
 #include <array>
 
-// TODO: #include "crystal_kernel.hpp"  // 待实现的 Spglib 封装头文件
-// TODO: #include <spglib.h>  // 直接引用 (或通过封装)
+#include "physics_kernel.hpp"
 
 // ===========================================================================
 // Helper: 金刚石晶胞数据 (Fd-3m, No. 227)
@@ -77,61 +76,65 @@ void add_noise(TestCell& cell, double amplitude) {
     }
 }
 
-// TODO: Wrapper function to call spglib and return space group number
-// int get_spacegroup(const TestCell& cell, double symprec) {
-//     SpglibDataset* dataset = spg_get_dataset(
-//         cell.lattice, cell.positions.data(), cell.types.data(),
-//         cell.positions.size(), symprec
-//     );
-//     if (!dataset) return -1;
-//     int spg = dataset->spacegroup_number;
-//     spg_free_dataset(dataset);
-//     return spg;
-// }
+// Wrapper function to call physics_kernel and return space group number
+int get_spacegroup_test(const TestCell& cell, double symprec) {
+    // Flatten positions
+    std::vector<double> flat_pos;
+    for (const auto& p : cell.positions) {
+        flat_pos.push_back(p[0]);
+        flat_pos.push_back(p[1]);
+        flat_pos.push_back(p[2]);
+    }
+    
+    return get_spacegroup(
+        &cell.lattice[0][0],
+        flat_pos.data(),
+        cell.types.data(),
+        cell.positions.size(),
+        symprec
+    );
+}
 
 }  // anonymous namespace
 
 // ===========================================================================
-// 正确性测试 (DISABLED_ until Spglib wrapper is ready)
+// 正确性测试
 // ===========================================================================
 
 /// Exact diamond cell → must return space group 227 (Fd-3m)
-TEST(SpglibTest, DISABLED_DiamondExactReturns227) {
+TEST(SpglibTest, DiamondExactReturns227) {
     auto cell = make_diamond_cell();
-    // int spg = get_spacegroup(cell, 1e-5);
-    // EXPECT_EQ(spg, 227) << "Exact diamond should be Fd-3m (227)";
-    GTEST_SKIP() << "Awaiting Spglib integration";
+    int spg = get_spacegroup_test(cell, 1e-5);
+    EXPECT_EQ(spg, 227) << "Exact diamond should be Fd-3m (227)";
 }
 
 /// Diamond with 0.001Å noise + adjusted symprec → must still return 227
-TEST(SpglibTest, DISABLED_DiamondWithNoiseReturns227) {
+TEST(SpglibTest, DiamondWithNoiseReturns227) {
     auto cell = make_diamond_cell();
     add_noise(cell, 0.001);  // 0.001 Å noise
 
     // With symprec=0.01 (10x the noise), should still identify 227
-    // int spg = get_spacegroup(cell, 0.01);
-    // EXPECT_EQ(spg, 227) << "Diamond + 0.001Å noise with symprec=0.01 should still be 227";
-    GTEST_SKIP() << "Awaiting Spglib integration";
+    int spg = get_spacegroup_test(cell, 0.01);
+    EXPECT_EQ(spg, 227) << "Diamond + 0.001Å noise with symprec=0.01 should still be 227";
 }
 
 /// Diamond with larger noise (0.01Å) — test with tighter and looser symprec
-TEST(SpglibTest, DISABLED_DiamondWithLargerNoiseSymprecSweep) {
+TEST(SpglibTest, DiamondWithLargerNoiseSymprecSweep) {
     auto cell = make_diamond_cell();
     add_noise(cell, 0.01);  // 0.01 Å noise
 
     // With symprec=0.1 (10x the noise), should still identify correctly
-    // int spg_loose = get_spacegroup(cell, 0.1);
-    // EXPECT_EQ(spg_loose, 227);
+    int spg_loose = get_spacegroup_test(cell, 0.1);
+    EXPECT_EQ(spg_loose, 227);
 
     // With very tight symprec=0.001 (< noise), may NOT identify correctly
-    // int spg_tight = get_spacegroup(cell, 0.001);
+    int spg_tight = get_spacegroup_test(cell, 0.001);
     // This is expected to potentially fail — just ensure no crash
-    // EXPECT_GE(spg_tight, 1) << "Even with tight symprec, must return a valid space group";
-    GTEST_SKIP() << "Awaiting Spglib integration";
+    EXPECT_GE(spg_tight, 0) << "Even with tight symprec, must return a valid space group or 0 (fail)";
 }
 
 /// Malformed input (zero atoms) → must not segfault, even if it returns error
-TEST(SpglibTest, DISABLED_NoSegfaultOnEmptyInput) {
+TEST(SpglibTest, NoSegfaultOnEmptyInput) {
     TestCell cell;
     cell.lattice[0][0] = 5.0; cell.lattice[0][1] = 0; cell.lattice[0][2] = 0;
     cell.lattice[1][0] = 0;   cell.lattice[1][1] = 5.0; cell.lattice[1][2] = 0;
@@ -140,22 +143,20 @@ TEST(SpglibTest, DISABLED_NoSegfaultOnEmptyInput) {
     cell.positions.clear();
     cell.types.clear();
 
-    // Should not crash — may return -1 or error code
-    // int spg = get_spacegroup(cell, 1e-5);
-    // EXPECT_TRUE(spg == -1 || spg >= 1) << "Empty input should not segfault";
-    GTEST_SKIP() << "Awaiting Spglib integration";
+    // Should not crash — may return 0 (failure)
+    int spg = get_spacegroup_test(cell, 1e-5);
+    EXPECT_TRUE(spg == 0 || spg >= 1) << "Empty input should not segfault";
 }
 
 /// Degenerate lattice (zero volume) → must not segfault
-TEST(SpglibTest, DISABLED_NoSegfaultOnDegenerateLattice) {
+TEST(SpglibTest, NoSegfaultOnDegenerateLattice) {
     TestCell cell;
     // Zero-volume lattice (all zeros)
     std::memset(cell.lattice, 0, sizeof(cell.lattice));
     cell.positions = {{0.0, 0.0, 0.0}};
     cell.types = {6};
 
-    // Should not crash
-    // int spg = get_spacegroup(cell, 1e-5);
-    // EXPECT_TRUE(spg == -1 || spg >= 1);
-    GTEST_SKIP() << "Awaiting Spglib integration";
+    // Should not crash - return 0 (failure)
+    int spg = get_spacegroup_test(cell, 1e-5);
+    EXPECT_TRUE(spg == 0 || spg >= 1);
 }

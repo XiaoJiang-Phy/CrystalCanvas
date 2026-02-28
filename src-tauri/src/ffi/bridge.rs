@@ -42,6 +42,7 @@ pub mod ffi {
 
     unsafe extern "C++" {
         include!("crystal_parser.hpp");
+        include!("physics_kernel.hpp");
 
         /// Parse a CIF file and return crystal data.
         /// Returns Err if the file cannot be read or parsed.
@@ -51,5 +52,15 @@ pub mod ffi {
         /// Each coordinate component (x, y, z) is shifted by `offset`.
         /// Returns a new Vec with translated positions.
         fn translate_positions(positions: &Vec<FfiVec3f>, offset: f32) -> Vec<FfiVec3f>;
+
+        /// Identify the spacegroup number of a given crystal using Spglib.
+        /// Returns Spacegroup number (0 if failed)
+        fn get_spacegroup(
+            lattice: *const f64,
+            positions: *const f64,
+            types: *const i32,
+            n_atoms: usize,
+            symprec: f64
+        ) -> i32;
     }
 }
