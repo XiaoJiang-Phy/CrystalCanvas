@@ -20,6 +20,10 @@ pub struct Camera {
     pub znear: f32,
     /// Far clipping plane distance
     pub zfar: f32,
+    /// Whether to use perspective (true) or orthographic (false) projection
+    pub is_perspective: bool,
+    /// Orthographic scale factor
+    pub orthographic_scale: f32,
 }
 
 impl Camera {
@@ -34,12 +38,25 @@ impl Camera {
             aspect: 16.0 / 9.0,
             znear: 0.1,
             zfar: 200.0,
+            is_perspective: true,
+            orthographic_scale: 30.0,
         }
     }
 
     /// Update aspect ratio (called on window resize).
     pub fn set_aspect(&mut self, width: f32, height: f32) {
         self.aspect = width / height;
+    }
+
+    /// Switch to perspective rendering.
+    pub fn set_perspective(&mut self) {
+        self.is_perspective = true;
+    }
+
+    /// Switch to orthographic rendering.
+    pub fn set_orthographic(&mut self, scale: f32) {
+        self.is_perspective = false;
+        self.orthographic_scale = scale;
     }
 
     /// Build the combined view-projection matrix.
@@ -64,12 +81,25 @@ impl Camera {
 
     /// Build the projection matrix only.
     pub fn build_projection_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(
-            self.fovy_deg.to_radians(),
-            self.aspect,
-            self.znear,
-            self.zfar,
-        )
+        if self.is_perspective {
+            Mat4::perspective_rh(
+                self.fovy_deg.to_radians(),
+                self.aspect,
+                self.znear,
+                self.zfar,
+            )
+        } else {
+            let width = self.orthographic_scale * self.aspect;
+            let height = self.orthographic_scale;
+            Mat4::orthographic_rh(
+                -width / 2.0,
+                width / 2.0,
+                -height / 2.0,
+                height / 2.0,
+                self.znear,
+                self.zfar,
+            )
+        }
     }
 }
 

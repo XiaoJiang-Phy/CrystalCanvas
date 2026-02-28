@@ -78,7 +78,8 @@ impl ApplicationHandler for App {
                 .expect("Failed to create window"),
         );
 
-        let mut renderer = Renderer::new(window.clone());
+        let size = window.inner_size();
+        let mut renderer = Renderer::new(window.clone(), size.width, size.height);
 
         // Build a ~500 atom test grid (8 x 8 x 8 = 512 atoms)
         let instances = build_test_instances(8, 8, 8, 3.0);

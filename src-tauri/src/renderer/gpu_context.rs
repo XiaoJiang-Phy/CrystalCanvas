@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use wgpu;
-use winit::window::Window;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::render_config::RenderConfig;
 
@@ -22,9 +22,14 @@ impl GpuContext {
     /// Logs adapter info and device limits at startup.
     ///
     /// # Arguments
-    /// * `window` - Arc-wrapped winit window for surface creation
-    pub fn new(window: Arc<Window>) -> Self {
-        let size = window.inner_size();
+    /// * `window` - Arc-wrapped window implementing `HasWindowHandle` + `HasDisplayHandle`.
+    /// * `width` - Initial surface width.
+    /// * `height` - Initial surface height.
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32) -> Self
+    where
+        W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
+    {
+        let size = winit::dpi::PhysicalSize::new(width, height);
 
         // Create wgpu instance with primary backends (Metal / Vulkan / DX12)
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {

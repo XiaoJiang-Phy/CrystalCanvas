@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-use winit::window::Window;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
@@ -33,8 +33,11 @@ pub struct Renderer {
 impl Renderer {
     /// Create a new Renderer attached to the given window.
     /// Initializes GPU context, camera, pipeline, and an empty instance buffer.
-    pub fn new(window: Arc<Window>) -> Self {
-        let gpu = GpuContext::new(window);
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32) -> Self 
+    where
+        W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
+    {
+        let gpu = GpuContext::new(window, width, height);
 
         // Camera
         let mut camera = Camera::default_for_crystal();
