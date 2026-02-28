@@ -9,7 +9,7 @@
 )]
 
 use std::sync::Arc;
-use tauri::{Manager, WebviewWindowBuilder, WebviewUrl};
+use tauri::Manager;
 
 mod crystal_state;
 mod ffi;

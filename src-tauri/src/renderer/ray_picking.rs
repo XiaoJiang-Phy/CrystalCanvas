@@ -1,5 +1,7 @@
 //! CPU-side ray-sphere intersection for atom picking — linear scan sufficient for ≤1K atoms
 
+#![allow(dead_code)]
+
 /// A ray in 3D space, defined by origin and direction.
 #[derive(Debug, Clone)]
 pub struct Ray {

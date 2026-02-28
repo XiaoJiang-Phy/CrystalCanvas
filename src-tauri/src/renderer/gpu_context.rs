@@ -13,6 +13,7 @@ pub struct GpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
+    #[allow(dead_code)]
     pub render_config: RenderConfig,
     pub size: winit::dpi::PhysicalSize<u32>,
 }
@@ -121,6 +122,7 @@ impl GpuContext {
     }
 
     /// Get the current aspect ratio (width / height).
+    #[allow(dead_code)]
     pub fn aspect_ratio(&self) -> f32 {
         self.config.width as f32 / self.config.height as f32
     }

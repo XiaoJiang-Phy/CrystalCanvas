@@ -5,6 +5,7 @@ use crate::ffi;
 /// The central crystal structure state, holding all atom data in SoA layout.
 /// - f64 fields for physics calculations (fractional coords)
 /// - f32 fields for GPU rendering (Cartesian coords, populated on demand)
+#[allow(dead_code)]
 pub struct CrystalState {
     pub name: String,
     // Unit cell parameters (angstroms, degrees)

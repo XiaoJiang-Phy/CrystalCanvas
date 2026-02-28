@@ -63,6 +63,7 @@ impl Camera {
     /// Uses right-handed coordinate system with Y-up.
     /// wgpu uses a [0,1] depth range (unlike OpenGL's [-1,1]),
     /// so we use `perspective_rh` which handles this correctly.
+    #[allow(dead_code)]
     pub fn build_view_projection_matrix(&self) -> Mat4 {
         let view = Mat4::look_at_rh(self.eye, self.target, self.up);
         let proj = Mat4::perspective_rh(

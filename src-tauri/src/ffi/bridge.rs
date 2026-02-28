@@ -1,5 +1,7 @@
 //! Rust ↔ C++ FFI bridge — cxx bindings for CIF parsing and coordinate transforms
 
+#![allow(dead_code)]
+
 #[cxx::bridge]
 pub mod ffi {
     /// FFI-safe 3D coordinate (f32) for GPU-oriented data transfer
