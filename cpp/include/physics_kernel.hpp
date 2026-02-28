@@ -60,3 +60,42 @@ void build_supercell(
     double* out_positions,
     int* out_types
 );
+
+/// Get the number of atoms for a specific slab cleavage
+/// @param lattice Original 3x3 lattice
+/// @param miller Miller indices (h,k,l) for the cleavage plane
+/// @param layers Number of atomic layers to generate along the new c-axis
+/// @param vacuum_A Vacuum thickness in Angstroms
+/// @param n_atoms Original number of atoms
+/// @return Number of new atoms
+int get_slab_size(
+    const double* lattice,
+    const int32_t* miller,
+    int layers,
+    double vacuum_A,
+    size_t n_atoms
+);
+
+/// Build a slab by cleaving the crystal along a Miller plane.
+/// @param lattice Input 3x3 lattice (row-major [9])
+/// @param positions Input fractional positions (n_atoms x 3)
+/// @param types Input atomic types (n_atoms)
+/// @param n_atoms Number of original atoms
+/// @param miller Miller indices [h,k,l]
+/// @param layers Number of layers
+/// @param vacuum_A Vacuum padding in Angstroms
+/// @param out_lattice Output 3x3 lattice ([9])
+/// @param out_positions Output fractional positions (pre-allocated)
+/// @param out_types Output array of atomic types (pre-allocated)
+void build_slab(
+    const double* lattice,
+    const double* positions,
+    const int* types,
+    size_t n_atoms,
+    const int32_t* miller,
+    int layers,
+    double vacuum_A,
+    double* out_lattice,
+    double* out_positions,
+    int* out_types
+);

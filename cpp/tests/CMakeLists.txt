@@ -53,6 +53,7 @@ target_include_directories(test_spglib_robustness PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${SPGLIB_INCLUDE_DIR}
     ${THIRD_PARTY_DIR}/spglib/include
+    ${EIGEN_INCLUDE_DIR}
 )
 
 # We also need to build Spglib so we can link it
@@ -84,3 +85,20 @@ target_include_directories(test_supercell_eigen PRIVATE
 )
 
 add_test(NAME SupercellTest COMMAND test_supercell_eigen)
+
+# ---------------------------------------------------------------------------
+# [Node 3.3] Slab Generation Tests
+# ---------------------------------------------------------------------------
+add_executable(test_slab_eigen 
+    test_slab_eigen.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_slab_eigen PRIVATE GTest::gtest_main Spglib_symspg)
+target_include_directories(test_slab_eigen PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${EIGEN_INCLUDE_DIR}
+)
+
+add_test(NAME SlabTest COMMAND test_slab_eigen)
+

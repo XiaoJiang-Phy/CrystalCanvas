@@ -1,5 +1,6 @@
 //! Build script — compiles C++ thin wrapper with cxx_build for Rust/C++ FFI bridge
 
+fn main() {
     cxx_build::bridge("src/ffi/bridge.rs")
         .file("../cpp/src/crystal_parser.cpp")
         .file("../cpp/src/physics_kernel.cpp")
@@ -9,6 +10,7 @@
         .include("../cpp/third_party/gemmi/include")     // gemmi headers
         .include("../cpp/third_party/gemmi/third_party") // PEGTL (gemmi dependency)
         .include("../cpp/third_party/spglib/include")    // spglib headers
+        .include("../cpp/third_party/eigen")             // Eigen3 headers
         .std("c++17")
         .warnings(false) // suppress warnings from gemmi/PEGTL headers
         .compile("crystal_cpp");

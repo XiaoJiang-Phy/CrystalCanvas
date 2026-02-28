@@ -55,7 +55,7 @@ pub mod ffi {
 
         /// Identify the spacegroup number of a given crystal using Spglib.
         /// Returns Spacegroup number (0 if failed)
-        fn get_spacegroup(
+        unsafe fn get_spacegroup(
             lattice: *const f64,
             positions: *const f64,
             types: *const i32,
@@ -77,6 +77,29 @@ pub mod ffi {
             types: *const i32,
             n_atoms: usize,
             expansion: *const i32,
+            out_lattice: *mut f64,
+            out_positions: *mut f64,
+            out_types: *mut i32
+        );
+
+        /// Get slab size
+        unsafe fn get_slab_size(
+            lattice: *const f64,
+            miller: *const i32,
+            layers: i32,
+            vacuum_a: f64,
+            n_atoms: usize
+        ) -> i32;
+
+        /// Build slab
+        unsafe fn build_slab(
+            lattice: *const f64,
+            positions: *const f64,
+            types: *const i32,
+            n_atoms: usize,
+            miller: *const i32,
+            layers: i32,
+            vacuum_a: f64,
             out_lattice: *mut f64,
             out_positions: *mut f64,
             out_types: *mut i32

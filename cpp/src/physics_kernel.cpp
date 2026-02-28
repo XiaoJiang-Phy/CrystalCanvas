@@ -133,3 +133,150 @@ void build_supercell(
         }
     }
 }
+
+// Helper to compute gcd
+int gcd(int a, int b) {
+    if (b == 0) return std::abs(a);
+    return gcd(b, a % b);
+}
+
+// Find vectors u and v such that h*u + k*v = gcd(h,k) (Extended Euclidean Algorithm)
+void ext_gcd(int h, int k, int& u, int& v, int& g) {
+    if (k == 0) {
+        u = 1; v = 0; g = std::abs(h);
+        if (h < 0) u = -1;
+        return;
+    }
+    int u1, v1;
+    ext_gcd(k, h % k, u1, v1, g);
+    u = v1;
+    v = u1 - (h / k) * v1;
+}
+
+// Compute the transformation matrix P from traditional Miller indices
+// that returns a primitive surface cell.
+Eigen::Matrix3i get_surface_transformation(int h, int k, int l) {
+    Eigen::Matrix3i P;
+    P.setZero();
+    
+    // Normalize Miller indices
+    int g1 = gcd(gcd(h, k), l);
+    if (g1 > 0) {
+        h /= g1; k /= g1; l /= g1;
+    }
+    
+    if (h == 0 && k == 0) {
+        // Special case: (0 0 l)
+        P << 1, 0, 0,
+             0, 1, 0,
+             0, 0, 1;
+        return P;
+    }
+    
+    int u, v, g_hk;
+    ext_gcd(h, k, u, v, g_hk);
+    
+    // v1: [-k/g, h/g, 0]
+    P(0, 0) = -k / g_hk;
+    P(1, 0) = h / g_hk;
+    P(2, 0) = 0;
+    
+    // v2: [-l*u, -l*v, g_hk]
+    P(0, 1) = -l * u;
+    P(1, 1) = -l * v;
+    P(2, 1) = g_hk;
+    
+    // v3: we pick a vector out of plane, simple choice [u, v, 0] doesn't always work if l!=0
+    // Try to find a simple v3 such that det(P) = 1
+    // The determinant of the above first two columns and [x, y, z] is:
+    // det = (-k/g)*( (-l*v)*z - g_hk*y ) - (h/g)*( (-l*u)*z - g_hk*x )
+    // We want det = 1 or -1
+    // Easier: complete basis using Smith Normal Form or general integer matrix completion
+    // Given (h,k,l) is primitive, we know there exist p,q,r st h*p+k*q+l*r = 1
+    // Then v3 = [p, q, r] gives a basis where the surface is the ab plane and c points out.
+    
+    // We can just use the extended gcd three variables:
+    // a*h + b*k = g_hk -> a = u, b = v
+    // We also know g_hk and l are coprime since gcd(h,k,l) = 1
+    // So there exist p', q' st p'*g_hk + q'*l = 1
+    int p_prime, q_prime, g2;
+    ext_gcd(g_hk, l, p_prime, q_prime, g2); // g2=1
+    
+    int p = p_prime * u;
+    int q = p_prime * v;
+    int r = q_prime;
+    
+    P(0, 2) = p;
+    P(1, 2) = q;
+    P(2, 2) = r;
+    
+    if (P.determinant() < 0) {
+        // Ensure right-handedness
+        P.col(0) = -P.col(0);
+    }
+    
+    return P;
+}
+
+int get_slab_size(
+    const double* lattice,
+    const int32_t* miller,
+    int layers,
+    double vacuum_A,
+    size_t n_atoms
+) {
+    if (layers <= 0) return 0;
+    
+    // 1. Calculate the surface transformation matrix P
+    Eigen::Matrix3i P = get_surface_transformation(miller[0], miller[1], miller[2]);
+    
+    // 2. The expansion matrix has c-axis multiplied by 'layers'
+    Eigen::Matrix3i exp_mat = P;
+    exp_mat(0, 2) *= layers;
+    exp_mat(1, 2) *= layers;
+    exp_mat(2, 2) *= layers;
+    
+    return get_supercell_size(n_atoms, exp_mat.data());
+}
+
+void build_slab(
+    const double* lattice,
+    const double* positions,
+    const int* types,
+    size_t n_atoms,
+    const int32_t* miller,
+    int layers,
+    double vacuum_A,
+    double* out_lattice,
+    double* out_positions,
+    int* out_types
+) {
+    // 1. Expansion matrix for the slab
+    Eigen::Matrix3i P = get_surface_transformation(miller[0], miller[1], miller[2]);
+    Eigen::Matrix3i exp_mat = P;
+    exp_mat(0, 2) *= layers;
+    exp_mat(1, 2) *= layers;
+    exp_mat(2, 2) *= layers;
+    
+    // Call build_supercell to generate the block of atoms
+    build_supercell(lattice, positions, types, n_atoms, exp_mat.data(), out_lattice, out_positions, out_types);
+    
+    // Now, adjust the out_lattice c-axis to include vacuum padding
+    Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
+    Eigen::Vector3d c_vec = L_out.col(2);
+    double c_len = c_vec.norm();
+    
+    // New total c_len = c_len + vacuum_A
+    double scale = (c_len + vacuum_A) / c_len;
+    L_out.col(2) *= scale;
+    
+    // Adjust fractional coordinates (since the box got larger, z-coords get scaled down)
+    // Only the z-coordinate component (or we can just do f_new = L_new^-1 * L_old * f_old)
+    // Because c-axis is scaled by 'scale', the fractional z should be divided by 'scale'.
+    int total_new_atoms = n_atoms * std::abs(exp_mat.determinant());
+    for (int i = 0; i < total_new_atoms; ++i) {
+        out_positions[3*i+2] /= scale;
+        // Optional: shift to center the slab in the vacuum
+        out_positions[3*i+2] += (vacuum_A / 2.0) / (c_len + vacuum_A);
+    }
+}
