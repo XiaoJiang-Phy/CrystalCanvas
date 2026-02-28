@@ -117,7 +117,7 @@ SupercellResultTest run_supercell(const SupercellInput& input, int32_t nx, int32
 // ===========================================================================
 
 /// NaCl 8 atoms x 3^3 = 216 atoms
-TEST(SupercellTest, DISABLED_NaCl3x3x3AtomCount216) {
+TEST(SupercellTest, NaCl3x3x3AtomCount216) {
     auto input = make_nacl_conventional();
     ASSERT_EQ(input.n_atoms, 8) << "Input NaCl should have 8 atoms";
 
@@ -127,14 +127,14 @@ TEST(SupercellTest, DISABLED_NaCl3x3x3AtomCount216) {
 }
 
 /// 2x2x2 supercell: 8 x 8 = 64 atoms
-TEST(SupercellTest, DISABLED_NaCl2x2x2AtomCount64) {
+TEST(SupercellTest, NaCl2x2x2AtomCount64) {
     auto input = make_nacl_conventional();
     auto result = run_supercell(input, 2, 2, 2);
     EXPECT_EQ(result.n_atoms, 64);
 }
 
 /// 1x1x1 "supercell" should be identical to input
-TEST(SupercellTest, DISABLED_NaCl1x1x1Identity) {
+TEST(SupercellTest, NaCl1x1x1Identity) {
     auto input = make_nacl_conventional();
     auto result = run_supercell(input, 1, 1, 1);
     EXPECT_EQ(result.n_atoms, 8);
@@ -150,7 +150,7 @@ TEST(SupercellTest, DISABLED_NaCl1x1x1Identity) {
 // ===========================================================================
 
 /// No coordinate overlap - minimum distance between any two atoms > 0.1A
-TEST(SupercellTest, DISABLED_NoCoordinateOverlap) {
+TEST(SupercellTest, NoCoordinateOverlap) {
     auto input = make_nacl_conventional();
     auto result = run_supercell(input, 3, 3, 3);
     
@@ -171,7 +171,7 @@ TEST(SupercellTest, DISABLED_NoCoordinateOverlap) {
 }
 
 /// All atoms must have fractional coordinates in [0, 1) within the new supercell
-TEST(SupercellTest, DISABLED_AllAtomsInsideBoundary) {
+TEST(SupercellTest, AllAtomsInsideBoundary) {
     auto input = make_nacl_conventional();
     auto result = run_supercell(input, 3, 3, 3);
     
@@ -192,7 +192,7 @@ TEST(SupercellTest, DISABLED_AllAtomsInsideBoundary) {
 }
 
 /// Supercell lattice vectors must be Nx the original
-TEST(SupercellTest, DISABLED_LatticeVectorsScaledCorrectly) {
+TEST(SupercellTest, LatticeVectorsScaledCorrectly) {
     auto input = make_nacl_conventional();
     auto result = run_supercell(input, 3, 3, 3);
     
@@ -206,7 +206,7 @@ TEST(SupercellTest, DISABLED_LatticeVectorsScaledCorrectly) {
 }
 
 /// Element types must be preserved (4 Na + 4 Cl per unit cell -> 108 Na + 108 Cl)
-TEST(SupercellTest, DISABLED_ElementTypesPreserved) {
+TEST(SupercellTest, ElementTypesPreserved) {
     auto input = make_nacl_conventional();
     auto result = run_supercell(input, 3, 3, 3);
     

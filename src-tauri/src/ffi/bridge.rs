@@ -62,5 +62,24 @@ pub mod ffi {
             n_atoms: usize,
             symprec: f64
         ) -> i32;
+
+        /// Get the number of atoms for a specific supercell expansion
+        /// Returns Number of new atoms (n_atoms * determinant(expansion))
+        unsafe fn get_supercell_size(
+            n_atoms: usize,
+            expansion: *const i32
+        ) -> i32;
+
+        /// Build a supercell.
+        unsafe fn build_supercell(
+            lattice: *const f64,
+            positions: *const f64,
+            types: *const i32,
+            n_atoms: usize,
+            expansion: *const i32,
+            out_lattice: *mut f64,
+            out_positions: *mut f64,
+            out_types: *mut i32
+        );
     }
 }

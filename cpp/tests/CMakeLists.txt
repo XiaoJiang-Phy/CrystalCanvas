@@ -72,9 +72,13 @@ add_test(NAME SpglibTest COMMAND test_spglib_robustness)
 # ---------------------------------------------------------------------------
 # [Node 3.2] Supercell Construction Tests
 # ---------------------------------------------------------------------------
-add_executable(test_supercell_eigen test_supercell_eigen.cpp)
-target_link_libraries(test_supercell_eigen PRIVATE GTest::gtest_main)
+add_executable(test_supercell_eigen 
+    test_supercell_eigen.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_supercell_eigen PRIVATE GTest::gtest_main Spglib_symspg)
 target_include_directories(test_supercell_eigen PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${EIGEN_INCLUDE_DIR}
 )
