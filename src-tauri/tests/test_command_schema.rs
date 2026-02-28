@@ -1,18 +1,18 @@
-//! [Node 5.1] LLM 指令防注入测试 (Command Schema Validation)
+//! [Node 5.1] LLM command injection protection test (Command Schema Validation)
 //!
-//! 验收标准:
-//! - 恶意/畸形 JSON 指令必须被 Serde 层拒绝 (Result::Err)
-//! - 合法指令正确反序列化
-//! - CrystalCommand 使用 deny_unknown_fields 防止注入
+//! Acceptance Criteria:
+//! - Malicious or malformed JSON commands must be rejected by the Serde layer (Result::Err)
+//! - Valid commands must be correctly deserialized
+//! - CrystalCommand uses deny_unknown_fields to prevent injection attempts
 //!
-//! 当前状态: #[ignore] — 等待 Command Bus 模块实现
-//! 注意: CrystalCommand schema 在此文件内临时定义，待正式模块开发后迁出
+//! Current Status: #[ignore] — Awaiting Command Bus module implementation
+//! Note: The CrystalCommand schema is temporarily defined in this file and will be moved once the formal module is developed.
 
 use serde::Deserialize;
 
 // ===========================================================================
-// TDD Skeleton: CrystalCommand 协议定义
-// 这些类型将在 Command Bus 正式实现时迁入 src/commands/ 模块
+// TDD Skeleton: CrystalCommand Protocol Definition
+// These types will be moved to the src/commands/ module during official implementation.
 // ===========================================================================
 
 /// Parameter types for each command action
@@ -64,7 +64,7 @@ enum CrystalCommand {
 }
 
 // ===========================================================================
-// 恶意输入拒绝测试
+// Malicious Input Rejection Tests
 // ===========================================================================
 
 /// Negative index in delete_atoms → Serde must reject (u32 cannot be negative).
@@ -140,7 +140,7 @@ fn test_null_params_rejected() {
 }
 
 // ===========================================================================
-// 合法输入接受测试
+// Valid Input Acceptance Tests
 // ===========================================================================
 
 /// Valid delete_atoms command.

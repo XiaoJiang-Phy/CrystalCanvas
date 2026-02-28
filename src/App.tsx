@@ -1,4 +1,4 @@
-// [功能概述：主 React 应用组件，包含侧边栏、工具栏和提供透明背景给 wgpu 的占位层]
+// [Overview: Main React application component, including sidebar, toolbar, and the placeholder layer for the wgpu rendering surface]
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';

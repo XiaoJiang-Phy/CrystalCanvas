@@ -1,9 +1,9 @@
-//! [Node 1.2] CIF 文件解析与 CrystalState 构建测试
+//! [Node 1.2] CIF file parsing and CrystalState construction tests
 //!
-//! 验收标准:
-//! - 解析标准 CIF 文件并完整载入 `CrystalState`，耗时 < 10ms
-//! - 晶胞参数、空间群、原子数严格匹配
-//! - 无效文件路径返回 Err
+//! Acceptance Criteria:
+//! - Parsing a standard CIF file and loading it into `CrystalState` must take < 10ms
+//! - Lattice parameters, space group, and atom count must match exactly
+//! - Invalid file paths must return an Err
 
 use crystal_canvas::crystal_state::CrystalState;
 use crystal_canvas::ffi;
@@ -17,7 +17,7 @@ fn test_data_path(filename: &str) -> String {
 }
 
 // ===========================================================================
-// 正确性测试
+// Accuracy Tests
 // ===========================================================================
 
 /// Parse NaCl CIF and verify lattice parameters, space group, and atom count.
@@ -43,7 +43,7 @@ fn test_parse_nacl_cif_correctness() {
     assert!(state.elements.contains(&"Na".to_string()));
     assert!(state.elements.contains(&"Cl".to_string()));
 
-    // Verify fractional coordinates are in [0, 1)
+    // Verify fractional coordinates are in [0, 1]
     for i in 0..state.num_atoms() {
         assert!(state.fract_x[i] >= 0.0 && state.fract_x[i] <= 1.0,
             "fract_x[{}] = {} out of range", i, state.fract_x[i]);
@@ -82,7 +82,7 @@ fn test_fractional_to_cartesian_nacl() {
 }
 
 // ===========================================================================
-// 性能测试
+// Performance Tests
 // ===========================================================================
 
 /// Parse timing must be < 10ms for standard CIF files.
@@ -106,7 +106,7 @@ fn test_parse_nacl_timing() {
 }
 
 // ===========================================================================
-// 错误处理测试
+// Error Handling Tests
 // ===========================================================================
 
 /// Invalid file path should return Err, not panic.

@@ -1,11 +1,11 @@
-//! [Node 4.1] 非法物理结构拦截器 (Overlap Detection) 测试
+//! [Node 4.1] Invalid physical structure interceptor (Overlap Detection) tests
 //!
-//! 验收标准:
-//! - 插入与现有原子距离 ≤ 0.5Å 的新原子 → CollisionError
-//! - 引擎拒绝更新 GPU Buffer
-//! - 安全距离的原子可正常插入
+//! Acceptance Criteria:
+//! - Inserting a new atom with a distance ≤ 0.5Å from an existing atom → CollisionError
+//! - Engine rejects GPU Buffer updates for invalid structures
+//! - Atoms at a safe distance can be inserted normally
 //!
-//! 当前状态: #[ignore] — 等待碰撞检测模块实现
+//! Current Status: #[ignore] — Awaiting overlap detection module implementation
 
 // TODO: uncomment when overlap detection module is implemented
 // use crystal_canvas::crystal_state::{CrystalState, CollisionError};
@@ -21,7 +21,7 @@
 // }
 
 // ===========================================================================
-// 碰撞检测拦截测试
+// Collision Detection Interceptor Tests
 // ===========================================================================
 
 /// Insert atom at distance ~0.42Å from existing atom → must be rejected.

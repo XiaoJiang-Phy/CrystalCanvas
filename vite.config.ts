@@ -1,4 +1,4 @@
-// [功能概述：Vite 前端构建配置，为 Tauri 优化并设置端口]
+// [Overview: Vite frontend build configuration, optimized for Tauri with specific port settings]
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 

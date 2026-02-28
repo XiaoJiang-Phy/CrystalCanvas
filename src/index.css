@@ -1,4 +1,4 @@
-/* [功能概述：全局 TailwindCSS 样式表，配置核心图层和重置由 Tauri wgpu 接管的主窗口背景] */
+/* [Overview: Global TailwindCSS stylesheet. Configures core layers and resets the main window background which is managed by Tauri/wgpu] */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

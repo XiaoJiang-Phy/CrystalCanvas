@@ -82,3 +82,4 @@ Thumbs.db
 
 # ----- AI Agent Rules and Docs -----
 .agents/
+cpp/tests/build/
