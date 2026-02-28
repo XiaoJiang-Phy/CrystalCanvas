@@ -2,8 +2,15 @@
 
 fn main() {
     // Force macOS deployment target to 10.12 to match Rust's target and prevent ld from silently dropping objects
+    #[cfg(target_os = "macos")]
     unsafe {
         std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "10.12");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Placeholder for Ubuntu (Vulkan) / Linux specific linking rules
+        // Consider setting C++ ABI or static linking stdc++ when migrating to Linux
     }
 
     cxx_build::bridge("src/ffi/bridge.rs")
