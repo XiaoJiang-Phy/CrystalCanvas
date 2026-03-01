@@ -3,6 +3,10 @@
 use serde::Serialize;
 use crate::ffi;
 
+/// Error returned when trying to add an overlapping atom
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollisionError;
+
 /// The central crystal structure state, holding all atom data in SoA layout.
 /// - f64 fields for physics calculations (fractional coords)
 /// - f32 fields for GPU rendering (Cartesian coords, populated on demand)
@@ -394,8 +398,48 @@ impl CrystalState {
         Ok(new_state)
     }
 
-    /// Add a new atom to the crystal
-    pub fn add_atom(&mut self, element_symbol: &str, atomic_number: u8, fract_pos: [f64; 3]) {
+    /// Add a new atom to the crystal, checking for collisions first
+    pub fn try_add_atom(&mut self, element_symbol: &str, atomic_number: u8, fract_pos: [f64; 3]) -> Result<(), CollisionError> {
+        // Collect lattice and current positions to pass to FFI
+        let alpha = self.cell_alpha.to_radians();
+        let beta = self.cell_beta.to_radians();
+        let gamma = self.cell_gamma.to_radians();
+        let a = self.cell_a;
+        let b = self.cell_b;
+        let c = self.cell_c;
+
+        let cx = c * beta.cos();
+        let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
+        let cz = (c * c - cx * cx - cy * cy).sqrt();
+
+        // Eigen uses Column-Major! So we pack col 0, col 1, col 2
+        let lattice_col_major = [
+            a, 0.0, 0.0,
+            b * gamma.cos(), b * gamma.sin(), 0.0,
+            cx, cy, cz
+        ];
+
+        let mut flat_positions = Vec::with_capacity(self.num_atoms() * 3);
+        for i in 0..self.num_atoms() {
+            flat_positions.push(self.fract_x[i]);
+            flat_positions.push(self.fract_y[i]);
+            flat_positions.push(self.fract_z[i]);
+        }
+
+        let is_overlap = unsafe {
+            ffi::check_overlap_mic(
+                lattice_col_major.as_ptr(),
+                flat_positions.as_ptr(),
+                self.num_atoms(),
+                fract_pos.as_ptr(),
+                0.5 // 0.5Å threshold
+            )
+        };
+
+        if is_overlap {
+            return Err(CollisionError);
+        }
+
         let label = format!("{}{}", element_symbol, self.num_atoms() + 1);
         self.labels.push(label);
         self.elements.push(element_symbol.to_string());
@@ -406,6 +450,8 @@ impl CrystalState {
         self.atomic_numbers.push(atomic_number);
         self.version += 1;
         self.fractional_to_cartesian();
+        
+        Ok(())
     }
 
     /// Delete atoms by their indices
@@ -468,9 +514,12 @@ mod tests {
     }
 
     #[test]
-    fn test_add_atom() {
+    fn test_try_add_atom() {
         let mut c = dummy_crystal();
-        c.add_atom("C", 6, [0.25, 0.25, 0.25]);
+        // Change cell to 5.0 to safely add atoms
+        c.cell_a = 5.0; c.cell_b = 5.0; c.cell_c = 5.0;
+        let res = c.try_add_atom("C", 6, [0.25, 0.25, 0.25]); 
+        assert!(res.is_ok(), "Should be added successfully");
         assert_eq!(c.num_atoms(), 3, "Should have 3 atoms");
         assert_eq!(c.labels[2], "C3", "Label should be C3");
         assert_eq!(c.elements[2], "C", "Element should be C");

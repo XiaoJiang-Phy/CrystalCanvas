@@ -42,11 +42,9 @@ pub fn load_cif_file(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<(), String> {
     log::info!("load_cif_file: {}", path);
-    // 1. Parse CIF via C++ FFI
-    let out = crate::ffi::bridge::ffi::parse_cif_file(&path).map_err(|e| e.to_string())?;
-
-    let mut state = crate::crystal_state::CrystalState::from_ffi(out);
-    state.fractional_to_cartesian();
+    
+    // 1 & 2. Load file (delegating to our format importer)
+    let state = crate::io::import::load_file(&path)?;
 
     if let Ok(mut cs) = crystal_state.try_lock() {
         *cs = state.clone();
@@ -86,7 +84,7 @@ pub fn add_atom(
     log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
     
     let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
-    cs.add_atom(&element_symbol, atomic_number, fract_pos);
+    cs.try_add_atom(&element_symbol, atomic_number, fract_pos).map_err(|_| "Collision detected: atom too close to existing atoms")?;
     
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,

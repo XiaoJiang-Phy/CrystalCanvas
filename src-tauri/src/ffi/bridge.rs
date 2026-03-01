@@ -104,5 +104,14 @@ pub mod ffi {
             out_positions: *mut f64,
             out_types: *mut i32
         );
+
+        /// Check MIC Overlap
+        unsafe fn check_overlap_mic(
+            lattice: *const f64,
+            positions: *const f64,
+            n_atoms: usize,
+            new_frac_pos: *const f64,
+            threshold_a: f64
+        ) -> bool;
     }
 }

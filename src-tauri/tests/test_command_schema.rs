@@ -18,6 +18,7 @@ use serde::Deserialize;
 /// Parameter types for each command action
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct DeleteAtomsParams {
     /// Atom indices to delete — must be non-negative
     indices: Vec<u32>, // u32 enforces non-negative at type level
@@ -25,6 +26,7 @@ struct DeleteAtomsParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct AddAtomParams {
     element: String,
     frac_pos: [f64; 3],
@@ -32,6 +34,7 @@ struct AddAtomParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct SubstituteParams {
     indices: Vec<u32>,
     new_element: String,
@@ -39,6 +42,7 @@ struct SubstituteParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct CleavSlabParams {
     miller: [i32; 3],
     layers: u32,
@@ -47,6 +51,7 @@ struct CleavSlabParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct MakeSupercellParams {
     matrix: [[i32; 3]; 3],
 }

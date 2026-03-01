@@ -34,7 +34,7 @@ fn test_roundtrip_1000_atoms_correctness() {
     assert_eq!(output.len(), n_atoms, "Output atom count mismatch");
     // Use 1e-5 tolerance: f32 has ~7 significant digits, so at magnitude ~100+
     // the ULP can reach ~1.5e-5. This tolerance is still strict but realistic.
-    let tol = 1e-5_f32;
+    let _tol = 1e-5_f32;
     for (i, (inp, out)) in input.iter().zip(output.iter()).enumerate() {
         let ex = inp.x + 1.0;
         let ey = inp.y + 1.0;

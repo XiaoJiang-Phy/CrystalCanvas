@@ -11,10 +11,7 @@
 use std::sync::Arc;
 use tauri::Manager;
 
-mod crystal_state;
-mod ffi;
-mod renderer;
-mod commands;
+use crystal_canvas::*;
 
 // Prevent macOS linker from stripping CXX exception handling symbols
 extern crate cxx;

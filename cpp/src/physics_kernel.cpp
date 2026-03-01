@@ -1,7 +1,7 @@
 // Spglib C Wrapper Implementation
 #include "physics_kernel.hpp"
 #include <iostream>
-#include <stdexcept>
+#include <exception>
 #include <vector>
 
 // Include spglib
@@ -279,4 +279,37 @@ void build_slab(
         // Optional: shift to center the slab in the vacuum
         out_positions[3*i+2] += (vacuum_A / 2.0) / (c_len + vacuum_A);
     }
+}
+
+bool check_overlap_mic(
+    const double* lattice,
+    const double* positions,
+    size_t n_atoms,
+    const double* new_frac_pos,
+    double threshold_A
+) {
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Vector3d f_new(new_frac_pos[0], new_frac_pos[1], new_frac_pos[2]);
+    
+    double thresh_sq = threshold_A * threshold_A;
+    
+    for (size_t i = 0; i < n_atoms; ++i) {
+        Eigen::Vector3d f_old(positions[3*i], positions[3*i+1], positions[3*i+2]);
+        Eigen::Vector3d diff = f_new - f_old;
+        
+        // Minimum Image Convention (MIC)
+        // Shift fractional coordinates to [-0.5, 0.5)
+        diff.x() -= std::round(diff.x());
+        diff.y() -= std::round(diff.y());
+        diff.z() -= std::round(diff.z());
+        
+        // Convert to Cartesian
+        Eigen::Vector3d cart_diff = L * diff;
+        
+        // Check distance squared
+        if (cart_diff.squaredNorm() < thresh_sq) {
+            return true;
+        }
+    }
+    return false;
 }

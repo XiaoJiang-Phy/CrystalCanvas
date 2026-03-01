@@ -99,3 +99,18 @@ void build_slab(
     double* out_positions,
     int* out_types
 );
+
+/// Check if a new atom overlaps with existing atoms using Minimum Image Convention
+/// @param lattice 3x3 input lattice (row-major [9])
+/// @param positions Input fractional positions of existing atoms (n_atoms x 3)
+/// @param n_atoms Number of existing atoms
+/// @param new_frac_pos Fractional position of the new atom [3]
+/// @param threshold_A Overlap distance threshold in Angstroms
+/// @return true if overlap is detected (distance < threshold)
+bool check_overlap_mic(
+    const double* lattice,
+    const double* positions,
+    size_t n_atoms,
+    const double* new_frac_pos,
+    double threshold_A
+);
