@@ -17,6 +17,8 @@ Cargo.lock
 
 # ----- C++ Build Artifacts -----
 /build/
+cpp/build/
+cpp/tests/build/
 /cmake-build-*/
 *.o
 *.a
