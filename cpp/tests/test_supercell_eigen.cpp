@@ -1,4 +1,6 @@
 // [Node 3.2] Supercell construction (Eigen) and atom count conservation tests
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Acceptance Criteria:
 // - NaCl 8-atom conventional cell -> 3x3x3 supercell = 216 atoms

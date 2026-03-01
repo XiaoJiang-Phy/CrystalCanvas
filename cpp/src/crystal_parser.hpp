@@ -1,5 +1,4 @@
 // Thin C++ wrapper for Gemmi CIF parsing — declares the FFI function for cxx bridge
-// Copyright (c) 2026 CrystalCanvas Contributors. MIT OR Apache-2.0.
 //
 // NOTE: FfiAtomSite and FfiCrystalData structs are defined by cxx code generation
 // from bridge.rs. This header only declares the function signature.

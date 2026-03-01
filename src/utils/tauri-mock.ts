@@ -1,11 +1,11 @@
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 /**
  * Tauri API shim for browser-only environments.
  * When running in a browser (npm run dev without Tauri), the @tauri-apps/api
  * modules throw because __TAURI_INTERNALS__ is not defined.
  * This module provides safe wrappers that no-op gracefully.
  */
-// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
-// SPDX-License-Identifier: MIT OR Apache-2.0
 
 const isTauri = (): boolean => {
     return typeof (window as any).__TAURI_INTERNALS__ !== 'undefined';

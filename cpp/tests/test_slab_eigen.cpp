@@ -1,4 +1,6 @@
 // [Node 3.3] Slab generation (Eigen) tests
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Acceptance Criteria:
 // - Cleave a 3-layer (1 0 0) slab from an FCC cell.

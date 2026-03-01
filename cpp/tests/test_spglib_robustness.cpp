@@ -1,4 +1,6 @@
 // [Node 3.1] Spglib spacegroup identification robustness test
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Acceptance Criteria:
 // - Standard diamond cell (Fd-3m, No. 227) → return 227 correctly
