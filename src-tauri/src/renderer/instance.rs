@@ -1,4 +1,6 @@
 //! Atom instance data for GPU instanced rendering — maps CrystalState to per-atom GPU buffers
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::utils::colors::get_jmol_color;
 use bytemuck::{Pod, Zeroable};

@@ -1,5 +1,7 @@
 //! Tauri IPC commands for interacting with the CrystalCanvas React UI.
 //! Commands handle viewport resizing, loading files, and camera state.
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use tauri::State;
 

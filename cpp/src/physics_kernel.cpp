@@ -1,4 +1,6 @@
 // Spglib C Wrapper Implementation
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #include "physics_kernel.hpp"
 #include <iostream>
 #include <exception>

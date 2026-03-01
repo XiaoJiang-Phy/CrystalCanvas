@@ -1,6 +1,8 @@
 //! CrystalCanvas Tauri application entry point
 
 // Prevents additional console window on Windows in release
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"

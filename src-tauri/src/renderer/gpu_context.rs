@@ -1,4 +1,6 @@
 //! wgpu device/queue/surface initialization — Metal backend on macOS, Vulkan on Linux
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;

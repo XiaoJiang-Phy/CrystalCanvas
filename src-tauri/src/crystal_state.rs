@@ -1,4 +1,6 @@
 //! Core crystal state — Single Source of Truth (SSoT) with SoA layout for physics and rendering
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::ffi;
 use serde::Serialize;

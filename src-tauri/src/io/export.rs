@@ -1,4 +1,6 @@
 //! Format exporters for CrystalCanvas - Strong-typed Writer Implementations
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::crystal_state::CrystalState;
 use std::collections::HashMap;
 use std::fs::File;

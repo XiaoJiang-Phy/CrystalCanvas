@@ -1,5 +1,7 @@
 // Implementation of CIF parsing wrapper — uses Gemmi header-only CIF parser
 // Copyright (c) 2026 CrystalCanvas Contributors. MIT OR Apache-2.0.
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 #include "crystal_parser.hpp"  // cxx-generated types + function declaration
 

@@ -2,6 +2,8 @@
 
 /// Returns the Jmol standard RGBA color for a given element symbol.
 /// Scaled to [0.0, 1.0] range as [r, g, b, a].
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pub fn get_jmol_color(symbol: &str) -> [f32; 4] {
     match symbol {
         "H" => [1.000, 1.000, 1.000, 1.0],

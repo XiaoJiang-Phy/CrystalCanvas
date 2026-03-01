@@ -3,6 +3,8 @@
 //
 // NOTE: FfiAtomSite and FfiCrystalData structs are defined by cxx code generation
 // from bridge.rs. This header only declares the function signature.
+// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 #pragma once
 #include "crystal-canvas/src/ffi/bridge.rs.h"
