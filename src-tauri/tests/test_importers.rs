@@ -1,3 +1,4 @@
+//! Integration tests for format importers (XYZ, PDB)
 use crystal_canvas::io::import::load_file;
 use std::fs;
 

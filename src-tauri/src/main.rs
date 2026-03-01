@@ -1,7 +1,5 @@
 //! CrystalCanvas Tauri application entry point
 
-//! CrystalCanvas Tauri application entry point
-
 // Prevents additional console window on Windows in release
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),

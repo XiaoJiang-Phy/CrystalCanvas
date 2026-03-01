@@ -1,3 +1,4 @@
+//! Structural structure loaders for CrystalCanvas (CIF, XYZ, PDB)
 use crate::crystal_state::CrystalState;
 use std::fs;
 use std::path::Path;

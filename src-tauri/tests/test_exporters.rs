@@ -1,3 +1,4 @@
+//! Integration tests for format exporters (POSCAR, LAMMPS, QE)
 use crystal_canvas::crystal_state::CrystalState;
 use crystal_canvas::io::export::{export_lammps_data, export_poscar, export_qe_input};
 use std::fs;
