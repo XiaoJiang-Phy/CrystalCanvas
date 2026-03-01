@@ -10,11 +10,13 @@
         "beforeBuildCommand": ""
     },
     "app": {
+        "macOSPrivateApi": true,
         "windows": [
             {
                 "title": "CrystalCanvas",
                 "width": 1280,
-                "height": 800
+                "height": 800,
+                "transparent": true
             }
         ]
     }
