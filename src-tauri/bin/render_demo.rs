@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use glam::Vec3;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use glam::Vec3;
 
 use crystal_canvas::renderer::instance::build_test_instances;
 use crystal_canvas::renderer::renderer::Renderer;
@@ -109,7 +109,11 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => {
                 self.is_left_clicked = state == ElementState::Pressed;
                 if !self.is_left_clicked {
                     self.last_cursor_pos = None;
@@ -131,7 +135,7 @@ impl ApplicationHandler for App {
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let y_delta = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f32 * 2.0,
+                    MouseScrollDelta::LineDelta(_, y) => y * 2.0,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.1,
                 };
                 self.camera_distance -= y_delta;
@@ -162,8 +166,7 @@ impl ApplicationHandler for App {
                     self.frame_count += 1;
                     let elapsed = self.fps_timer.elapsed();
                     if elapsed >= Duration::from_secs(1) {
-                        self.last_fps =
-                            self.frame_count as f32 / elapsed.as_secs_f32();
+                        self.last_fps = self.frame_count as f32 / elapsed.as_secs_f32();
                         self.frame_count = 0;
                         self.fps_timer = Instant::now();
 

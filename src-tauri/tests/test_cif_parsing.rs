@@ -28,10 +28,25 @@ fn test_parse_nacl_cif_correctness() {
     let state = CrystalState::from_ffi(data);
 
     // NaCl: Fm-3m (225), cubic a=b=c=5.64 Å, α=β=γ=90°
-    assert_eq!(state.spacegroup_number, 225, "Space group should be 225 (Fm-3m)");
-    assert!((state.cell_a - 5.64).abs() < 0.01, "cell_a: {}", state.cell_a);
-    assert!((state.cell_b - 5.64).abs() < 0.01, "cell_b: {}", state.cell_b);
-    assert!((state.cell_c - 5.64).abs() < 0.01, "cell_c: {}", state.cell_c);
+    assert_eq!(
+        state.spacegroup_number, 225,
+        "Space group should be 225 (Fm-3m)"
+    );
+    assert!(
+        (state.cell_a - 5.64).abs() < 0.01,
+        "cell_a: {}",
+        state.cell_a
+    );
+    assert!(
+        (state.cell_b - 5.64).abs() < 0.01,
+        "cell_b: {}",
+        state.cell_b
+    );
+    assert!(
+        (state.cell_c - 5.64).abs() < 0.01,
+        "cell_c: {}",
+        state.cell_c
+    );
     assert!((state.cell_alpha - 90.0).abs() < 0.01);
     assert!((state.cell_beta - 90.0).abs() < 0.01);
     assert!((state.cell_gamma - 90.0).abs() < 0.01);
@@ -45,12 +60,24 @@ fn test_parse_nacl_cif_correctness() {
 
     // Verify fractional coordinates are in [0, 1]
     for i in 0..state.num_atoms() {
-        assert!(state.fract_x[i] >= 0.0 && state.fract_x[i] <= 1.0,
-            "fract_x[{}] = {} out of range", i, state.fract_x[i]);
-        assert!(state.fract_y[i] >= 0.0 && state.fract_y[i] <= 1.0,
-            "fract_y[{}] = {} out of range", i, state.fract_y[i]);
-        assert!(state.fract_z[i] >= 0.0 && state.fract_z[i] <= 1.0,
-            "fract_z[{}] = {} out of range", i, state.fract_z[i]);
+        assert!(
+            state.fract_x[i] >= 0.0 && state.fract_x[i] <= 1.0,
+            "fract_x[{}] = {} out of range",
+            i,
+            state.fract_x[i]
+        );
+        assert!(
+            state.fract_y[i] >= 0.0 && state.fract_y[i] <= 1.0,
+            "fract_y[{}] = {} out of range",
+            i,
+            state.fract_y[i]
+        );
+        assert!(
+            state.fract_z[i] >= 0.0 && state.fract_z[i] <= 1.0,
+            "fract_z[{}] = {} out of range",
+            i,
+            state.fract_z[i]
+        );
     }
 }
 
@@ -76,9 +103,21 @@ fn test_fractional_to_cartesian_nacl() {
     // Cl at (0.5, 0.5, 0.5) -> cart (2.82, 2.82, 2.82) for a=5.64
     let cl_cart = state.cart_positions[1];
     let expected = 5.64 * 0.5;
-    assert!((cl_cart[0] - expected as f32).abs() < 0.1, "Cl cart_x: {}", cl_cart[0]);
-    assert!((cl_cart[1] - expected as f32).abs() < 0.1, "Cl cart_y: {}", cl_cart[1]);
-    assert!((cl_cart[2] - expected as f32).abs() < 0.1, "Cl cart_z: {}", cl_cart[2]);
+    assert!(
+        (cl_cart[0] - expected as f32).abs() < 0.1,
+        "Cl cart_x: {}",
+        cl_cart[0]
+    );
+    assert!(
+        (cl_cart[1] - expected as f32).abs() < 0.1,
+        "Cl cart_y: {}",
+        cl_cart[1]
+    );
+    assert!(
+        (cl_cart[2] - expected as f32).abs() < 0.1,
+        "Cl cart_z: {}",
+        cl_cart[2]
+    );
 }
 
 // ===========================================================================
@@ -113,7 +152,10 @@ fn test_parse_nacl_timing() {
 #[test]
 fn test_invalid_file_returns_error() {
     let result = ffi::parse_cif_file("/nonexistent/path/fake.cif");
-    assert!(result.is_err(), "Parsing nonexistent file should return Err");
+    assert!(
+        result.is_err(),
+        "Parsing nonexistent file should return Err"
+    );
 }
 
 /// Empty string path should return Err.

@@ -21,21 +21,41 @@ fn test_pick_nearest_of_overlapping_atoms() {
     // Both atoms at (x=0, y=0), same radius → ray through center hits both
 
     let atoms = vec![
-        PickAtom { pos: [0.0, 0.0, -5.0], radius: 1.0, index: 0 }, // far
-        PickAtom { pos: [0.0, 0.0, -3.0], radius: 1.0, index: 1 }, // near
+        PickAtom {
+            pos: [0.0, 0.0, -5.0],
+            radius: 1.0,
+            index: 0,
+        }, // far
+        PickAtom {
+            pos: [0.0, 0.0, -3.0],
+            radius: 1.0,
+            index: 1,
+        }, // near
     ];
-    let ray = Ray { origin: [0.0, 0.0, 0.0], direction: [0.0, 0.0, -1.0] };
+    let ray = Ray {
+        origin: [0.0, 0.0, 0.0],
+        direction: [0.0, 0.0, -1.0],
+    };
     let hit = ray_pick(&atoms, &ray);
-    assert_eq!(hit.unwrap().index, 1, "Should pick the nearest atom (index 1)");
+    assert_eq!(
+        hit.unwrap().index,
+        1,
+        "Should pick the nearest atom (index 1)"
+    );
 }
 
 /// Ray that misses all atoms should return None.
 #[test]
 fn test_pick_miss_returns_none() {
-    let atoms = vec![
-        PickAtom { pos: [10.0, 10.0, -5.0], radius: 1.0, index: 0 },
-    ];
-    let ray = Ray { origin: [0.0, 0.0, 0.0], direction: [0.0, 0.0, -1.0] };
+    let atoms = vec![PickAtom {
+        pos: [10.0, 10.0, -5.0],
+        radius: 1.0,
+        index: 0,
+    }];
+    let ray = Ray {
+        origin: [0.0, 0.0, 0.0],
+        direction: [0.0, 0.0, -1.0],
+    };
     let hit = ray_pick(&atoms, &ray);
     assert!(hit.is_none(), "Ray missing all atoms should return None");
 }
@@ -49,10 +69,21 @@ fn test_pick_respects_intersection_point_not_center() {
     // Ray through origin down -Z: hits atom 1 front surface first
 
     let atoms = vec![
-        PickAtom { pos: [0.0, 0.0, -10.0], radius: 5.0, index: 0 },
-        PickAtom { pos: [0.0, 0.0, -3.0], radius: 0.5, index: 1 },
+        PickAtom {
+            pos: [0.0, 0.0, -10.0],
+            radius: 5.0,
+            index: 0,
+        },
+        PickAtom {
+            pos: [0.0, 0.0, -3.0],
+            radius: 0.5,
+            index: 1,
+        },
     ];
-    let ray = Ray { origin: [0.0, 0.0, 0.0], direction: [0.0, 0.0, -1.0] };
+    let ray = Ray {
+        origin: [0.0, 0.0, 0.0],
+        direction: [0.0, 0.0, -1.0],
+    };
     let hit = ray_pick(&atoms, &ray);
     assert_eq!(hit.unwrap().index, 1, "Nearest intersection point wins");
 }
@@ -61,7 +92,10 @@ fn test_pick_respects_intersection_point_not_center() {
 #[test]
 fn test_pick_empty_scene() {
     let atoms: Vec<PickAtom> = vec![];
-    let ray = Ray { origin: [0.0, 0.0, 0.0], direction: [0.0, 0.0, -1.0] };
+    let ray = Ray {
+        origin: [0.0, 0.0, 0.0],
+        direction: [0.0, 0.0, -1.0],
+    };
     let hit = ray_pick(&atoms, &ray);
     assert!(hit.is_none());
 }
@@ -87,7 +121,10 @@ fn test_pick_performance_1000_atoms() {
         }
     }
 
-    let ray = Ray { origin: [0.0, 0.0, 0.0], direction: [0.0, 0.0, -1.0] };
+    let ray = Ray {
+        origin: [0.0, 0.0, 0.0],
+        direction: [0.0, 0.0, -1.0],
+    };
 
     // Warm up
     let _ = ray_pick(&atoms, &ray);

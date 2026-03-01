@@ -44,11 +44,11 @@ fn test_roundtrip_1000_atoms_correctness() {
         let tol_y = ey.abs().max(1.0) * 1e-6;
         let tol_z = ez.abs().max(1.0) * 1e-6;
         assert!(
-            (out.x - ex).abs() < tol_x
-            && (out.y - ey).abs() < tol_y
-            && (out.z - ez).abs() < tol_z,
+            (out.x - ex).abs() < tol_x && (out.y - ey).abs() < tol_y && (out.z - ez).abs() < tol_z,
             "Atom {i}: expected [{ex}, {ey}, {ez}], got [{}, {}, {}]",
-            out.x, out.y, out.z
+            out.x,
+            out.y,
+            out.z
         );
     }
 }
@@ -61,9 +61,7 @@ fn test_roundtrip_1000_atoms_correctness() {
 #[test]
 fn test_roundtrip_1000_atoms_latency() {
     let n_atoms = 1000;
-    let input: Vec<ffi::FfiVec3f> = (0..n_atoms)
-        .map(|i| vec3f(i as f32, 0.0, 0.0))
-        .collect();
+    let input: Vec<ffi::FfiVec3f> = (0..n_atoms).map(|i| vec3f(i as f32, 0.0, 0.0)).collect();
 
     // Warm up
     let _ = ffi::translate_positions(&input, 0.0);

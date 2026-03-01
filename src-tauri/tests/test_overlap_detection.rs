@@ -6,7 +6,7 @@
 //! - Atoms at a safe distance can be inserted normally
 //!
 //! Current Status: Active — Overlap detection module is fully implemented
-use crystal_canvas::crystal_state::{CrystalState, CollisionError};
+use crystal_canvas::crystal_state::{CollisionError, CrystalState};
 
 // ===========================================================================
 // Helpers (to be replaced with actual constructors)
@@ -17,9 +17,14 @@ fn make_test_state_with_atom_at_origin() -> CrystalState {
     // in a cubic cell a=b=c=5.0Å
     let mut state = CrystalState {
         name: "Test".to_string(),
-        cell_a: 5.0, cell_b: 5.0, cell_c: 5.0,
-        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
-        spacegroup_hm: "P1".to_string(), spacegroup_number: 1,
+        cell_a: 5.0,
+        cell_b: 5.0,
+        cell_c: 5.0,
+        cell_alpha: 90.0,
+        cell_beta: 90.0,
+        cell_gamma: 90.0,
+        spacegroup_hm: "P1".to_string(),
+        spacegroup_number: 1,
         labels: vec![],
         elements: vec![],
         fract_x: vec![],
@@ -38,9 +43,14 @@ fn make_test_state_with_atom_at_origin() -> CrystalState {
 fn empty_cubic(a: f64) -> CrystalState {
     CrystalState {
         name: "Empty".to_string(),
-        cell_a: a, cell_b: a, cell_c: a,
-        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
-        spacegroup_hm: "P1".to_string(), spacegroup_number: 1,
+        cell_a: a,
+        cell_b: a,
+        cell_c: a,
+        cell_alpha: 90.0,
+        cell_beta: 90.0,
+        cell_gamma: 90.0,
+        spacegroup_hm: "P1".to_string(),
+        spacegroup_number: 1,
         labels: vec![],
         elements: vec![],
         fract_x: vec![],
@@ -74,7 +84,10 @@ fn test_insert_overlapping_atom_rejected() {
     );
 
     // State version must NOT have changed (GPU buffer not updated)
-    assert_eq!(state.version, initial_version, "Version must not change on rejected insert");
+    assert_eq!(
+        state.version, initial_version,
+        "Version must not change on rejected insert"
+    );
 }
 
 /// Insert atom exactly at 0.5Å threshold → borderline, should be rejected.
@@ -101,7 +114,11 @@ fn test_insert_valid_atom_accepted() {
     let result = state.try_add_atom("O", 8, [0.5, 0.0, 0.0]); // 2.5Å in 5Å cell
 
     assert!(result.is_ok(), "Insert at safe distance should succeed");
-    assert_eq!(state.version, initial_version + 1, "Version should increment");
+    assert_eq!(
+        state.version,
+        initial_version + 1,
+        "Version should increment"
+    );
     assert_eq!(state.num_atoms(), 2);
 }
 
@@ -110,7 +127,10 @@ fn test_insert_valid_atom_accepted() {
 fn test_insert_into_empty_state() {
     let mut state = empty_cubic(5.0);
     let result = state.try_add_atom("Si", 14, [0.0, 0.0, 0.0]);
-    assert!(result.is_ok(), "First atom in empty state should always succeed");
+    assert!(
+        result.is_ok(),
+        "First atom in empty state should always succeed"
+    );
 }
 
 /// Multiple overlapping insertions: only the first should succeed.

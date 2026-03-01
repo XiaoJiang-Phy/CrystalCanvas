@@ -21,19 +21,19 @@ fn main() {
         .setup(|app| {
             // Get the main window. In Tauri 2.0, windows and webviews are separated.
             // We need to create a window, grab its handle, then optionally attach a webview.
-            
+
             // For now, just ensure the app builds and runs.
             let window = app.get_webview_window("main").unwrap();
-            
-            // Note: Since Tauri 2.0 uses tao/wry under the hood, 
+
+            // Note: Since Tauri 2.0 uses tao/wry under the hood,
             // WebviewWindow implements HasWindowHandle and HasDisplayHandle.
             let arc_window = Arc::new(window);
-            
+
             // 1. Initialize GPU Context & Renderer
-            // The dimensions will be updated later by React via IPC, 
+            // The dimensions will be updated later by React via IPC,
             // but we need an initial size (e.g., 1280x800).
             let mut renderer = renderer::renderer::Renderer::new(arc_window.clone(), 1280, 800);
-            
+
             // Build a test grid (8 x 8 x 8 = 512 atoms) so we have something to look at immediately
             let instances = renderer::instance::build_test_instances(8, 8, 8, 3.0);
             renderer.update_atoms(&instances);
@@ -41,7 +41,7 @@ fn main() {
             // Store it in Tauri managed state so commands and the event loop can access it
             app.manage(std::sync::Mutex::new(renderer));
             app.manage(std::sync::Mutex::new(crystal_state::CrystalState::default()));
-            
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,17 +56,16 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| match event {
-            tauri::RunEvent::MainEventsCleared => {
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::MainEventsCleared = event {
                 // Render the next frame
-                if let Some(renderer_mutex) = app_handle.try_state::<std::sync::Mutex<renderer::renderer::Renderer>>() {
-                    if let Ok(mut renderer) = renderer_mutex.try_lock() {
-                        if let Err(e) = renderer.render() {
-                            log::warn!("Render error: {:?}", e);
-                        }
-                    }
+                if let Some(renderer_mutex) =
+                    app_handle.try_state::<std::sync::Mutex<renderer::renderer::Renderer>>()
+                    && let Ok(mut renderer) = renderer_mutex.try_lock()
+                    && let Err(e) = renderer.render()
+                {
+                    log::warn!("Render error: {:?}", e);
                 }
             }
-            _ => {}
         });
 }

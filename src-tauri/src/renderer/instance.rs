@@ -57,25 +57,25 @@ impl AtomInstance {
 /// Returns RGBA as [f32; 4]. Alpha is always 1.0.
 pub fn element_color(atomic_number: u8) -> [f32; 4] {
     match atomic_number {
-        1 => [1.0, 1.0, 1.0, 1.0],       // H  — white
-        6 => [0.3, 0.3, 0.3, 1.0],        // C  — dark gray
-        7 => [0.2, 0.2, 0.9, 1.0],        // N  — blue
-        8 => [0.9, 0.1, 0.1, 1.0],        // O  — red
-        9 => [0.0, 0.9, 0.2, 1.0],        // F  — green
-        11 => [0.6, 0.3, 0.9, 1.0],       // Na — purple
-        12 => [0.0, 0.6, 0.0, 1.0],       // Mg — dark green
-        13 => [0.7, 0.7, 0.8, 1.0],       // Al — silver
-        14 => [0.5, 0.5, 0.6, 1.0],       // Si — gray
-        15 => [0.9, 0.5, 0.0, 1.0],       // P  — orange
-        16 => [0.9, 0.8, 0.0, 1.0],       // S  — yellow
-        17 => [0.0, 0.9, 0.0, 1.0],       // Cl — green
-        20 => [0.4, 0.8, 0.4, 1.0],       // Ca — light green
-        22 => [0.6, 0.6, 0.7, 1.0],       // Ti — titanium gray
-        26 => [0.7, 0.4, 0.1, 1.0],       // Fe — rust orange
-        29 => [0.8, 0.5, 0.2, 1.0],       // Cu — copper
-        30 => [0.5, 0.5, 0.7, 1.0],       // Zn — blue-gray
-        79 => [0.9, 0.8, 0.0, 1.0],       // Au — gold
-        _ => [0.6, 0.4, 0.7, 1.0],        // Default — lavender
+        1 => [1.0, 1.0, 1.0, 1.0],  // H  — white
+        6 => [0.3, 0.3, 0.3, 1.0],  // C  — dark gray
+        7 => [0.2, 0.2, 0.9, 1.0],  // N  — blue
+        8 => [0.9, 0.1, 0.1, 1.0],  // O  — red
+        9 => [0.0, 0.9, 0.2, 1.0],  // F  — green
+        11 => [0.6, 0.3, 0.9, 1.0], // Na — purple
+        12 => [0.0, 0.6, 0.0, 1.0], // Mg — dark green
+        13 => [0.7, 0.7, 0.8, 1.0], // Al — silver
+        14 => [0.5, 0.5, 0.6, 1.0], // Si — gray
+        15 => [0.9, 0.5, 0.0, 1.0], // P  — orange
+        16 => [0.9, 0.8, 0.0, 1.0], // S  — yellow
+        17 => [0.0, 0.9, 0.0, 1.0], // Cl — green
+        20 => [0.4, 0.8, 0.4, 1.0], // Ca — light green
+        22 => [0.6, 0.6, 0.7, 1.0], // Ti — titanium gray
+        26 => [0.7, 0.4, 0.1, 1.0], // Fe — rust orange
+        29 => [0.8, 0.5, 0.2, 1.0], // Cu — copper
+        30 => [0.5, 0.5, 0.7, 1.0], // Zn — blue-gray
+        79 => [0.9, 0.8, 0.0, 1.0], // Au — gold
+        _ => [0.6, 0.4, 0.7, 1.0],  // Default — lavender
     }
 }
 
@@ -126,7 +126,12 @@ pub fn build_instance_data(
 
 /// Build test instances: atoms arranged in a 3D grid with varying elements.
 /// Useful for the render_demo binary.
-pub fn build_test_instances(count_x: usize, count_y: usize, count_z: usize, spacing: f32) -> Vec<AtomInstance> {
+pub fn build_test_instances(
+    count_x: usize,
+    count_y: usize,
+    count_z: usize,
+    spacing: f32,
+) -> Vec<AtomInstance> {
     let test_elements: &[u8] = &[11, 17, 8, 26, 29, 79, 14, 22]; // Na, Cl, O, Fe, Cu, Au, Si, Ti
     let mut instances = Vec::with_capacity(count_x * count_y * count_z);
 

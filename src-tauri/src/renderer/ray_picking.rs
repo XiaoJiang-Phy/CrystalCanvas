@@ -56,8 +56,7 @@ pub fn ray_pick(atoms: &[PickAtom], ray: &Ray) -> Option<HitResult> {
         // Solve |ro + t*rd_n - center|² = r²
         // a = dot(rd_n, rd_n) = 1 (normalized)
         let b = 2.0 * (oc[0] * rd_n[0] + oc[1] * rd_n[1] + oc[2] * rd_n[2]);
-        let c = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2]
-            - atom.radius * atom.radius;
+        let c = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2] - atom.radius * atom.radius;
         let discriminant = b * b - 4.0 * c;
 
         if discriminant < 0.0 {

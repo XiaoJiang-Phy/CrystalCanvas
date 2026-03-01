@@ -1,7 +1,7 @@
 //! Core crystal state — Single Source of Truth (SSoT) with SoA layout for physics and rendering
 
-use serde::Serialize;
 use crate::ffi;
+use serde::Serialize;
 
 /// Error returned when trying to add an overlapping atom
 #[derive(Debug, Clone, PartialEq)]
@@ -41,7 +41,8 @@ pub struct CrystalState {
 impl CrystalState {
     /// Construct a CrystalState by parsing a CIF file.
     pub fn from_cif(path: &str) -> std::result::Result<Self, String> {
-        let ffi_data = ffi::parse_cif_file(path).map_err(|e| format!("Failed to parse CIF: {}", e))?;
+        let ffi_data =
+            ffi::parse_cif_file(path).map_err(|e| format!("Failed to parse CIF: {}", e))?;
         Ok(Self::from_ffi(ffi_data))
     }
     /// Construct from FFI data returned by the C++ parser.
@@ -105,10 +106,10 @@ impl CrystalState {
         let m02 = c * cos_beta;
         let m11 = b * sin_gamma;
         let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
-        let m22 = c * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta
-            - cos_gamma * cos_gamma
-            + 2.0 * cos_alpha * cos_beta * cos_gamma)
-            .sqrt())
+        let m22 = c
+            * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma
+                + 2.0 * cos_alpha * cos_beta * cos_gamma)
+                .sqrt())
             / sin_gamma;
 
         self.cart_positions.clear();
@@ -127,12 +128,17 @@ impl CrystalState {
 
     /// Generate a slab based on Miller indices and layers.
     /// Returns a new CrystalState representing the slab.
-    pub fn generate_slab(&self, miller: [i32; 3], layers: i32, vacuum_a: f64) -> Result<Self, String> {
+    pub fn generate_slab(
+        &self,
+        miller: [i32; 3],
+        layers: i32,
+        vacuum_a: f64,
+    ) -> Result<Self, String> {
         let n_atoms = self.num_atoms();
         if n_atoms == 0 {
             return Err("Cannot generate slab from empty crystal".to_string());
         }
-        
+
         // We will construct the true 3x3 lattice in column-major properly
         // PDB convention: a along x, b in xy plane, c in xyz
         let alpha = self.cell_alpha.to_radians();
@@ -148,9 +154,15 @@ impl CrystalState {
 
         // Eigen uses Column-Major! So we pack col 0, col 1, col 2
         let lattice_col_major = [
-            a, 0.0, 0.0,
-            b * gamma.cos(), b * gamma.sin(), 0.0,
-            cx, cy, cz
+            a,
+            0.0,
+            0.0,
+            b * gamma.cos(),
+            b * gamma.sin(),
+            0.0,
+            cx,
+            cy,
+            cz,
         ];
 
         // Prepare flat positions
@@ -170,7 +182,7 @@ impl CrystalState {
                 miller.as_ptr(),
                 layers,
                 vacuum_a,
-                n_atoms
+                n_atoms,
             )
         };
 
@@ -194,7 +206,7 @@ impl CrystalState {
                 vacuum_a,
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
-                out_types.as_mut_ptr()
+                out_types.as_mut_ptr(),
             );
         }
 
@@ -206,21 +218,24 @@ impl CrystalState {
         let vz = [out_lattice[6], out_lattice[7], out_lattice[8]];
 
         // length
-        let new_a = (vx[0]*vx[0] + vx[1]*vx[1] + vx[2]*vx[2]).sqrt();
-        let new_b = (vy[0]*vy[0] + vy[1]*vy[1] + vy[2]*vy[2]).sqrt();
-        let new_c = (vz[0]*vz[0] + vz[1]*vz[1] + vz[2]*vz[2]).sqrt();
+        let new_a = (vx[0] * vx[0] + vx[1] * vx[1] + vx[2] * vx[2]).sqrt();
+        let new_b = (vy[0] * vy[0] + vy[1] * vy[1] + vy[2] * vy[2]).sqrt();
+        let new_c = (vz[0] * vz[0] + vz[1] * vz[1] + vz[2] * vz[2]).sqrt();
 
         // angles (dot products)
-        let dot_ab = vx[0]*vy[0] + vx[1]*vy[1] + vx[2]*vy[2];
-        let dot_bc = vy[0]*vz[0] + vy[1]*vz[1] + vy[2]*vz[2];
-        let dot_ca = vz[0]*vx[0] + vz[1]*vx[1] + vz[2]*vx[2];
+        let dot_ab = vx[0] * vy[0] + vx[1] * vy[1] + vx[2] * vy[2];
+        let dot_bc = vy[0] * vz[0] + vy[1] * vz[1] + vy[2] * vz[2];
+        let dot_ca = vz[0] * vx[0] + vz[1] * vx[1] + vz[2] * vx[2];
 
         let new_gamma = (dot_ab / (new_a * new_b)).acos().to_degrees();
         let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
         let new_beta = (dot_ca / (new_c * new_a)).acos().to_degrees();
 
         let mut new_state = CrystalState {
-            name: format!("{}_slab_{}_{}_{}", self.name, miller[0], miller[1], miller[2]),
+            name: format!(
+                "{}_slab_{}_{}_{}",
+                self.name, miller[0], miller[1], miller[2]
+            ),
             cell_a: new_a,
             cell_b: new_b,
             cell_c: new_c,
@@ -247,11 +262,11 @@ impl CrystalState {
         // We'll just search the original structure.
         for i in 0..n_new_usize {
             let t = out_types[i] as u8;
-            
+
             // Find an original atom that matches this element
             let mut label = format!("Element{}", t);
             let mut elem = "Unknown".to_string();
-            
+
             for j in 0..n_atoms {
                 if self.atomic_numbers[j] == t {
                     label = self.labels[j].clone();
@@ -262,9 +277,9 @@ impl CrystalState {
 
             new_state.labels.push(label);
             new_state.elements.push(elem);
-            new_state.fract_x.push(out_positions[3*i]);
-            new_state.fract_y.push(out_positions[3*i + 1]);
-            new_state.fract_z.push(out_positions[3*i + 2]);
+            new_state.fract_x.push(out_positions[3 * i]);
+            new_state.fract_y.push(out_positions[3 * i + 1]);
+            new_state.fract_z.push(out_positions[3 * i + 2]);
             new_state.atomic_numbers.push(t);
         }
 
@@ -292,9 +307,15 @@ impl CrystalState {
         let cz = (c * c - cx * cx - cy * cy).sqrt();
 
         let lattice_col_major = [
-            a, 0.0, 0.0,
-            b * gamma.cos(), b * gamma.sin(), 0.0,
-            cx, cy, cz
+            a,
+            0.0,
+            0.0,
+            b * gamma.cos(),
+            b * gamma.sin(),
+            0.0,
+            cx,
+            cy,
+            cz,
         ];
 
         let mut flat_positions = Vec::with_capacity(n_atoms * 3);
@@ -306,12 +327,7 @@ impl CrystalState {
             types.push(self.atomic_numbers[i] as i32);
         }
 
-        let n_new = unsafe {
-            ffi::get_supercell_size(
-                n_atoms,
-                expansion.as_ptr()
-            )
-        };
+        let n_new = unsafe { ffi::get_supercell_size(n_atoms, expansion.as_ptr()) };
 
         if n_new <= 0 {
             return Err("Invalid supercell size calculation".to_string());
@@ -331,7 +347,7 @@ impl CrystalState {
                 expansion.as_ptr(),
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
-                out_types.as_mut_ptr()
+                out_types.as_mut_ptr(),
             );
         }
 
@@ -339,13 +355,13 @@ impl CrystalState {
         let vy = [out_lattice[3], out_lattice[4], out_lattice[5]];
         let vz = [out_lattice[6], out_lattice[7], out_lattice[8]];
 
-        let new_a = (vx[0]*vx[0] + vx[1]*vx[1] + vx[2]*vx[2]).sqrt();
-        let new_b = (vy[0]*vy[0] + vy[1]*vy[1] + vy[2]*vy[2]).sqrt();
-        let new_c = (vz[0]*vz[0] + vz[1]*vz[1] + vz[2]*vz[2]).sqrt();
+        let new_a = (vx[0] * vx[0] + vx[1] * vx[1] + vx[2] * vx[2]).sqrt();
+        let new_b = (vy[0] * vy[0] + vy[1] * vy[1] + vy[2] * vy[2]).sqrt();
+        let new_c = (vz[0] * vz[0] + vz[1] * vz[1] + vz[2] * vz[2]).sqrt();
 
-        let dot_ab = vx[0]*vy[0] + vx[1]*vy[1] + vx[2]*vy[2];
-        let dot_bc = vy[0]*vz[0] + vy[1]*vz[1] + vy[2]*vz[2];
-        let dot_ca = vz[0]*vx[0] + vz[1]*vx[1] + vz[2]*vx[2];
+        let dot_ab = vx[0] * vy[0] + vx[1] * vy[1] + vx[2] * vy[2];
+        let dot_bc = vy[0] * vz[0] + vy[1] * vz[1] + vy[2] * vz[2];
+        let dot_ca = vz[0] * vx[0] + vz[1] * vx[1] + vz[2] * vx[2];
 
         let new_gamma = (dot_ab / (new_a * new_b)).acos().to_degrees();
         let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
@@ -376,7 +392,7 @@ impl CrystalState {
             let t = out_types[i] as u8;
             let mut label = format!("Element{}", t);
             let mut elem = "Unknown".to_string();
-            
+
             for j in 0..n_atoms {
                 if self.atomic_numbers[j] == t {
                     label = self.labels[j].clone();
@@ -387,9 +403,9 @@ impl CrystalState {
 
             new_state.labels.push(label);
             new_state.elements.push(elem);
-            new_state.fract_x.push(out_positions[3*i]);
-            new_state.fract_y.push(out_positions[3*i + 1]);
-            new_state.fract_z.push(out_positions[3*i + 2]);
+            new_state.fract_x.push(out_positions[3 * i]);
+            new_state.fract_y.push(out_positions[3 * i + 1]);
+            new_state.fract_z.push(out_positions[3 * i + 2]);
             new_state.atomic_numbers.push(t);
         }
 
@@ -399,7 +415,12 @@ impl CrystalState {
     }
 
     /// Add a new atom to the crystal, checking for collisions first
-    pub fn try_add_atom(&mut self, element_symbol: &str, atomic_number: u8, fract_pos: [f64; 3]) -> Result<(), CollisionError> {
+    pub fn try_add_atom(
+        &mut self,
+        element_symbol: &str,
+        atomic_number: u8,
+        fract_pos: [f64; 3],
+    ) -> Result<(), CollisionError> {
         // Collect lattice and current positions to pass to FFI
         let alpha = self.cell_alpha.to_radians();
         let beta = self.cell_beta.to_radians();
@@ -414,9 +435,15 @@ impl CrystalState {
 
         // Eigen uses Column-Major! So we pack col 0, col 1, col 2
         let lattice_col_major = [
-            a, 0.0, 0.0,
-            b * gamma.cos(), b * gamma.sin(), 0.0,
-            cx, cy, cz
+            a,
+            0.0,
+            0.0,
+            b * gamma.cos(),
+            b * gamma.sin(),
+            0.0,
+            cx,
+            cy,
+            cz,
         ];
 
         let mut flat_positions = Vec::with_capacity(self.num_atoms() * 3);
@@ -432,7 +459,7 @@ impl CrystalState {
                 flat_positions.as_ptr(),
                 self.num_atoms(),
                 fract_pos.as_ptr(),
-                0.5 // 0.5Å threshold
+                0.5, // 0.5Å threshold
             )
         };
 
@@ -450,7 +477,7 @@ impl CrystalState {
         self.atomic_numbers.push(atomic_number);
         self.version += 1;
         self.fractional_to_cartesian();
-        
+
         Ok(())
     }
 
@@ -460,7 +487,7 @@ impl CrystalState {
         let mut sorted_indices = indices.to_vec();
         sorted_indices.sort_unstable();
         sorted_indices.dedup();
-        
+
         for &idx in sorted_indices.iter().rev() {
             if idx < self.num_atoms() {
                 self.labels.remove(idx);
@@ -477,7 +504,12 @@ impl CrystalState {
     }
 
     /// Substitute atoms by their indices with a new element
-    pub fn substitute_atoms(&mut self, indices: &[usize], new_element_symbol: &str, new_atomic_number: u8) {
+    pub fn substitute_atoms(
+        &mut self,
+        indices: &[usize],
+        new_element_symbol: &str,
+        new_atomic_number: u8,
+    ) {
         for &idx in indices {
             if idx < self.num_atoms() {
                 self.labels[idx] = format!("{}{}", new_element_symbol, idx + 1);
@@ -496,9 +528,14 @@ mod tests {
     fn dummy_crystal() -> CrystalState {
         let mut state = CrystalState {
             name: "Test".to_string(),
-            cell_a: 1.0, cell_b: 1.0, cell_c: 1.0,
-            cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
-            spacegroup_hm: "P1".to_string(), spacegroup_number: 1,
+            cell_a: 1.0,
+            cell_b: 1.0,
+            cell_c: 1.0,
+            cell_alpha: 90.0,
+            cell_beta: 90.0,
+            cell_gamma: 90.0,
+            spacegroup_hm: "P1".to_string(),
+            spacegroup_number: 1,
             labels: vec!["H1".to_string(), "O1".to_string()],
             elements: vec!["H".to_string(), "O".to_string()],
             fract_x: vec![0.0, 0.5],
@@ -517,15 +554,21 @@ mod tests {
     fn test_try_add_atom() {
         let mut c = dummy_crystal();
         // Change cell to 5.0 to safely add atoms
-        c.cell_a = 5.0; c.cell_b = 5.0; c.cell_c = 5.0;
-        let res = c.try_add_atom("C", 6, [0.25, 0.25, 0.25]); 
+        c.cell_a = 5.0;
+        c.cell_b = 5.0;
+        c.cell_c = 5.0;
+        let res = c.try_add_atom("C", 6, [0.25, 0.25, 0.25]);
         assert!(res.is_ok(), "Should be added successfully");
         assert_eq!(c.num_atoms(), 3, "Should have 3 atoms");
         assert_eq!(c.labels[2], "C3", "Label should be C3");
         assert_eq!(c.elements[2], "C", "Element should be C");
         assert_eq!(c.atomic_numbers[2], 6, "Atomic number should be 6");
         assert_eq!(c.version, 2, "Version should be incremented");
-        assert_eq!(c.cart_positions.len(), 3, "Cartesian positions should be updated");
+        assert_eq!(
+            c.cart_positions.len(),
+            3,
+            "Cartesian positions should be updated"
+        );
     }
 
     #[test]
@@ -535,10 +578,14 @@ mod tests {
         assert_eq!(c.num_atoms(), 1, "Should have 1 atom remaining");
         assert_eq!(c.labels[0], "O1", "Remaining atom should be O1");
         assert_eq!(c.version, 2, "Version should be incremented");
-        assert_eq!(c.cart_positions.len(), 1, "Cartesian positions should be updated");
-        
+        assert_eq!(
+            c.cart_positions.len(),
+            1,
+            "Cartesian positions should be updated"
+        );
+
         // Delete out of bounds should be safe
-        c.delete_atoms(&[5]); 
+        c.delete_atoms(&[5]);
         assert_eq!(c.num_atoms(), 1);
     }
 

@@ -5,7 +5,7 @@
 //!
 //! Run: cargo bench --bench bench_ffi
 
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use crystal_canvas::crystal_state::CrystalState;
 use crystal_canvas::ffi;
 
@@ -41,9 +41,7 @@ fn bench_fract_to_cart_nacl(c: &mut Criterion) {
 
     c.bench_function("fract_to_cart_nacl", |b| {
         b.iter(|| {
-            let mut state = CrystalState::from_ffi(
-                ffi::parse_cif_file(&path).unwrap()
-            );
+            let mut state = CrystalState::from_ffi(ffi::parse_cif_file(&path).unwrap());
             state.fractional_to_cartesian();
             black_box(state.cart_positions.len());
         });
@@ -58,7 +56,11 @@ fn bench_fract_to_cart_nacl(c: &mut Criterion) {
 /// Target: < 0.5ms (500 µs)
 fn bench_ffi_roundtrip_1000_atoms(c: &mut Criterion) {
     let input: Vec<ffi::FfiVec3f> = (0..1000)
-        .map(|i| ffi::FfiVec3f { x: i as f32 * 0.1, y: 0.0, z: 0.0 })
+        .map(|i| ffi::FfiVec3f {
+            x: i as f32 * 0.1,
+            y: 0.0,
+            z: 0.0,
+        })
         .collect();
 
     c.bench_function("ffi_roundtrip_1000_atoms", |b| {

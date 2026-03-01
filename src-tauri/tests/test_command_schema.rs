@@ -77,7 +77,10 @@ enum CrystalCommand {
 fn test_negative_index_rejected() {
     let json = r#"{"action": "delete_atoms", "params": {"indices": [-1]}}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "Negative index should be rejected by u32 type");
+    assert!(
+        result.is_err(),
+        "Negative index should be rejected by u32 type"
+    );
 }
 
 /// Missing required field (indices) in delete_atoms → Err.
@@ -85,7 +88,10 @@ fn test_negative_index_rejected() {
 fn test_missing_required_field_rejected() {
     let json = r#"{"action": "delete_atoms", "params": {}}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "Missing 'indices' field should be rejected");
+    assert!(
+        result.is_err(),
+        "Missing 'indices' field should be rejected"
+    );
 }
 
 /// Unknown action type → Err.
@@ -101,7 +107,10 @@ fn test_unknown_action_rejected() {
 fn test_unknown_fields_in_params_rejected() {
     let json = r#"{"action": "delete_atoms", "params": {"indices": [0], "evil": true}}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "Unknown fields should be rejected (deny_unknown_fields)");
+    assert!(
+        result.is_err(),
+        "Unknown fields should be rejected (deny_unknown_fields)"
+    );
 }
 
 /// Extra fields at top level → Err.
@@ -109,7 +118,10 @@ fn test_unknown_fields_in_params_rejected() {
 fn test_unknown_top_level_fields_rejected() {
     let json = r#"{"action": "delete_atoms", "params": {"indices": [0]}, "inject": "payload"}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "Unknown top-level fields should be rejected");
+    assert!(
+        result.is_err(),
+        "Unknown top-level fields should be rejected"
+    );
 }
 
 /// Completely malformed JSON → Err.
@@ -162,7 +174,8 @@ fn test_valid_delete_atoms_accepted() {
 /// Valid add_atom command.
 #[test]
 fn test_valid_add_atom_accepted() {
-    let json = r#"{"action": "add_atom", "params": {"element": "Si", "frac_pos": [0.25, 0.25, 0.25]}}"#;
+    let json =
+        r#"{"action": "add_atom", "params": {"element": "Si", "frac_pos": [0.25, 0.25, 0.25]}}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
     assert!(result.is_ok(), "Valid add_atom should be accepted");
 }

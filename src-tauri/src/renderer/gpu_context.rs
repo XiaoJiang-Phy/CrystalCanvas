@@ -1,8 +1,8 @@
 //! wgpu device/queue/surface initialization — Metal backend on macOS, Vulkan on Linux
 
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
 use wgpu;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::render_config::RenderConfig;
 

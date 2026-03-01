@@ -1,8 +1,8 @@
 //! Top-level Renderer — owns GPU context, camera, pipeline, and buffers; provides render() + resize()
 
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
@@ -33,7 +33,7 @@ pub struct Renderer {
 impl Renderer {
     /// Create a new Renderer attached to the given window.
     /// Initializes GPU context, camera, pipeline, and an empty instance buffer.
-    pub fn new<W>(window: Arc<W>, width: u32, height: u32) -> Self 
+    pub fn new<W>(window: Arc<W>, width: u32, height: u32) -> Self
     where
         W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
     {
@@ -104,11 +104,8 @@ impl Renderer {
                 .set_aspect(new_size.width as f32, new_size.height as f32);
 
             // Rebuild depth texture to match new size
-            let (depth_texture, depth_view) = pipeline::create_depth_texture(
-                &self.gpu.device,
-                new_size.width,
-                new_size.height,
-            );
+            let (depth_texture, depth_view) =
+                pipeline::create_depth_texture(&self.gpu.device, new_size.width, new_size.height);
             self._depth_texture = depth_texture;
             self.depth_view = depth_view;
         }
@@ -136,7 +133,7 @@ impl Renderer {
         log::debug!(
             "Instance buffer updated: {} atoms, {} bytes",
             self.instance_count,
-            instances.len() * std::mem::size_of::<AtomInstance>()
+            std::mem::size_of_val(instances)
         );
     }
 
@@ -162,12 +159,12 @@ impl Renderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Build command buffer
-        let mut encoder =
-            self.gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Render Encoder"),
-                });
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

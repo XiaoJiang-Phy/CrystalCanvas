@@ -42,7 +42,7 @@ pub fn load_cif_file(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<(), String> {
     log::info!("load_cif_file: {}", path);
-    
+
     // 1 & 2. Load file (delegating to our format importer)
     let state = crate::io::import::load_file(&path)?;
 
@@ -59,12 +59,12 @@ pub fn load_cif_file(
     // 4. Update the renderer
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
-        
+
         // Auto-adjust camera distance based on unit cell size
         let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
         renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
         renderer.camera.target = glam::Vec3::ZERO;
-        // Optionally update the orthographic scale 
+        // Optionally update the orthographic scale
         if !renderer.camera.is_perspective {
             renderer.camera.set_orthographic(extent * 1.5);
         }
@@ -82,18 +82,19 @@ pub fn add_atom(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
-    
-    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
-    cs.try_add_atom(&element_symbol, atomic_number, fract_pos).map_err(|_| "Collision detected: atom too close to existing atoms")?;
-    
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-    );
+
+    let mut cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
+    cs.try_add_atom(&element_symbol, atomic_number, fract_pos)
+        .map_err(|_| "Collision detected: atom too close to existing atoms")?;
+
+    let instances =
+        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
-    
+
     Ok(())
 }
 
@@ -104,18 +105,18 @@ pub fn delete_atoms(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     log::info!("delete_atoms: {:?}", indices);
-    
-    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+
+    let mut cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
     cs.delete_atoms(&indices);
-    
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-    );
+
+    let instances =
+        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
-    
+
     Ok(())
 }
 
@@ -128,18 +129,18 @@ pub fn substitute_atoms(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     log::info!("substitute_atoms: {:?} -> {}", indices, new_element_symbol);
-    
-    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+
+    let mut cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
     cs.substitute_atoms(&indices, &new_element_symbol, new_atomic_number);
-    
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-    );
+
+    let instances =
+        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
-    
+
     Ok(())
 }
 
@@ -150,8 +151,15 @@ pub fn preview_slab(
     vacuum_a: f64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<crate::crystal_state::CrystalState, String> {
-    log::info!("preview_slab: miller={:?} layers={} vacuum={}", miller, layers, vacuum_a);
-    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    log::info!(
+        "preview_slab: miller={:?} layers={} vacuum={}",
+        miller,
+        layers,
+        vacuum_a
+    );
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
     cs.generate_slab(miller, layers, vacuum_a)
 }
 
@@ -161,7 +169,8 @@ pub fn preview_supercell(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<crate::crystal_state::CrystalState, String> {
     log::info!("preview_supercell: {:?}", expansion);
-    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
     cs.generate_supercell(&expansion)
 }
-

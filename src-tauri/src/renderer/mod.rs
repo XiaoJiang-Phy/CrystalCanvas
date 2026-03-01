@@ -6,4 +6,5 @@ pub mod instance;
 pub mod pipeline;
 pub mod ray_picking;
 pub mod render_config;
+#[allow(clippy::module_inception)]
 pub mod renderer;

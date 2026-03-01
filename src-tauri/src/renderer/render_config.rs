@@ -41,7 +41,10 @@ impl RenderConfig {
         log::info!("  Device:     {}", config.device_name);
         log::info!("  Backend:    {}", config.backend_name);
         log::info!("  Type:       {}", config.device_type);
-        log::info!("  Max buffer: {} MB", config.max_buffer_size / (1024 * 1024));
+        log::info!(
+            "  Max buffer: {} MB",
+            config.max_buffer_size / (1024 * 1024)
+        );
         log::info!("  Max tex 2D: {}", config.max_texture_dimension_2d);
         log::info!("  Bind groups:{}", config.max_bind_groups);
         log::info!("===========================");

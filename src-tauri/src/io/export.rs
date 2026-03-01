@@ -33,14 +33,18 @@ impl PoscarFile {
 
         let mut ordered_elements = Vec::new();
         let mut atom_groups: HashMap<String, Vec<[f64; 3]>> = HashMap::new();
-        
+
         for i in 0..state.num_atoms() {
             let elem = &state.elements[i];
             if !atom_groups.contains_key(elem) {
                 ordered_elements.push(elem.clone());
                 atom_groups.insert(elem.clone(), Vec::new());
             }
-            atom_groups.get_mut(elem).unwrap().push([state.fract_x[i], state.fract_y[i], state.fract_z[i]]);
+            atom_groups.get_mut(elem).unwrap().push([
+                state.fract_x[i],
+                state.fract_y[i],
+                state.fract_z[i],
+            ]);
         }
 
         let mut counts = Vec::new();
@@ -92,7 +96,6 @@ pub fn export_poscar(state: &CrystalState, path: &str) -> io::Result<()> {
     poscar.write_to(&mut file)
 }
 
-
 /// Abstract structure representing a LAMMPS Data file
 pub struct LammpsDataFile {
     pub comment: String,
@@ -140,11 +143,11 @@ impl LammpsDataFile {
         for i in 0..state.num_atoms() {
             let elem = &state.elements[i];
             let type_id = type_map.get(elem).unwrap();
-            
+
             let fx = state.fract_x[i];
             let fy = state.fract_y[i];
             let fz = state.fract_z[i];
-            
+
             let x = lx * fx + xy * fy + xz * fz;
             let y = ly * fy + yz * fz;
             let z = lz * fz;
@@ -170,21 +173,29 @@ impl LammpsDataFile {
         writeln!(writer, "{}\n", self.comment)?;
         writeln!(writer, "{} atoms", self.num_atoms)?;
         writeln!(writer, "{} atom types\n", self.atom_types)?;
-        
+
         writeln!(writer, "0.0 {:.6} xlo xhi", self.box_x[1])?;
         writeln!(writer, "0.0 {:.6} ylo yhi", self.box_y[1])?;
         writeln!(writer, "0.0 {:.6} zlo zhi", self.box_z[1])?;
-        writeln!(writer, "{:.6} {:.6} {:.6} xy xz yz\n", self.tilts[0], self.tilts[1], self.tilts[2])?;
-        
+        writeln!(
+            writer,
+            "{:.6} {:.6} {:.6} xy xz yz\n",
+            self.tilts[0], self.tilts[1], self.tilts[2]
+        )?;
+
         writeln!(writer, "Masses\n")?;
         for m in &self.masses {
             writeln!(writer, "{} {:.5} # {}", m.0, m.1, m.2)?;
         }
         writeln!(writer)?;
-        
+
         writeln!(writer, "Atoms # atomic\n")?;
         for a in &self.atoms {
-            writeln!(writer, "{} {} {:.6} {:.6} {:.6}", a.0, a.1, a.2[0], a.2[1], a.2[2])?;
+            writeln!(
+                writer,
+                "{} {} {:.6} {:.6} {:.6}",
+                a.0, a.1, a.2[0], a.2[1], a.2[2]
+            )?;
         }
         Ok(())
     }
@@ -198,23 +209,74 @@ pub fn export_lammps_data(state: &CrystalState, path: &str) -> io::Result<()> {
 
 fn get_atomic_mass(element: &str) -> f64 {
     match element {
-        "H" => 1.0078, "He" => 4.0026, "Li" => 6.9410, "Be" => 9.0122, "B" => 10.811, 
-        "C" => 12.011, "N" => 14.007, "O" => 15.999, "F" => 18.998, "Ne" => 20.180,
-        "Na" => 22.990, "Mg" => 24.305, "Al" => 26.982, "Si" => 28.085, "P" => 30.974, 
-        "S" => 32.060, "Cl" => 35.450, "Ar" => 39.948, "K" => 39.098, "Ca" => 40.078,
-        "Sc" => 44.956, "Ti" => 47.867, "V" => 50.9415, "Cr" => 51.9961, "Mn" => 54.938, "Fe" => 55.845,
-        "Co" => 58.933, "Ni" => 58.693, "Cu" => 63.546, "Zn" => 65.38, "Ga" => 69.723,
-        "Ge" => 72.630, "As" => 74.922, "Se" => 78.971, "Br" => 79.904, "Kr" => 83.798,
-        "Rb" => 85.468, "Sr" => 87.62, "Y" => 88.906, "Zr" => 91.224, "Nb" => 92.906, "Mo" => 95.95, 
-        "Ru" => 101.07, "Rh" => 102.91, "Pd" => 106.42, "Ag" => 107.87, "Cd" => 112.41,
-        "In" => 114.82, "Sn" => 118.71, "Sb" => 121.76, "Te" => 127.60, "I" => 126.90, "Xe" => 131.29,
-        "Cs" => 132.91, "Ba" => 137.33, "La" => 138.91, "Ce" => 140.12, "Pr" => 140.91,
-        "W" => 183.84, "Pt" => 195.08, "Au" => 196.97, "Hg" => 200.59, "Tl" => 204.38, 
-        "Pb" => 207.2, "Bi" => 208.98,
+        "H" => 1.0078,
+        "He" => 4.0026,
+        "Li" => 6.9410,
+        "Be" => 9.0122,
+        "B" => 10.811,
+        "C" => 12.011,
+        "N" => 14.007,
+        "O" => 15.999,
+        "F" => 18.998,
+        "Ne" => 20.180,
+        "Na" => 22.990,
+        "Mg" => 24.305,
+        "Al" => 26.982,
+        "Si" => 28.085,
+        "P" => 30.974,
+        "S" => 32.060,
+        "Cl" => 35.450,
+        "Ar" => 39.948,
+        "K" => 39.098,
+        "Ca" => 40.078,
+        "Sc" => 44.956,
+        "Ti" => 47.867,
+        "V" => 50.9415,
+        "Cr" => 51.9961,
+        "Mn" => 54.938,
+        "Fe" => 55.845,
+        "Co" => 58.933,
+        "Ni" => 58.693,
+        "Cu" => 63.546,
+        "Zn" => 65.38,
+        "Ga" => 69.723,
+        "Ge" => 72.630,
+        "As" => 74.922,
+        "Se" => 78.971,
+        "Br" => 79.904,
+        "Kr" => 83.798,
+        "Rb" => 85.468,
+        "Sr" => 87.62,
+        "Y" => 88.906,
+        "Zr" => 91.224,
+        "Nb" => 92.906,
+        "Mo" => 95.95,
+        "Ru" => 101.07,
+        "Rh" => 102.91,
+        "Pd" => 106.42,
+        "Ag" => 107.87,
+        "Cd" => 112.41,
+        "In" => 114.82,
+        "Sn" => 118.71,
+        "Sb" => 121.76,
+        "Te" => 127.60,
+        "I" => 126.90,
+        "Xe" => 131.29,
+        "Cs" => 132.91,
+        "Ba" => 137.33,
+        "La" => 138.91,
+        "Ce" => 140.12,
+        "Pr" => 140.91,
+        "W" => 183.84,
+        "Pt" => 195.08,
+        "Au" => 196.97,
+        "Hg" => 200.59,
+        "Tl" => 204.38,
+        "Pb" => 207.2,
+        "Bi" => 208.98,
         _ => 1.0, // Default for unknown
     }
 }
-
 
 /// Abstract structure representing a Quantum ESPRESSO input file
 pub struct QeInputFile {
@@ -266,7 +328,10 @@ impl QeInputFile {
 
         let mut atoms = Vec::new();
         for i in 0..state.num_atoms() {
-            atoms.push((state.elements[i].clone(), [state.fract_x[i], state.fract_y[i], state.fract_z[i]]));
+            atoms.push((
+                state.elements[i].clone(),
+                [state.fract_x[i], state.fract_y[i], state.fract_z[i]],
+            ));
         }
 
         let k_density = 30.0;
@@ -292,24 +357,49 @@ impl QeInputFile {
 
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         writeln!(writer, "{}\n", self.header)?;
-        
+
         writeln!(writer, "&CONTROL")?;
         writeln!(writer, "  title = '{}',", self.title)?;
-        writeln!(writer, "  calculation = 'scf', prefix = '{}', outdir = './tmp', verbosity = 'high',", self.prefix)?;
-        writeln!(writer, "  tprnfor = .true., tstress = .true., forc_conv_thr = 1.0d-7, etot_conv_thr = 1.0d-9, nstep = 100,")?;
+        writeln!(
+            writer,
+            "  calculation = 'scf', prefix = '{}', outdir = './tmp', verbosity = 'high',",
+            self.prefix
+        )?;
+        writeln!(
+            writer,
+            "  tprnfor = .true., tstress = .true., forc_conv_thr = 1.0d-7, etot_conv_thr = 1.0d-9, nstep = 100,"
+        )?;
         writeln!(writer, "/\n")?;
-        
+
         writeln!(writer, "&SYSTEM")?;
-        writeln!(writer, "  ibrav = {}, nat = {}, ntyp = {},", self.ibrav, self.num_atoms, self.num_types)?;
-        writeln!(writer, "  A = {:.10}, B = {:.10}, C = {:.10},", self.cell_abc[0], self.cell_abc[1], self.cell_abc[2])?;
-        writeln!(writer, "  cosAB = {:.10}, cosAC = {:.10}, cosBC = {:.10},", self.cell_cos_abc[0], self.cell_cos_abc[1], self.cell_cos_abc[2])?;
-        writeln!(writer, "  ecutwfc = 60, occupations = 'smearing', smearing = 'gauss', degauss = 1.0d-2,")?;
+        writeln!(
+            writer,
+            "  ibrav = {}, nat = {}, ntyp = {},",
+            self.ibrav, self.num_atoms, self.num_types
+        )?;
+        writeln!(
+            writer,
+            "  A = {:.10}, B = {:.10}, C = {:.10},",
+            self.cell_abc[0], self.cell_abc[1], self.cell_abc[2]
+        )?;
+        writeln!(
+            writer,
+            "  cosAB = {:.10}, cosAC = {:.10}, cosBC = {:.10},",
+            self.cell_cos_abc[0], self.cell_cos_abc[1], self.cell_cos_abc[2]
+        )?;
+        writeln!(
+            writer,
+            "  ecutwfc = 60, occupations = 'smearing', smearing = 'gauss', degauss = 1.0d-2,"
+        )?;
         writeln!(writer, "/\n")?;
-        
-        writeln!(writer, "&ELECTRONS\n  conv_thr = 1.0d-12,\n  mixing_beta = 0.3d0,\n/\n")?;
+
+        writeln!(
+            writer,
+            "&ELECTRONS\n  conv_thr = 1.0d-12,\n  mixing_beta = 0.3d0,\n/\n"
+        )?;
         writeln!(writer, "&IONS\n/\n")?;
         writeln!(writer, "&CELL\n  press_conv_thr = 0.02,\n/\n")?;
-        
+
         writeln!(writer, "ATOMIC_SPECIES")?;
         for s in &self.atomic_species {
             writeln!(writer, "  {} {:.5} {}.upf", s.0, s.1, s.0)?;
@@ -324,13 +414,21 @@ impl QeInputFile {
 
         writeln!(writer, "ATOMIC_POSITIONS (crystal)")?;
         for a in &self.atoms {
-            writeln!(writer, "  {:2} {:.10} {:.10} {:.10}", a.0, a.1[0], a.1[1], a.1[2])?;
+            writeln!(
+                writer,
+                "  {:2} {:.10} {:.10} {:.10}",
+                a.0, a.1[0], a.1[1], a.1[2]
+            )?;
         }
         writeln!(writer)?;
 
         writeln!(writer, "K_POINTS {{automatic}}")?;
-        writeln!(writer, "  {} {} {} 0 0 0", self.kpoints[0], self.kpoints[1], self.kpoints[2])?;
-        
+        writeln!(
+            writer,
+            "  {} {} {} 0 0 0",
+            self.kpoints[0], self.kpoints[1], self.kpoints[2]
+        )?;
+
         Ok(())
     }
 }

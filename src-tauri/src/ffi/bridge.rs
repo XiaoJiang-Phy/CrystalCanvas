@@ -40,6 +40,7 @@ pub mod ffi {
         sites: Vec<FfiAtomSite>,
     }
 
+    #[allow(clippy::missing_safety_doc, clippy::too_many_arguments)]
     unsafe extern "C++" {
         include!("crystal_parser.hpp");
         include!("physics_kernel.hpp");
@@ -60,15 +61,12 @@ pub mod ffi {
             positions: *const f64,
             types: *const i32,
             n_atoms: usize,
-            symprec: f64
+            symprec: f64,
         ) -> i32;
 
         /// Get the number of atoms for a specific supercell expansion
         /// Returns Number of new atoms (n_atoms * determinant(expansion))
-        unsafe fn get_supercell_size(
-            n_atoms: usize,
-            expansion: *const i32
-        ) -> i32;
+        unsafe fn get_supercell_size(n_atoms: usize, expansion: *const i32) -> i32;
 
         /// Build a supercell.
         unsafe fn build_supercell(
@@ -79,7 +77,7 @@ pub mod ffi {
             expansion: *const i32,
             out_lattice: *mut f64,
             out_positions: *mut f64,
-            out_types: *mut i32
+            out_types: *mut i32,
         );
 
         /// Get slab size
@@ -88,7 +86,7 @@ pub mod ffi {
             miller: *const i32,
             layers: i32,
             vacuum_a: f64,
-            n_atoms: usize
+            n_atoms: usize,
         ) -> i32;
 
         /// Build slab
@@ -102,7 +100,7 @@ pub mod ffi {
             vacuum_a: f64,
             out_lattice: *mut f64,
             out_positions: *mut f64,
-            out_types: *mut i32
+            out_types: *mut i32,
         );
 
         /// Check MIC Overlap
@@ -111,7 +109,7 @@ pub mod ffi {
             positions: *const f64,
             n_atoms: usize,
             new_frac_pos: *const f64,
-            threshold_a: f64
+            threshold_a: f64,
         ) -> bool;
     }
 }
