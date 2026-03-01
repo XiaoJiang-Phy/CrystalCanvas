@@ -5,8 +5,7 @@
 //! - Engine rejects GPU Buffer updates for invalid structures
 //! - Atoms at a safe distance can be inserted normally
 //!
-//! Current Status: #[ignore] — Awaiting overlap detection module implementation
-
+//! Current Status: Active — Overlap detection module is fully implemented
 use crystal_canvas::crystal_state::{CrystalState, CollisionError};
 
 // ===========================================================================
