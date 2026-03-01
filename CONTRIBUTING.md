@@ -12,6 +12,7 @@ CrystalCanvas is a cross-language project (Rust + C++ + TypeScript). We recommen
 - **macOS (Primary)**: Install Xcode Command Line Tools: `xcode-select --install`.
 - **Linux (Ubuntu)**: Install `build-essential`, `cmake`, `libgtk-3-dev`, and `libwebkit2gtk-4.1-dev`.
 - **Rust**: Follow instructions in `.agents/rules.md` to install Rust locally using `.rustup` and `.cargo` folders.
+- **Node.js / package manager**: We strictly use **`pnpm`** to manage dependencies and avoid phantom dependency issues. Do not use `npm` or `yarn`.
 
 ### 2. Fork and Clone
 1. Fork the repository on GitHub.
@@ -21,10 +22,15 @@ CrystalCanvas is a cross-language project (Rust + C++ + TypeScript). We recommen
    cd CrystalCanvas
    ```
 
-### 3. Build the Project
-We use a unified build system. Running `cargo build` will automatically compile both the Rust logic and the C++ physics kernel.
+### 3. Build & Run the Project
+We use a unified build system powered by Tauri. Running the development server will automatically handle both the frontend bundle and the Rust/C++ compilation.
 ```bash
-cargo build
+# 1. Install frontend dependencies
+pnpm install
+
+# 2. Start the application (compiles Rust + C++ automatically)
+source dev_env.sh
+pnpm run dev
 ```
 
 ---
@@ -55,8 +61,8 @@ cargo build
 - Ensure all C++ exceptions are caught within the wrapper and converted to Rust `Result` types.
 
 ### Web (React + TypeScript)
-- Use functional components and hooks.
-- Style with TailwindCSS.
+- **UI Frameworks Banned**: Build all components from scratch using **pure TailwindCSS** classes. Do not use UI libraries like Headless UI, DaisyUI, or Radix UI.
+- **Strict IPC Typing**: Any data crossing the Rust ↔ TypeScript boundary (like `CrystalState` or `CrystalCommand`) must have a strict 1:1 mapped TypeScript interface located in `src/types/`. Avoid `any`.
 - Avoid holding physical state in the UI; use the Command Bus to interact with the backend.
 
 ### Shaders (WGSL)
