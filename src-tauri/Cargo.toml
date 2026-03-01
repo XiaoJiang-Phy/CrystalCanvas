@@ -1,6 +1,7 @@
 [package]
 name = "crystal-canvas"
 version = "0.1.0"
+authors = ["Xiao Jiang and CrystalCanvas Contributors"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 default-run = "crystal-canvas"
