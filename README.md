@@ -11,7 +11,7 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 - **🖱️ Pixel-precise manual modeling** — Hardware-accelerated 3D view with real-time atom selection, addition, deletion, and element substitution.
 - **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
 - **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*.
-- **🔌 Seamless DFT/MD integration** — Native import/export for VASP (POSCAR), LAMMPS, Quantum ESPRESSO, CIF, XYZ, PDB formats.
+- [🔌 **Seamless DFT/MD integration**](docs/knowledge/M7_Linker_IO_Learnings.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
 - **🛡️ Memory-safe architecture** — Rust logic layer eliminates crashes from dangling pointers and buffer overflows.
 
 ---
@@ -26,16 +26,16 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 ├─────────────────────────────────────────────────────┤
 │  Rust / wgpu  (Rendering: Impostor Sphere)          │
 ├─────────────────────────────────────────────────────┤
-│  C++ Kernel  (Spglib / Gemmi / Eigen)               │
+│  C++ Physics Kernel  (Spglib / Gemmi / Eigen)       │
 └─────────────────────────────────────────────────────┘
 ```
 
 | Layer | Technology | Role |
 |---|---|---|
 | **Presentation** | React + TailwindCSS | UI panels, toolbars, chat |
-| **Application** | Rust / Tauri 2.0 | State management, IPC, file I/O |
+| **Application** | Rust / Tauri 2.0 | State management, IPC, I/O pipeline |
 | **Rendering** | Rust / wgpu | GPU-accelerated 3D (Metal / Vulkan / DX12) |
-| **Compute** | C++ (Spglib, Gemmi, Eigen) | Symmetry, slab cleaving, parsing |
+| **Compute** | C++ (Spglib, Gemmi, Eigen) | Symmetry, Overlap Detection, MIC |
 | **FFI Bridge** | `cxx` (Rust ↔ C++) | Type-safe, zero-copy data transfer |
 
 ---
@@ -47,7 +47,7 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 CrystalCanvas is currently in active development.
 
 #### Run Rendering Demo (Standalone)
-We have just completed the **M3: High-Performance Rendering Engine** phase. You can run the standalone GPU-accelerated demo now:
+We have just completed the **M1-M3: Core Infrastructure & Rendering Engine** phases. You can run the standalone GPU-accelerated demo now:
 
 ```bash
 # 1. Setup local environment (if not already done)
@@ -59,7 +59,7 @@ RUST_LOG=info cargo run --bin render_demo
 ```
 *Controls: Left-click drag to rotate, scroll to zoom.*
 
-#### Full App Development (M4+)
+#### Full App Development (M4-M8)
 ```bash
 # Install Node dependencies
 npm install
@@ -76,8 +76,8 @@ npm run tauri dev
 
 - [x] **M1-M2: Infrastructure & Data Model** — Rust/C++ bridge, CIF parsing.
 - [x] **M3: High-Performance Rendering (wgpu)** — Impostor spheres, ray-picking, orbital camera.
-- [ ] **M4: UI Integration (Tauri + React)** — (In Progress) Hybrid window, sidebars, file loading.
-- [ ] **M5-M6: Geometry Algorithms** — Slab cleaving, supercells.
+- [x] **M4-M6: UI Integration & Geometry Ops** — Hybrid window, slab cleaving, supercells, atomic operations.
+- [x] **M7-M8: DFT/MD Ecology & I/O Pipeline** — Overlap detection (MIC), native exporters (VASP, LAMMPS, QE).
 - [ ] **M9+: AI Agent Integration** — Natural language modeling commands.
 
 ---
