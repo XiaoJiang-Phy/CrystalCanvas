@@ -10,7 +10,7 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 - **🖱️ Pixel-precise manual modeling** — Hardware-accelerated 3D view with real-time atom selection, addition, deletion, and element substitution.
 - **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
-- **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*.
+- **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*. Context-aware LLM acts as a semantic parameterizer and command orchestrator with strict physics validation (MIC overlap checks).
 - [🔌 **Seamless DFT/MD integration**](docs/knowledge/M7_Linker_IO_Learnings.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
 - **🛡️ Memory-safe architecture** — Rust logic layer eliminates crashes from dangling pointers and buffer overflows.
 
@@ -59,13 +59,14 @@ RUST_LOG=info cargo run --bin render_demo
 ```
 *Controls: Left-click drag to rotate, scroll to zoom.*
 
-#### Full App Development (M4-M8)
+#### Full App App (M4-M8)
 ```bash
-# Install Node dependencies
-npm install
+# Install dependencies using pnpm
+pnpm install
 
 # Run in development mode
-npm run tauri dev
+source dev_env.sh
+pnpm run dev
 ```
 
 > **Note**: The C++ kernel (Spglib, Gemmi) is compiled automatically via `build.rs` — no manual CMake step required.
@@ -77,27 +78,34 @@ npm run tauri dev
 - [x] **M1-M2: Infrastructure & Data Model** — Rust/C++ bridge, CIF parsing.
 - [x] **M3: High-Performance Rendering (wgpu)** — Impostor spheres, ray-picking, orbital camera.
 - [x] **M4-M6: UI Integration & Geometry Ops** — Hybrid window, slab cleaving, supercells, atomic operations.
-- [x] **M7-M8: DFT/MD Ecology & I/O Pipeline** — Overlap detection (MIC), native exporters (VASP, LAMMPS, QE).
-- [ ] **M9+: AI Agent Integration** — Natural language modeling commands.
+- [x] **M7-M8: DFT/MD Ecology & I/O Pipeline** — Overlap detection (MIC), native exporters (VASP, QE, LAMMPS).
+- [ ] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
+- [ ] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
+- [ ] **M11: Volumetric & Magnetic States** — Real-time Compute Shader isosurfaces (CHGCAR) and non-collinear spin vectors.
+- [ ] **M12+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
 
 ---
 
 ## 📁 Project Structure
 
-```
+```text
 CrystalCanvas/
-├── src-tauri/          # Rust backend (Tauri commands, state, wgpu)
-│   ├── src/
-│   ├── build.rs        # Unified Rust + C++ build
+├── src-tauri/          # Rust backend (Tauri commands, state handling, wgpu layer)
+│   ├── src/          # Rust core logic (State Manager, Command Router)
+│   ├── build.rs        # Unified Rust + C++ build script (cmake crate)
 │   └── Cargo.toml
-├── src/                # React frontend (TypeScript + TailwindCSS)
+├── src/                # React frontend (TypeScript + TailwindCSS components)
+│   ├── components/
+│   └── types/          # Strict TS IPC mappings (e.g., CrystalState, CrystalCommand)
 ├── cpp/                # C++ physics kernel
-│   ├── include/        # Public headers (thin C wrappers)
-│   ├── src/            # Implementation (Spglib, Gemmi, Eigen)
+│   ├── include/        # Public C-compatible headers (cxx bridge)
+│   ├── src/            # Implementation code (Spglib, Gemmi, Eigen integrations)
 │   └── CMakeLists.txt
-├── shaders/            # WGSL shader sources
-├── README.md
-└── .gitignore
+├── shaders/            # WGSL compute/render shader sources
+├── docs/               # System documentation and knowledge base
+├── dev_env.sh          # Local toolchain environment activation script
+├── pnpm-lock.yaml      # Strict dependency lockfile
+└── README.md
 ```
 
 ---
