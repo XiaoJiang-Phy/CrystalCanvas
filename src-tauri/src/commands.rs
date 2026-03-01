@@ -54,6 +54,7 @@ pub fn load_cif_file(
     let instances = crate::renderer::instance::build_instance_data(
         &state.cart_positions,
         &state.atomic_numbers,
+        &state.elements,
     );
 
     // 4. Update the renderer
@@ -90,7 +91,7 @@ pub fn add_atom(
         .map_err(|_| "Collision detected: atom too close to existing atoms")?;
 
     let instances =
-        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers);
+        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers, &cs.elements);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
@@ -112,7 +113,7 @@ pub fn delete_atoms(
     cs.delete_atoms(&indices);
 
     let instances =
-        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers);
+        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers, &cs.elements);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
@@ -136,7 +137,7 @@ pub fn substitute_atoms(
     cs.substitute_atoms(&indices, &new_element_symbol, new_atomic_number);
 
     let instances =
-        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers);
+        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers, &cs.elements);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }

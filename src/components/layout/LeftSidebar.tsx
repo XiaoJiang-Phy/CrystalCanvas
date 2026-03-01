@@ -17,7 +17,7 @@ export const LeftSidebar: React.FC = () => {
                         <UnitCellInput label="c" value="14.5" unit="Å" />
                         <UnitCellInput label="γ" value="90" unit="°" />
                     </div>
-                    <InfoRow label="Volume:" value="1508.6 ų" className="pt-1.5 font-medium" />
+                    <InfoRow label="Volume:" value="1508.6 Å³" className="pt-1.5 font-medium" />
                 </div>
             </Panel>
 

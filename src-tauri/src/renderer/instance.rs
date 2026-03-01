@@ -1,5 +1,6 @@
 //! Atom instance data for GPU instanced rendering — maps CrystalState to per-atom GPU buffers
 
+use crate::utils::colors::get_jmol_color;
 use bytemuck::{Pod, Zeroable};
 use wgpu;
 
@@ -54,29 +55,9 @@ impl AtomInstance {
 }
 
 /// Default element colors based on CPK convention.
-/// Returns RGBA as [f32; 4]. Alpha is always 1.0.
-pub fn element_color(atomic_number: u8) -> [f32; 4] {
-    match atomic_number {
-        1 => [1.0, 1.0, 1.0, 1.0],  // H  — white
-        6 => [0.3, 0.3, 0.3, 1.0],  // C  — dark gray
-        7 => [0.2, 0.2, 0.9, 1.0],  // N  — blue
-        8 => [0.9, 0.1, 0.1, 1.0],  // O  — red
-        9 => [0.0, 0.9, 0.2, 1.0],  // F  — green
-        11 => [0.6, 0.3, 0.9, 1.0], // Na — purple
-        12 => [0.0, 0.6, 0.0, 1.0], // Mg — dark green
-        13 => [0.7, 0.7, 0.8, 1.0], // Al — silver
-        14 => [0.5, 0.5, 0.6, 1.0], // Si — gray
-        15 => [0.9, 0.5, 0.0, 1.0], // P  — orange
-        16 => [0.9, 0.8, 0.0, 1.0], // S  — yellow
-        17 => [0.0, 0.9, 0.0, 1.0], // Cl — green
-        20 => [0.4, 0.8, 0.4, 1.0], // Ca — light green
-        22 => [0.6, 0.6, 0.7, 1.0], // Ti — titanium gray
-        26 => [0.7, 0.4, 0.1, 1.0], // Fe — rust orange
-        29 => [0.8, 0.5, 0.2, 1.0], // Cu — copper
-        30 => [0.5, 0.5, 0.7, 1.0], // Zn — blue-gray
-        79 => [0.9, 0.8, 0.0, 1.0], // Au — gold
-        _ => [0.6, 0.4, 0.7, 1.0],  // Default — lavender
-    }
+/// Now delegates to the central Jmol table in utils::colors.
+pub fn element_color(symbol: &str) -> [f32; 4] {
+    get_jmol_color(symbol)
 }
 
 /// Default covalent radius in Å for display purposes.
@@ -111,6 +92,7 @@ pub fn element_radius(atomic_number: u8) -> f32 {
 pub fn build_instance_data(
     cart_positions: &[[f32; 3]],
     atomic_numbers: &[u8],
+    element_symbols: &[String],
 ) -> Vec<AtomInstance> {
     let n = cart_positions.len();
     let mut instances = Vec::with_capacity(n);
@@ -118,7 +100,7 @@ pub fn build_instance_data(
         instances.push(AtomInstance {
             position: cart_positions[i],
             radius: element_radius(atomic_numbers[i]),
-            color: element_color(atomic_numbers[i]),
+            color: element_color(&element_symbols[i]),
         });
     }
     instances
@@ -152,7 +134,17 @@ pub fn build_test_instances(
                         iz as f32 * spacing - offset_z,
                     ],
                     radius: element_radius(elem),
-                    color: element_color(elem),
+                    color: element_color(match elem {
+                        11 => "Na",
+                        17 => "Cl",
+                        8 => "O",
+                        26 => "Fe",
+                        29 => "Cu",
+                        79 => "Au",
+                        14 => "Si",
+                        22 => "Ti",
+                        _ => "H",
+                    }),
                 });
             }
         }
