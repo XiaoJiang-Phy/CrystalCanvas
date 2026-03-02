@@ -65,14 +65,16 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::MainEventsCleared = event {
-                if let Some(renderer_mutex) =
+                let Some(renderer_mutex) =
                     app_handle.try_state::<std::sync::Mutex<renderer::renderer::Renderer>>()
-                {
-                    if let Ok(mut renderer) = renderer_mutex.try_lock() {
-                        if let Err(e) = renderer.render() {
-                            log::warn!("Render error: {:?}", e);
-                        }
-                    }
+                else {
+                    return;
+                };
+                let Ok(mut renderer) = renderer_mutex.try_lock() else {
+                    return;
+                };
+                if let Err(e) = renderer.render() {
+                    log::warn!("Render error: {:?}", e);
                 }
             }
         });

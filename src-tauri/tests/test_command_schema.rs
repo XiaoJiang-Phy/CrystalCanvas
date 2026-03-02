@@ -173,12 +173,13 @@ fn test_sandbox_index_out_of_bounds() {
     use crystal_canvas::crystal_state::CrystalState;
     use crystal_canvas::llm::sandbox::validate_command;
 
-    let mut state = CrystalState::default();
-    // Insert 2 atoms mock
-    state.elements = vec!["Si".to_string(), "Si".to_string()];
-    state.fract_x = vec![0.0, 0.5];
-    state.fract_y = vec![0.0, 0.5];
-    state.fract_z = vec![0.0, 0.5];
+    let state = CrystalState {
+        elements: vec!["Si".to_string(), "Si".to_string()],
+        fract_x: vec![0.0, 0.5],
+        fract_y: vec![0.0, 0.5],
+        fract_z: vec![0.0, 0.5],
+        ..Default::default()
+    };
 
     // Deleting index 2 should fail
     let cmd = CrystalCommand::DeleteAtoms(DeleteAtomsParams { indices: vec![2] });
@@ -223,4 +224,43 @@ fn test_sandbox_supercell_negative_det() {
         matrix: [[-1, 0, 0], [0, 1, 0], [0, 0, 1]],
     });
     assert!(validate_command(&cmd, &state).is_err());
+}
+
+// ===========================================================================
+// End-to-End M9 Integration Test
+// ===========================================================================
+
+#[test]
+fn test_end_to_end_mock_llm() {
+    use crystal_canvas::crystal_state::CrystalState;
+    use crystal_canvas::llm::sandbox::validate_command;
+    use crystal_canvas::llm::router::execute_command;
+    use crystal_canvas::llm::command::CrystalCommand;
+
+    // 1. Initial State
+    let mut state = CrystalState::default();
+    assert_eq!(state.num_atoms(), 0);
+
+    // 2. Mock LLM JSON output (Add one Si atom at origin)
+    let json_response = r#"{
+        "action": "add_atom",
+        "params": {
+            "element": "Si",
+            "frac_pos": [0.0, 0.0, 0.0]
+        }
+    }"#;
+
+    // 3. Layer 1: Schema Validation (Parse gate)
+    let command: CrystalCommand = serde_json::from_str(json_response).expect("Schema validation failed");
+
+    // 4. Layer 2: Physics Sandbox
+    validate_command(&command, &state).expect("Physics sandbox validation failed");
+
+    // 5. Layer 3: Dispatch to Engine (Router)
+    execute_command(command, &mut state).expect("Execution failed");
+
+    // 6. Verify state update
+    assert_eq!(state.num_atoms(), 1);
+    assert_eq!(state.elements[0], "Si");
+    assert_eq!(state.fract_x[0], 0.0);
 }
