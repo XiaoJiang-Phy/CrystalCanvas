@@ -312,3 +312,11 @@ pub fn llm_execute_command(
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn get_crystal_state(
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<crate::crystal_state::CrystalState, String> {
+    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    Ok(cs.clone())
+}

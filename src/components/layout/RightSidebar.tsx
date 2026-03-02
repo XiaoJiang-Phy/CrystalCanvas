@@ -3,9 +3,11 @@
 import React, { useState } from 'react';
 import { cn } from '../../utils/cn';
 
-export const RightSidebar: React.FC = () => {
+import { CrystalState } from '../../types/crystal';
+
+export const RightSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ crystalState }) => {
     return (
-        <div className="w-[280px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
+        <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
 
             {/* Supercell Accordion */}
             <Accordion title="Supercell Construction" defaultOpen>
@@ -47,10 +49,10 @@ export const RightSidebar: React.FC = () => {
                 <div className="space-y-3">
                     <div className="text-xs space-y-1">
                         <div className="text-slate-500 dark:text-slate-400">
-                            Selected: <span className="text-slate-800 dark:text-slate-200 font-medium">ID 12</span>
+                            Selected: <span className="text-slate-800 dark:text-slate-200 font-medium">None</span>
                         </div>
                         <div className="text-slate-500 dark:text-slate-400">
-                            Element: <span className="text-slate-800 dark:text-slate-200 font-medium">Na</span>
+                            Element: <span className="text-slate-800 dark:text-slate-200 font-medium">-</span>
                         </div>
                     </div>
 

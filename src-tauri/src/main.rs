@@ -11,6 +11,20 @@
 use std::sync::Arc;
 use tauri::Manager;
 
+fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let quit = PredefinedMenuItem::quit(app, None::<&str>)?;
+    let app_menu = Submenu::with_items(app, "CrystalCanvas", true, &[&quit])?;
+    let import = MenuItem::with_id(app, "menu_import_cif", "Import CIF...", true, None::<&str>)?;
+    let export_poscar = MenuItem::with_id(app, "menu_export_poscar", "Export Poscar...", true, None::<&str>)?;
+    let export_qe = MenuItem::with_id(app, "menu_export_qe", "Export QE...", true, None::<&str>)?;
+    let export_lammps = MenuItem::with_id(app, "menu_export_lammps", "Export LAMMPS...", true, None::<&str>)?;
+    let file_menu = Submenu::with_items(app, "File", true, &[&import, &export_poscar, &export_qe, &export_lammps])?;
+    let menu = Menu::with_items(app, &[&app_menu, &file_menu])?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
 use crystal_canvas::*;
 
 // Prevent macOS linker from stripping CXX exception handling symbols
@@ -20,6 +34,7 @@ fn main() {
     env_logger::init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Get the main window. In Tauri 2.0, windows and webviews are separated.
             // We need to create a window, grab its handle, then optionally attach a webview.
@@ -36,14 +51,22 @@ fn main() {
             // but we need an initial size (e.g., 1280x800).
             let mut renderer = renderer::renderer::Renderer::new(arc_window.clone(), 1280, 800);
 
-            // Build a test grid (8 x 8 x 8 = 512 atoms) so we have something to look at immediately
-            let instances = renderer::instance::build_test_instances(8, 8, 8, 3.0);
-            renderer.update_atoms(&instances);
+            // Startup with empty crystal canvas (No test instances)
+            renderer.update_atoms(&[]);
 
             // Store it in Tauri managed state so commands and the event loop can access it
             app.manage(std::sync::Mutex::new(renderer));
             app.manage(std::sync::Mutex::new(crystal_state::CrystalState::default()));
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
+
+            // --- Menu Construction ---
+            let _ = build_menu(app);
+
+            app.on_menu_event(move |app_handle, event| {
+                use tauri::Emitter;
+                let id = event.id().0.as_str();
+                let _ = app_handle.emit(id, ());
+            });
 
             Ok(())
         })
@@ -59,7 +82,8 @@ fn main() {
             commands::export_file,
             commands::llm_configure,
             commands::llm_chat,
-            commands::llm_execute_command
+            commands::llm_execute_command,
+            commands::get_crystal_state
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

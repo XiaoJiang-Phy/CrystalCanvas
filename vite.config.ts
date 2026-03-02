@@ -27,6 +27,7 @@ export default defineConfig({
       "react/jsx-dev-runtime",
       "clsx",
       "tailwind-merge",
+      "@tauri-apps/plugin-dialog",
     ],
   },
 });

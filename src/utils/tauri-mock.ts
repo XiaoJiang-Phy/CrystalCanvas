@@ -48,3 +48,31 @@ export async function safeListen<T>(
         return () => {};
     }
 }
+
+/**
+ * Safe wrapper around Tauri dialog plugin's open.
+ */
+export async function safeDialogOpen(options?: any): Promise<string | string[] | null | undefined> {
+    if (!isTauri()) return undefined;
+    try {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        return await open(options);
+    } catch (e) {
+        console.warn(`[tauri-mock] dialog.open failed:`, e);
+        return undefined;
+    }
+}
+
+/**
+ * Safe wrapper around Tauri dialog plugin's save.
+ */
+export async function safeDialogSave(options?: any): Promise<string | null | undefined> {
+    if (!isTauri()) return undefined;
+    try {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        return await save(options);
+    } catch (e) {
+        console.warn(`[tauri-mock] dialog.save failed:`, e);
+        return undefined;
+    }
+}

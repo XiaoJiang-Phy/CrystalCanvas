@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useEffect, useRef, useState } from 'react';
-import { safeInvoke, safeListen } from './utils/tauri-mock';
+import { safeInvoke, safeListen, safeDialogOpen, safeDialogSave } from './utils/tauri-mock';
+import { CrystalState } from './types/crystal';
 import { Shell } from './components/layout/Shell';
 import { TopNavBar } from './components/layout/TopNavBar';
 import { LeftSidebar } from './components/layout/LeftSidebar';
@@ -15,8 +16,24 @@ function App() {
     const [showAssistant, setShowAssistant] = useState(true);
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
+    const [crystalState, setCrystalState] = useState<CrystalState | null>(null);
 
-    // File drop event listener
+    const fetchCrystalState = async () => {
+        try {
+            const state = await safeInvoke<CrystalState>('get_crystal_state');
+            if (state) setCrystalState(state);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    useEffect(() => {
+        fetchCrystalState();
+        const interval = setInterval(fetchCrystalState, 1000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Menu and File drop event listener
     useEffect(() => {
         let unlistenDrop = () => { };
         let unlistenHover = () => { };
@@ -26,12 +43,45 @@ function App() {
             setIsDragging(false);
             const path = event.payload.paths[0];
             if (path && path.endsWith('.cif')) {
-                safeInvoke('load_cif_file', { path }).catch(console.error);
+                safeInvoke('load_cif_file', { path })
+                    .then(fetchCrystalState)
+                    .catch(console.error);
             }
         }).then(f => unlistenDrop = f).catch(console.warn);
 
         safeListen('tauri://file-drop-hover', () => setIsDragging(true)).then(f => unlistenHover = f).catch(console.warn);
         safeListen('tauri://file-drop-cancelled', () => setIsDragging(false)).then(f => unlistenCancel = f).catch(console.warn);
+
+        safeListen('menu_import_cif', async () => {
+            const path = await safeDialogOpen({
+                multiple: false,
+                filters: [{ name: 'Crystal', extensions: ['cif', 'pdb'] }]
+            });
+            if (path && typeof path === 'string') {
+                await safeInvoke('load_cif_file', { path }).catch(console.error);
+                fetchCrystalState();
+            }
+        }).then(f => unlistenDrop = () => { unlistenDrop(); f(); }).catch(console.warn);
+
+        const exportHandlers = [
+            { evt: 'menu_export_poscar', format: 'POSCAR' },
+            { evt: 'menu_export_qe', format: 'QE' },
+            { evt: 'menu_export_lammps', format: 'LAMMPS' }
+        ];
+
+        exportHandlers.forEach(({ evt, format }) => {
+            safeListen(evt, async () => {
+                const path = await safeDialogSave({
+                    filters: [{ name: 'Export', extensions: ['txt', '*'] }]
+                });
+                if (path && typeof path === 'string') {
+                    await safeInvoke('export_file', { format, path }).catch(console.error);
+                }
+            }).then(f => {
+                const old = unlistenDrop;
+                unlistenDrop = () => { old(); f(); };
+            }).catch(console.warn);
+        });
 
         return () => {
             unlistenDrop();
@@ -77,8 +127,8 @@ function App() {
 
                 {/* Middle Section: Sidebars + Spacer */}
                 <div className="flex-1 flex justify-between overflow-hidden relative">
-                    <LeftSidebar />
-                    <RightSidebar />
+                    <LeftSidebar crystalState={crystalState} />
+                    <RightSidebar crystalState={crystalState} />
 
                     {/* Drag Overlay */}
                     {isDragging && (

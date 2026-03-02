@@ -130,7 +130,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
     return (
         <div className={cn(
-            "absolute bottom-10 right-[295px] w-80 z-30",
+            "absolute bottom-10 right-[250px] w-80 z-30",
             "bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl",
             "border border-white/30 dark:border-slate-700/50",
             "rounded-xl shadow-2xl flex flex-col pointer-events-auto",

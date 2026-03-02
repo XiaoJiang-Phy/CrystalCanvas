@@ -4,26 +4,36 @@ import React from 'react';
 import { cn } from '../../utils/cn';
 import { getJmolColor } from '../../utils/colors';
 
-export const LeftSidebar: React.FC = () => {
+import { CrystalState } from '../../types/crystal';
+
+export const LeftSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ crystalState }) => {
+    const numAtoms = crystalState ? crystalState.labels.length : 0;
+    const vol = crystalState ?
+        (crystalState.cell_a * crystalState.cell_b * crystalState.cell_c *
+            Math.sqrt(1 - Math.cos(crystalState.cell_alpha * Math.PI / 180) ** 2
+                - Math.cos(crystalState.cell_beta * Math.PI / 180) ** 2
+                - Math.cos(crystalState.cell_gamma * Math.PI / 180) ** 2
+                + 2 * Math.cos(crystalState.cell_alpha * Math.PI / 180) * Math.cos(crystalState.cell_beta * Math.PI / 180) * Math.cos(crystalState.cell_gamma * Math.PI / 180)
+            )).toFixed(1) : 0;
     return (
-        <div className="w-[300px] shrink-0 h-full flex flex-col gap-3 p-3 pb-10 pointer-events-none overflow-y-auto custom-scrollbar">
+        <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pb-10 pointer-events-none overflow-y-auto custom-scrollbar">
             <Panel title="Structure Info">
                 <div className="space-y-2 text-xs">
-                    <InfoRow label="Atoms:" value="512" />
-                    <InfoRow label="Space Group:" value="F m -3 m" />
+                    <InfoRow label="Atoms:" value={numAtoms.toString()} />
+                    <InfoRow label="Space Group:" value={crystalState?.spacegroup_hm || "N/A"} />
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2">
-                        <UnitCellInput label="a" value="10.2" unit="Å" />
-                        <UnitCellInput label="α" value="90" unit="°" />
-                        <UnitCellInput label="b" value="10.2" unit="Å" />
-                        <UnitCellInput label="β" value="90" unit="°" />
-                        <UnitCellInput label="c" value="14.5" unit="Å" />
-                        <UnitCellInput label="γ" value="90" unit="°" />
+                        <UnitCellInput label="a" value={crystalState?.cell_a.toFixed(2) || "0.00"} unit="Å" />
+                        <UnitCellInput label="α" value={crystalState?.cell_alpha.toFixed(1) || "0.0"} unit="°" />
+                        <UnitCellInput label="b" value={crystalState?.cell_b.toFixed(2) || "0.00"} unit="Å" />
+                        <UnitCellInput label="β" value={crystalState?.cell_beta.toFixed(1) || "0.0"} unit="°" />
+                        <UnitCellInput label="c" value={crystalState?.cell_c.toFixed(2) || "0.00"} unit="Å" />
+                        <UnitCellInput label="γ" value={crystalState?.cell_gamma.toFixed(1) || "0.0"} unit="°" />
                     </div>
-                    <InfoRow label="Volume:" value="1508.6 Å³" className="pt-1.5 font-medium" />
+                    <InfoRow label="Volume:" value={`${vol} Å³`} className="pt-1.5 font-medium" />
                 </div>
             </Panel>
 
-            <Panel title="Atom Management" badge="[TDD 1.3]">
+            <Panel title="Atom Management">
                 <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden text-xs max-h-[90px] overflow-y-auto custom-scrollbar">
                     <table className="w-full text-left">
                         <thead className="bg-slate-100 dark:bg-slate-800/80 font-medium text-slate-500 dark:text-slate-400">
@@ -37,10 +47,16 @@ export const LeftSidebar: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                            <AtomRow id={12} element="Na" x="1.23" y="0.00" z="0.54" />
-                            <AtomRow id={13} element="Na" x="0.03" y="0.00" z="0.50" />
-                            <AtomRow id={14} element="Cl" x="0.53" y="0.50" z="0.50" />
-                            <AtomRow id={15} element="Cl" x="0.03" y="0.50" z="0.00" />
+                            {crystalState && crystalState.labels.map((_label, i) => (
+                                <AtomRow
+                                    key={i}
+                                    id={i + 1}
+                                    element={crystalState.elements[i]}
+                                    x={crystalState.fract_x[i].toFixed(2)}
+                                    y={crystalState.fract_y[i].toFixed(2)}
+                                    z={crystalState.fract_z[i].toFixed(2)}
+                                />
+                            ))}
                         </tbody>
                     </table>
                 </div>
