@@ -127,7 +127,8 @@ impl LlmProvider for AnthropicProvider {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             "x-api-key",
-            header::HeaderValue::from_str(&self.api_key).unwrap(),
+            header::HeaderValue::from_str(&self.api_key)
+                .map_err(|e| format!("Invalid API key header value: {}", e))?,
         );
         headers.insert(
             "anthropic-version",

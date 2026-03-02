@@ -1,8 +1,9 @@
+// [Overview: LLM Assistant chat panel with provider configuration and command preview]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useState, useRef, useEffect } from 'react';
 import { cn } from '../../utils/cn';
-import { Bot, Sparkles, Settings2, Send, X, Loader2, Play } from 'lucide-react';
+import { Bot, Settings2, Send, X, Loader2, Play } from '../../utils/Icons';
 import { safeInvoke } from '../../utils/tauri-mock';
 
 interface LlmAssistantProps {
@@ -105,8 +106,8 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
             };
             setMessages(prev => [...prev, botMsg]);
 
-        } catch (e: any) {
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: `Error: ${e}` }]);
+        } catch (e: unknown) {
+            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: `Error: ${String(e)}` }]);
         } finally {
             setLoading(false);
         }
@@ -116,8 +117,8 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         try {
             await safeInvoke('llm_execute_command', { commandJson: json });
             setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: 'Command executed successfully in the sandbox.' }]);
-        } catch (e: any) {
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: `Execution failed: ${e}` }]);
+        } catch (e: unknown) {
+            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: `Execution failed: ${String(e)}` }]);
         }
     };
 

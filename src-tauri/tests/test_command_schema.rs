@@ -5,8 +5,8 @@
 //! - Valid commands must be correctly deserialized
 //! - CrystalCommand uses deny_unknown_fields to prevent injection attempts
 //!
-//! Current Status: #[ignore] — Awaiting Command Bus module implementation
-//! Note: The CrystalCommand schema is temporarily defined in this file and will be moved once the formal module is developed.
+//! Current Status: Active — All tests enabled after M9 Command Bus implementation
+//! Schema Source: crystal_canvas::llm::command::CrystalCommand
 
 // ===========================================================================
 // Schema Validation Tests
