@@ -71,12 +71,17 @@ impl Renderer {
             }],
         });
 
-        // Empty instance buffer (will be populated by update_atoms)
+        // Create an instance buffer with 1 dummy element to avoid 0-sized buffer panics
+        let dummy_instance = [AtomInstance {
+            position: [0.0, 0.0, 0.0],
+            radius: 0.0,
+            color: [0.0, 0.0, 0.0, 0.0],
+        }];
         let instance_buffer = gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Instance Buffer"),
-                contents: &[],
+                contents: bytemuck::cast_slice(&dummy_instance),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -198,10 +203,12 @@ impl Renderer {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
 
-            // 6 vertices per impostor quad (two triangles), instance_count instances
+            // Only set vertex buffers and draw if we have instances
+            // This prevents panics on .slice(..) or drawing out of bounds
             if self.instance_count > 0 {
+                render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                // 6 vertices per impostor quad (two triangles), instance_count instances
                 render_pass.draw(0..6, 0..self.instance_count);
             }
         }
