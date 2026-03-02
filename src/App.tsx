@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useEffect, useRef, useState } from 'react';
-import { safeInvoke, safeListen, safeDialogOpen, safeDialogSave } from './utils/tauri-mock';
+import { safeInvoke, safeListen } from './utils/tauri-mock';
 import { CrystalState } from './types/crystal';
 import { Shell } from './components/layout/Shell';
 import { TopNavBar } from './components/layout/TopNavBar';
@@ -51,37 +51,6 @@ function App() {
 
         safeListen('tauri://file-drop-hover', () => setIsDragging(true)).then(f => unlistenHover = f).catch(console.warn);
         safeListen('tauri://file-drop-cancelled', () => setIsDragging(false)).then(f => unlistenCancel = f).catch(console.warn);
-
-        safeListen('menu_import_cif', async () => {
-            const path = await safeDialogOpen({
-                multiple: false,
-                filters: [{ name: 'Crystal', extensions: ['cif', 'pdb'] }]
-            });
-            if (path && typeof path === 'string') {
-                await safeInvoke('load_cif_file', { path }).catch(console.error);
-                fetchCrystalState();
-            }
-        }).then(f => unlistenDrop = () => { unlistenDrop(); f(); }).catch(console.warn);
-
-        const exportHandlers = [
-            { evt: 'menu_export_poscar', format: 'POSCAR' },
-            { evt: 'menu_export_qe', format: 'QE' },
-            { evt: 'menu_export_lammps', format: 'LAMMPS' }
-        ];
-
-        exportHandlers.forEach(({ evt, format }) => {
-            safeListen(evt, async () => {
-                const path = await safeDialogSave({
-                    filters: [{ name: 'Export', extensions: ['txt', '*'] }]
-                });
-                if (path && typeof path === 'string') {
-                    await safeInvoke('export_file', { format, path }).catch(console.error);
-                }
-            }).then(f => {
-                const old = unlistenDrop;
-                unlistenDrop = () => { old(); f(); };
-            }).catch(console.warn);
-        });
 
         return () => {
             unlistenDrop();

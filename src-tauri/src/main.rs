@@ -16,13 +16,136 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let quit = PredefinedMenuItem::quit(app, None::<&str>)?;
     let app_menu = Submenu::with_items(app, "CrystalCanvas", true, &[&quit])?;
     let import = MenuItem::with_id(app, "menu_import_cif", "Import CIF...", true, None::<&str>)?;
-    let export_poscar = MenuItem::with_id(app, "menu_export_poscar", "Export Poscar...", true, None::<&str>)?;
-    let export_qe = MenuItem::with_id(app, "menu_export_qe", "Export QE...", true, None::<&str>)?;
-    let export_lammps = MenuItem::with_id(app, "menu_export_lammps", "Export LAMMPS...", true, None::<&str>)?;
-    let file_menu = Submenu::with_items(app, "File", true, &[&import, &export_poscar, &export_qe, &export_lammps])?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let export_poscar =
+        MenuItem::with_id(app, "menu_export_poscar", "Export POSCAR...", true, None::<&str>)?;
+    let export_qe =
+        MenuItem::with_id(app, "menu_export_qe", "Export QE...", true, None::<&str>)?;
+    let export_lammps =
+        MenuItem::with_id(app, "menu_export_lammps", "Export LAMMPS...", true, None::<&str>)?;
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[&import, &separator, &export_poscar, &export_qe, &export_lammps],
+    )?;
     let menu = Menu::with_items(app, &[&app_menu, &file_menu])?;
     app.set_menu(menu)?;
     Ok(())
+}
+
+/// Handle native menu events by directly invoking dialogs and I/O on the Rust side.
+/// This avoids the fragile Rust→emit→frontend→dialog→invoke→Rust round-trip.
+fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
+    use tauri_plugin_dialog::DialogExt;
+
+    let id = event.id().0.as_str();
+    log::info!("Menu event received: {}", id);
+
+    match id {
+        "menu_import_cif" => {
+            let handle = app_handle.clone();
+            app_handle
+                .dialog()
+                .file()
+                .add_filter("Crystal Files", &["cif", "pdb"])
+                .set_title("Import CIF File")
+                .pick_file(move |file_path| {
+                    let Some(path) = file_path else { return };
+                    let path_str = path.to_string();
+                    log::info!("User selected file for import: {}", path_str);
+
+                    // Load the CIF file using io::import
+                    match crate::io::import::load_file(&path_str) {
+                        Ok(state) => {
+                            // Update crystal state
+                            if let Some(cs_mutex) = handle
+                                .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                                && let Ok(mut cs) = cs_mutex.try_lock()
+                            {
+                                *cs = state.clone();
+                            }
+                            // Build instance data and update renderer
+                            let instances = crate::renderer::instance::build_instance_data(
+                                &state.cart_positions,
+                                &state.atomic_numbers,
+                                &state.elements,
+                            );
+                            if let Some(renderer_mutex) = handle.try_state::<
+                                std::sync::Mutex<crate::renderer::renderer::Renderer>,
+                            >()
+                                && let Ok(mut renderer) = renderer_mutex.try_lock()
+                            {
+                                renderer.update_atoms(&instances);
+                                // Auto-adjust camera
+                                let extent =
+                                    state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
+                                renderer.camera.eye =
+                                    glam::Vec3::new(0.0, 0.0, extent * 2.0);
+                                renderer.camera.target = glam::Vec3::ZERO;
+                                if !renderer.camera.is_perspective {
+                                    renderer.camera.set_orthographic(extent * 1.5);
+                                }
+                            }
+                            log::info!("CIF file loaded successfully: {}", path_str);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load CIF file: {}", e);
+                        }
+                    }
+                });
+        }
+        "menu_export_poscar" => {
+            handle_export(app_handle, "POSCAR", "poscar");
+        }
+        "menu_export_qe" => {
+            handle_export(app_handle, "QE", "in");
+        }
+        "menu_export_lammps" => {
+            handle_export(app_handle, "LAMMPS", "lmp");
+        }
+        _ => {}
+    }
+}
+
+/// Helper: show a save dialog and export crystal state to the chosen format.
+fn handle_export(app_handle: &tauri::AppHandle, format: &'static str, extension: &'static str) {
+    use tauri_plugin_dialog::DialogExt;
+
+    let handle = app_handle.clone();
+    app_handle
+        .dialog()
+        .file()
+        .add_filter(format, &[extension, "txt"])
+        .set_title(format!("Export as {}", format))
+        .save_file(move |file_path| {
+            let Some(path) = file_path else { return };
+            let path_str = path.to_string();
+            log::info!("User selected path for export: {} (format={})", path_str, format);
+
+            if let Some(cs_mutex) =
+                handle.try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                && let Ok(cs) = cs_mutex.try_lock()
+            {
+                let result = match format {
+                    "POSCAR" => {
+                        crate::io::export::export_poscar(&cs, &path_str).map_err(|e| e.to_string())
+                    }
+                    "QE" => {
+                        crate::io::export::export_qe_input(&cs, &path_str).map_err(|e| e.to_string())
+                    }
+                    "LAMMPS" => {
+                        crate::io::export::export_lammps_data(&cs, &path_str)
+                            .map_err(|e| e.to_string())
+                    }
+                    _ => Err(format!("Unsupported format: {}", format)),
+                };
+                match result {
+                    Ok(()) => log::info!("Export {} to {} succeeded", format, path_str),
+                    Err(e) => log::error!("Export failed: {}", e),
+                }
+            }
+        });
 }
 
 use crystal_canvas::*;
@@ -62,11 +185,8 @@ fn main() {
             // --- Menu Construction ---
             let _ = build_menu(app);
 
-            app.on_menu_event(move |app_handle, event| {
-                use tauri::Emitter;
-                let id = event.id().0.as_str();
-                let _ = app_handle.emit(id, ());
-            });
+            // --- Menu Event Handler (operates entirely in Rust) ---
+            app.on_menu_event(handle_menu_event);
 
             Ok(())
         })
