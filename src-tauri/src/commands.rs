@@ -224,6 +224,45 @@ pub fn export_file(
 
 pub struct LlmState(pub std::sync::Mutex<Option<crate::llm::provider::ProviderConfig>>);
 
+fn get_api_key(provider: &str, provided_key: &str) -> String {
+    if !provided_key.trim().is_empty() && provided_key != "********" {
+        // Save to OS Keychain
+        if let Ok(entry) = keyring::Entry::new("CrystalCanvas", provider) {
+            let _ = entry.set_password(provided_key); // Ignore errors if keychain is unavailable
+        }
+        return provided_key.to_string();
+    }
+    
+    // Try to load from keychain
+    if let Ok(entry) = keyring::Entry::new("CrystalCanvas", provider) {
+        if let Ok(pwd) = entry.get_password() {
+            return pwd;
+        }
+    }
+
+    // Fallback to .env for development
+    dotenvy::dotenv().ok();
+    dotenvy::from_path("../.env").ok();
+    
+    let env_key = match provider {
+        "openai" => "OPENAI_API_KEY",
+        "deepseek" => "DEEPSEEK_API_KEY",
+        "claude" => "ANTHROPIC_API_KEY",
+        "gemini" => "GEMINI_API_KEY",
+        _ => "",
+    };
+    
+    std::env::var(env_key)
+        .or_else(|_| std::env::var(format!("{}_API_KEY", provider.to_uppercase())))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn check_api_key_status(provider_type: String) -> Result<bool, String> {
+    let key = get_api_key(&provider_type.to_lowercase(), "");
+    Ok(!key.is_empty())
+}
+
 #[tauri::command]
 pub fn llm_configure(
     provider_type: String,
@@ -231,11 +270,14 @@ pub fn llm_configure(
     model: String,
     state: State<'_, LlmState>,
 ) -> Result<(), String> {
-    let config = match provider_type.to_lowercase().as_str() {
-        "openai" => crate::llm::provider::ProviderConfig::OpenAi { api_key, model },
-        "deepseek" => crate::llm::provider::ProviderConfig::DeepSeek { api_key, model },
-        "claude" => crate::llm::provider::ProviderConfig::Claude { api_key, model },
-        "gemini" => crate::llm::provider::ProviderConfig::Gemini { api_key, model },
+    let pt = provider_type.to_lowercase();
+    let resolved_key = if pt == "ollama" { String::new() } else { get_api_key(&pt, &api_key) };
+
+    let config = match pt.as_str() {
+        "openai" => crate::llm::provider::ProviderConfig::OpenAi { api_key: resolved_key, model },
+        "deepseek" => crate::llm::provider::ProviderConfig::DeepSeek { api_key: resolved_key, model },
+        "claude" => crate::llm::provider::ProviderConfig::Claude { api_key: resolved_key, model },
+        "gemini" => crate::llm::provider::ProviderConfig::Gemini { api_key: resolved_key, model },
         "ollama" => crate::llm::provider::ProviderConfig::Ollama { model },
         _ => return Err(format!("Unknown provider type: {}", provider_type)),
     };
@@ -247,6 +289,7 @@ pub fn llm_configure(
 #[tauri::command]
 pub async fn llm_chat(
     user_message: String,
+    selected_indices: Option<Vec<usize>>,
     state: State<'_, LlmState>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<String, String> {
@@ -262,7 +305,7 @@ pub async fn llm_chat(
         let cs = crystal_state
             .try_lock()
             .map_err(|_| "Failed to lock state")?;
-        crate::llm::context::build_crystal_context(&cs)
+        crate::llm::context::build_crystal_context(&cs, selected_indices.as_deref())
     };
 
     let messages = crate::llm::prompt::build_messages(&context, &user_message);

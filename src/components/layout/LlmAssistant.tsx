@@ -40,10 +40,33 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         ollama: 'qwen3.5-math'
     };
 
-    const handleProviderChange = (newProvider: string) => {
+    const handleProviderChange = async (newProvider: string) => {
         setProviderType(newProvider);
         setModel(providerDefaults[newProvider as keyof typeof providerDefaults]);
+
+        if (newProvider === 'ollama') {
+            setApiKey('');
+            return;
+        }
+
+        try {
+            const hasKey = await safeInvoke<boolean>('check_api_key_status', { providerType: newProvider });
+            if (hasKey) {
+                setApiKey('********');
+            } else {
+                setApiKey('');
+            }
+        } catch {
+            setApiKey('');
+        }
     };
+
+    // Check status on component mount for default provider
+    useEffect(() => {
+        if (showSettings) {
+            handleProviderChange(providerType);
+        }
+    }, [showSettings]);
 
     const saveSettings = async () => {
         try {

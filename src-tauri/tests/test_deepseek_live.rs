@@ -25,7 +25,7 @@ async fn test_deepseek_live_api() {
         ..Default::default()
     };
 
-    let context = build_crystal_context(&state);
+    let context = build_crystal_context(&state, None);
     
     let user_input = "Please add a Silicon atom at the center of the unit cell (0.5, 0.5, 0.5).";
     let messages = build_messages(&context, user_input);

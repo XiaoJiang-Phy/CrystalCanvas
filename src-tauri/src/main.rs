@@ -203,7 +203,8 @@ fn main() {
             commands::llm_configure,
             commands::llm_chat,
             commands::llm_execute_command,
-            commands::get_crystal_state
+            commands::get_crystal_state,
+            commands::check_api_key_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
