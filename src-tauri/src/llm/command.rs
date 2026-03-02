@@ -1,10 +1,10 @@
-//! [功能概述：LLM Command enum 定义，负责序列化与反序列化]
+//! [Overview: LLM Command enum definitions for serialization and deserialization]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use serde::{Deserialize, Serialize};
 
-/// 导出格式支持
+/// Supported export formats
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ExportFormat {

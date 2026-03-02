@@ -77,9 +77,15 @@ impl GpuContext {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
-        let alpha_mode = if surface_caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PostMultiplied) {
+        let alpha_mode = if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+        {
             wgpu::CompositeAlphaMode::PostMultiplied
-        } else if surface_caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
+        } else if surface_caps
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+        {
             wgpu::CompositeAlphaMode::PreMultiplied
         } else {
             surface_caps.alpha_modes[0]

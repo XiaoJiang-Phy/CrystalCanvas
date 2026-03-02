@@ -92,8 +92,11 @@ pub fn add_atom(
     cs.try_add_atom(&element_symbol, atomic_number, fract_pos)
         .map_err(|_| "Collision detected: atom too close to existing atoms")?;
 
-    let instances =
-        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers, &cs.elements);
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+    );
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
@@ -114,8 +117,11 @@ pub fn delete_atoms(
         .map_err(|_| "Failed to lock state")?;
     cs.delete_atoms(&indices);
 
-    let instances =
-        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers, &cs.elements);
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+    );
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
@@ -138,8 +144,11 @@ pub fn substitute_atoms(
         .map_err(|_| "Failed to lock state")?;
     cs.substitute_atoms(&indices, &new_element_symbol, new_atomic_number);
 
-    let instances =
-        crate::renderer::instance::build_instance_data(&cs.cart_positions, &cs.atomic_numbers, &cs.elements);
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+    );
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
     }
@@ -176,4 +185,130 @@ pub fn preview_supercell(
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
     cs.generate_supercell(&expansion)
+}
+
+#[tauri::command]
+pub fn export_file(
+    format: String,
+    path: String,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<(), String> {
+    log::info!("export_file: format={} path={}", format, path);
+    let cx = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
+    let fmt = match format.to_uppercase().as_str() {
+        "POSCAR" | "VASP" => crate::llm::command::ExportFormat::Poscar,
+        "LAMMPS" => crate::llm::command::ExportFormat::Lammps,
+        "QE" => crate::llm::command::ExportFormat::Qe,
+        _ => return Err(format!("Unsupported format: {}", format)),
+    };
+
+    match fmt {
+        crate::llm::command::ExportFormat::Poscar => {
+            crate::io::export::export_poscar(&cx, &path).map_err(|e| e.to_string())?
+        }
+        crate::llm::command::ExportFormat::Lammps => {
+            crate::io::export::export_lammps_data(&cx, &path).map_err(|e| e.to_string())?
+        }
+        crate::llm::command::ExportFormat::Qe => {
+            crate::io::export::export_qe_input(&cx, &path).map_err(|e| e.to_string())?
+        }
+    }
+    Ok(())
+}
+
+// =========================================================================
+// LLM AI Tasks
+// =========================================================================
+
+pub struct LlmState(pub std::sync::Mutex<Option<crate::llm::provider::ProviderConfig>>);
+
+#[tauri::command]
+pub fn llm_configure(
+    provider_type: String,
+    api_key: String,
+    model: String,
+    state: State<'_, LlmState>,
+) -> Result<(), String> {
+    let config = match provider_type.to_lowercase().as_str() {
+        "openai" => crate::llm::provider::ProviderConfig::OpenAi { api_key, model },
+        "deepseek" => crate::llm::provider::ProviderConfig::DeepSeek { api_key, model },
+        "claude" => crate::llm::provider::ProviderConfig::Claude { api_key, model },
+        "gemini" => crate::llm::provider::ProviderConfig::Gemini { api_key, model },
+        "ollama" => crate::llm::provider::ProviderConfig::Ollama { model },
+        _ => return Err(format!("Unknown provider type: {}", provider_type)),
+    };
+    let mut st = state.0.try_lock().map_err(|_| "Failed to lock LLM state")?;
+    *st = Some(config);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn llm_chat(
+    user_message: String,
+    state: State<'_, LlmState>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<String, String> {
+    let config_opt = {
+        let st = state.0.try_lock().map_err(|_| "Failed to lock LLM state")?;
+        st.clone()
+    };
+
+    let config = config_opt
+        .ok_or_else(|| "LLM provider is not configured. Please supply an API key.".to_string())?;
+
+    let context = {
+        let cs = crystal_state
+            .try_lock()
+            .map_err(|_| "Failed to lock state")?;
+        crate::llm::context::build_crystal_context(&cs)
+    };
+
+    let messages = crate::llm::prompt::build_messages(&context, &user_message);
+
+    let provider = crate::llm::provider::create_provider(&config);
+    provider.chat(&messages).await
+}
+
+#[tauri::command]
+pub fn llm_execute_command(
+    command_json: String,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    // 1. Layer 1: Schema parse validation
+    let command: crate::llm::command::CrystalCommand = serde_json::from_str(&command_json)
+        .map_err(|e| format!("Schema validation failed: {}", e))?;
+
+    let mut cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
+
+    // 2. Layer 2: Physics Sandbox validation
+    crate::llm::sandbox::validate_command(&command, &cs)
+        .map_err(|e| format!("Physics sandbox error: {}", e))?;
+
+    // 3. Layer 3: Execute in Router
+    crate::llm::router::execute_command(command, &mut cs)
+        .map_err(|e| format!("Command execution failed: {}", e))?;
+
+    // Note: To properly support Undo, we would snapshot here.
+    cs.version += 1;
+
+    // 4. Trigger rendering update
+    let cart_positions = cs.cart_positions.clone();
+    let atomic_numbers = cs.atomic_numbers.clone();
+    let elements = cs.elements.clone();
+
+    // Release the lock early so we don't hold it over the renderer update if it's slow
+    drop(cs);
+
+    let instances =
+        crate::renderer::instance::build_instance_data(&cart_positions, &atomic_numbers, &elements);
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_atoms(&instances);
+    }
+
+    Ok(())
 }

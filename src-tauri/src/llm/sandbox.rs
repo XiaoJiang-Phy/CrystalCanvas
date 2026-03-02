@@ -1,4 +1,4 @@
-//! [功能概述：LLM Command 物理沙盒验证层 (Layer 2 of Safety Pipeline)]
+//! [Overview: Physical sandbox validation layer for LLM Commands (Layer 2 of Safety Pipeline)]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -110,7 +110,7 @@ pub fn validate_command(
             // I/O safety is handled at the Tauri command level
         }
         CrystalCommand::Batch(params) => {
-            // To be perfectly accurate we would need to simulate the state updates, 
+            // To be perfectly accurate we would need to simulate the state updates,
             // but for now validating each sequentially against the initial state provides basic bounds checking.
             for cmd in &params.commands {
                 validate_command(cmd, state)?;

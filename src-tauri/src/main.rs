@@ -43,6 +43,7 @@ fn main() {
             // Store it in Tauri managed state so commands and the event loop can access it
             app.manage(std::sync::Mutex::new(renderer));
             app.manage(std::sync::Mutex::new(crystal_state::CrystalState::default()));
+            app.manage(commands::LlmState(std::sync::Mutex::new(None)));
 
             Ok(())
         })
@@ -54,7 +55,11 @@ fn main() {
             commands::delete_atoms,
             commands::substitute_atoms,
             commands::preview_slab,
-            commands::preview_supercell
+            commands::preview_supercell,
+            commands::export_file,
+            commands::llm_configure,
+            commands::llm_chat,
+            commands::llm_execute_command
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

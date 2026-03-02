@@ -1,4 +1,4 @@
-//! [功能概述：抽取核心晶体状态信息，作为 LLM Context 进行提示词压缩]
+//! [Overview: Extracts core crystal state information to build the LLM context and compress prompts]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 

@@ -146,9 +146,14 @@ fn test_valid_cleave_slab_accepted() {
 /// Valid export_file command.
 #[test]
 fn test_valid_export_file_accepted() {
-    let json = r#"{"action": "export_file", "params": {"format": "POSCAR", "path": "/tmp/POSCAR"}}"#;
+    let json =
+        r#"{"action": "export_file", "params": {"format": "POSCAR", "path": "/tmp/POSCAR"}}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
-    assert!(result.is_ok(), "Valid export_file should be accepted: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Valid export_file should be accepted: {:?}",
+        result.err()
+    );
 }
 
 /// Valid batch command.
@@ -174,7 +179,7 @@ fn test_sandbox_index_out_of_bounds() {
     state.fract_x = vec![0.0, 0.5];
     state.fract_y = vec![0.0, 0.5];
     state.fract_z = vec![0.0, 0.5];
-    
+
     // Deleting index 2 should fail
     let cmd = CrystalCommand::DeleteAtoms(DeleteAtomsParams { indices: vec![2] });
     assert!(validate_command(&cmd, &state).is_err());
@@ -186,7 +191,11 @@ fn test_sandbox_vacuum_too_small() {
     use crystal_canvas::llm::sandbox::validate_command;
 
     let state = CrystalState::default();
-    let cmd = CrystalCommand::CleaveSlab(CleavSlabParams { miller: [1, 0, 0], layers: 1, vacuum_a: 4.9 });
+    let cmd = CrystalCommand::CleaveSlab(CleavSlabParams {
+        miller: [1, 0, 0],
+        layers: 1,
+        vacuum_a: 4.9,
+    });
     assert!(validate_command(&cmd, &state).is_err());
 }
 
@@ -196,7 +205,11 @@ fn test_sandbox_vacuum_too_large() {
     use crystal_canvas::llm::sandbox::validate_command;
 
     let state = CrystalState::default();
-    let cmd = CrystalCommand::CleaveSlab(CleavSlabParams { miller: [1, 0, 0], layers: 1, vacuum_a: 100.1 });
+    let cmd = CrystalCommand::CleaveSlab(CleavSlabParams {
+        miller: [1, 0, 0],
+        layers: 1,
+        vacuum_a: 100.1,
+    });
     assert!(validate_command(&cmd, &state).is_err());
 }
 
@@ -206,6 +219,8 @@ fn test_sandbox_supercell_negative_det() {
     use crystal_canvas::llm::sandbox::validate_command;
 
     let state = CrystalState::default();
-    let cmd = CrystalCommand::MakeSupercell(MakeSupercellParams { matrix: [[-1, 0, 0], [0, 1, 0], [0, 0, 1]] });
+    let cmd = CrystalCommand::MakeSupercell(MakeSupercellParams {
+        matrix: [[-1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    });
     assert!(validate_command(&cmd, &state).is_err());
 }
