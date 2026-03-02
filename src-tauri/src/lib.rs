@@ -6,5 +6,6 @@ pub mod commands;
 pub mod crystal_state;
 pub mod ffi;
 pub mod io;
+pub mod llm;
 pub mod renderer;
 pub mod utils;

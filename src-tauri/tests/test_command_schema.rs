@@ -8,65 +8,12 @@
 //! Current Status: #[ignore] — Awaiting Command Bus module implementation
 //! Note: The CrystalCommand schema is temporarily defined in this file and will be moved once the formal module is developed.
 
-use serde::Deserialize;
-
 // ===========================================================================
-// TDD Skeleton: CrystalCommand Protocol Definition
-// These types will be moved to the src/commands/ module during official implementation.
+// Schema Validation Tests
+// imported from src/llm/command.rs
 // ===========================================================================
 
-/// Parameter types for each command action
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct DeleteAtomsParams {
-    /// Atom indices to delete — must be non-negative
-    indices: Vec<u32>, // u32 enforces non-negative at type level
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct AddAtomParams {
-    element: String,
-    frac_pos: [f64; 3],
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct SubstituteParams {
-    indices: Vec<u32>,
-    new_element: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct CleavSlabParams {
-    miller: [i32; 3],
-    layers: u32,
-    vacuum_a: f64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)]
-struct MakeSupercellParams {
-    matrix: [[i32; 3]; 3],
-}
-
-/// The top-level command envelope
-#[derive(Debug, Deserialize)]
-#[serde(tag = "action", content = "params", deny_unknown_fields)]
-#[serde(rename_all = "snake_case")]
-enum CrystalCommand {
-    DeleteAtoms(DeleteAtomsParams),
-    AddAtom(AddAtomParams),
-    Substitute(SubstituteParams),
-    CleaveSlab(CleavSlabParams),
-    MakeSupercell(MakeSupercellParams),
-}
+use crystal_canvas::llm::command::*;
 
 // ===========================================================================
 // Malicious Input Rejection Tests
@@ -194,4 +141,71 @@ fn test_valid_cleave_slab_accepted() {
     let json = r#"{"action": "cleave_slab", "params": {"miller": [1,1,1], "layers": 3, "vacuum_a": 15.0}}"#;
     let result: Result<CrystalCommand, _> = serde_json::from_str(json);
     assert!(result.is_ok(), "Valid cleave_slab should be accepted");
+}
+
+/// Valid export_file command.
+#[test]
+fn test_valid_export_file_accepted() {
+    let json = r#"{"action": "export_file", "params": {"format": "POSCAR", "path": "/tmp/POSCAR"}}"#;
+    let result: Result<CrystalCommand, _> = serde_json::from_str(json);
+    assert!(result.is_ok(), "Valid export_file should be accepted: {:?}", result.err());
+}
+
+/// Valid batch command.
+#[test]
+fn test_valid_batch_accepted() {
+    let json = r#"{"action": "batch", "params": {"commands": [{"action": "delete_atoms", "params": {"indices": [0]}}]}}"#;
+    let result: Result<CrystalCommand, _> = serde_json::from_str(json);
+    assert!(result.is_ok(), "Valid batch should be accepted");
+}
+
+// ===========================================================================
+// Physics Sandbox Tests
+// ===========================================================================
+
+#[test]
+fn test_sandbox_index_out_of_bounds() {
+    use crystal_canvas::crystal_state::CrystalState;
+    use crystal_canvas::llm::sandbox::validate_command;
+
+    let mut state = CrystalState::default();
+    // Insert 2 atoms mock
+    state.elements = vec!["Si".to_string(), "Si".to_string()];
+    state.fract_x = vec![0.0, 0.5];
+    state.fract_y = vec![0.0, 0.5];
+    state.fract_z = vec![0.0, 0.5];
+    
+    // Deleting index 2 should fail
+    let cmd = CrystalCommand::DeleteAtoms(DeleteAtomsParams { indices: vec![2] });
+    assert!(validate_command(&cmd, &state).is_err());
+}
+
+#[test]
+fn test_sandbox_vacuum_too_small() {
+    use crystal_canvas::crystal_state::CrystalState;
+    use crystal_canvas::llm::sandbox::validate_command;
+
+    let state = CrystalState::default();
+    let cmd = CrystalCommand::CleaveSlab(CleavSlabParams { miller: [1, 0, 0], layers: 1, vacuum_a: 4.9 });
+    assert!(validate_command(&cmd, &state).is_err());
+}
+
+#[test]
+fn test_sandbox_vacuum_too_large() {
+    use crystal_canvas::crystal_state::CrystalState;
+    use crystal_canvas::llm::sandbox::validate_command;
+
+    let state = CrystalState::default();
+    let cmd = CrystalCommand::CleaveSlab(CleavSlabParams { miller: [1, 0, 0], layers: 1, vacuum_a: 100.1 });
+    assert!(validate_command(&cmd, &state).is_err());
+}
+
+#[test]
+fn test_sandbox_supercell_negative_det() {
+    use crystal_canvas::crystal_state::CrystalState;
+    use crystal_canvas::llm::sandbox::validate_command;
+
+    let state = CrystalState::default();
+    let cmd = CrystalCommand::MakeSupercell(MakeSupercellParams { matrix: [[-1, 0, 0], [0, 1, 0], [0, 0, 1]] });
+    assert!(validate_command(&cmd, &state).is_err());
 }
