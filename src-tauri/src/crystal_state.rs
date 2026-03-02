@@ -81,6 +81,7 @@ impl CrystalState {
             state.atomic_numbers.push(site.atomic_number);
         }
 
+        state.fractional_to_cartesian();
         state
     }
 
