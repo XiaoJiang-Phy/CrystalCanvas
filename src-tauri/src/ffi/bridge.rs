@@ -113,5 +113,32 @@ pub mod ffi {
             new_frac_pos: *const f64,
             threshold_a: f64,
         ) -> bool;
+
+        /// Compute all chemical bonds using covalent-radius dynamic thresholding
+        unsafe fn compute_bonds(
+            cart_positions: *const f64,
+            cov_radii: *const f64,
+            n_atoms: usize,
+            threshold_factor: f64,
+            min_bond_length: f64,
+            out_atom_i: *mut i32,
+            out_atom_j: *mut i32,
+            out_distances: *mut f64,
+            max_bonds: usize,
+        ) -> i32;
+
+        /// Find coordination shell neighbors for a specific center atom
+        unsafe fn find_coordination_shell(
+            cart_positions: *const f64,
+            cov_radii: *const f64,
+            n_atoms: usize,
+            center_idx: usize,
+            threshold_factor: f64,
+            min_bond_length: f64,
+            out_neighbor_indices: *mut i32,
+            out_distances: *mut f64,
+            max_neighbors: usize,
+        ) -> i32;
     }
 }
+

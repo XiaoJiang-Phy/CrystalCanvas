@@ -1,0 +1,3 @@
+&input
+  zasr='simple', fildyn='CeO.dyn.xml', flfrc='CeO.fc'
+/

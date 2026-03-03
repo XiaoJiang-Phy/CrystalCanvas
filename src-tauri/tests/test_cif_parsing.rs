@@ -51,8 +51,8 @@ fn test_parse_nacl_cif_correctness() {
     assert!((state.cell_beta - 90.0).abs() < 0.01);
     assert!((state.cell_gamma - 90.0).abs() < 0.01);
 
-    // NaCl CIF has 2 unique sites (Na1, Cl1)
-    assert_eq!(state.num_atoms(), 2, "NaCl CIF should have 2 unique sites");
+    // NaCl CIF has 27 sites after symmetry expansion and boundary mirroring
+    assert_eq!(state.num_atoms(), 27, "NaCl CIF should have 27 sites after expansion");
 
     // Verify element symbols
     assert!(state.elements.contains(&"Na".to_string()));
@@ -93,15 +93,21 @@ fn test_fractional_to_cartesian_nacl() {
     // cart_positions should be populated
     assert_eq!(state.cart_positions.len(), state.num_atoms());
 
-    // For cubic cell with α=β=γ=90°, fract (0,0,0) -> cart (0,0,0)
-    // Na at (0, 0, 0)
-    let na_cart = state.cart_positions[0];
+    // Find the Na at origin (or closest to it)
+    let na_idx = state.elements.iter().position(|e| e == "Na").unwrap();
+    let na_cart = state.cart_positions[na_idx];
     assert!((na_cart[0]).abs() < 0.01, "Na cart_x should be ~0");
     assert!((na_cart[1]).abs() < 0.01, "Na cart_y should be ~0");
     assert!((na_cart[2]).abs() < 0.01, "Na cart_z should be ~0");
 
-    // Cl at (0.5, 0.5, 0.5) -> cart (2.82, 2.82, 2.82) for a=5.64
-    let cl_cart = state.cart_positions[1];
+    // Find a Cl atom. One of the Cl atoms should be at (0.5, 0.5, 0.5)
+    let cl_idx = state.elements.iter().position(|e| e == "Cl").unwrap();
+    // Use the first Cl; or find the Cl specifically at 0.5, 0.5, 0.5
+    let cl_idx = state.elements.iter().enumerate().find(|(i, e)| {
+        *e == "Cl" && (state.fract_x[*i] - 0.5).abs() < 0.01
+    }).unwrap().0;
+    
+    let cl_cart = state.cart_positions[cl_idx];
     let expected = 5.64 * 0.5;
     assert!(
         (cl_cart[0] - expected as f32).abs() < 0.1,

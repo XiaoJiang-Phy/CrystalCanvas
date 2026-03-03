@@ -316,3 +316,103 @@ bool check_overlap_mic(
     }
     return false;
 }
+
+int compute_bonds(
+    const double* cart_positions,
+    const double* cov_radii,
+    size_t n_atoms,
+    double threshold_factor,
+    double min_bond_length,
+    int32_t* out_atom_i,
+    int32_t* out_atom_j,
+    double* out_distances,
+    size_t max_bonds
+) {
+    try {
+        double min_sq = min_bond_length * min_bond_length;
+        int bond_count = 0;
+
+        for (size_t i = 0; i < n_atoms; ++i) {
+            Eigen::Vector3d pi(cart_positions[3*i], cart_positions[3*i+1], cart_positions[3*i+2]);
+            double ri = cov_radii[i];
+
+            for (size_t j = i + 1; j < n_atoms; ++j) {
+                Eigen::Vector3d pj(cart_positions[3*j], cart_positions[3*j+1], cart_positions[3*j+2]);
+                double rj = cov_radii[j];
+
+                double max_bond = (ri + rj) * threshold_factor;
+                double dist_sq = (pi - pj).squaredNorm();
+
+                if (dist_sq > min_sq && dist_sq < max_bond * max_bond) {
+                    if (static_cast<size_t>(bond_count) >= max_bonds) {
+                        return bond_count; // buffer full
+                    }
+                    out_atom_i[bond_count] = static_cast<int32_t>(i);
+                    out_atom_j[bond_count] = static_cast<int32_t>(j);
+                    out_distances[bond_count] = std::sqrt(dist_sq);
+                    bond_count++;
+                }
+            }
+        }
+        return bond_count;
+    } catch (const std::exception& e) {
+        std::cerr << "Exception in compute_bonds: " << e.what() << std::endl;
+        return 0;
+    } catch (...) {
+        std::cerr << "Unknown exception in compute_bonds." << std::endl;
+        return 0;
+    }
+}
+
+int find_coordination_shell(
+    const double* cart_positions,
+    const double* cov_radii,
+    size_t n_atoms,
+    size_t center_idx,
+    double threshold_factor,
+    double min_bond_length,
+    int32_t* out_neighbor_indices,
+    double* out_distances,
+    size_t max_neighbors
+) {
+    try {
+        if (center_idx >= n_atoms) {
+            return 0;
+        }
+
+        Eigen::Vector3d pc(
+            cart_positions[3*center_idx],
+            cart_positions[3*center_idx+1],
+            cart_positions[3*center_idx+2]
+        );
+        double rc = cov_radii[center_idx];
+        double min_sq = min_bond_length * min_bond_length;
+        int neighbor_count = 0;
+
+        for (size_t j = 0; j < n_atoms; ++j) {
+            if (j == center_idx) continue;
+
+            Eigen::Vector3d pj(cart_positions[3*j], cart_positions[3*j+1], cart_positions[3*j+2]);
+            double rj = cov_radii[j];
+            double max_bond = (rc + rj) * threshold_factor;
+            double dist_sq = (pc - pj).squaredNorm();
+
+            if (dist_sq > min_sq && dist_sq < max_bond * max_bond) {
+                if (static_cast<size_t>(neighbor_count) >= max_neighbors) {
+                    return neighbor_count;
+                }
+                out_neighbor_indices[neighbor_count] = static_cast<int32_t>(j);
+                out_distances[neighbor_count] = std::sqrt(dist_sq);
+                neighbor_count++;
+            }
+        }
+        return neighbor_count;
+    } catch (const std::exception& e) {
+        std::cerr << "Exception in find_coordination_shell: " << e.what() << std::endl;
+        return 0;
+    } catch (...) {
+        std::cerr << "Unknown exception in find_coordination_shell." << std::endl;
+        return 0;
+    }
+}
+

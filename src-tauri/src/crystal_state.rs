@@ -3,11 +3,43 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::ffi;
+use crate::renderer::instance::covalent_radius;
 use serde::Serialize;
 
 /// Error returned when trying to add an overlapping atom
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollisionError;
+
+// =========================================================================
+// Bond Analysis Data Structures (M10)
+// =========================================================================
+
+/// A single chemical bond between two atoms.
+#[derive(Clone, Debug, Serialize)]
+pub struct BondInfo {
+    pub atom_i: usize,
+    pub atom_j: usize,
+    pub distance: f64, // Angstroms
+}
+
+/// Coordination environment for a single atom.
+#[derive(Clone, Debug, Serialize)]
+pub struct CoordinationInfo {
+    pub center_idx: usize,
+    pub element: String,
+    pub coordination_number: usize,
+    pub neighbor_indices: Vec<usize>,
+    pub neighbor_distances: Vec<f64>,
+    pub polyhedron_type: String, // e.g. "Octahedron", "Tetrahedron", ""
+}
+
+/// Complete bond analysis result.
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct BondAnalysis {
+    pub bonds: Vec<BondInfo>,
+    pub coordination: Vec<CoordinationInfo>,
+    pub threshold_factor: f64,
+}
 
 /// The central crystal structure state, holding all atom data in SoA layout.
 /// - f64 fields for physics calculations (fractional coords)
@@ -37,6 +69,16 @@ pub struct CrystalState {
     pub cart_positions: Vec<[f32; 3]>,
     // State version to trigger frontend reactivity
     pub version: u32,
+    // Bond analysis cache (M10) — recomputed on state change
+    #[serde(skip)]
+    pub bond_analysis: Option<BondAnalysis>,
+    // Phonon data and animation state (M10)
+    #[serde(skip)]
+    pub phonon_data: Option<crate::phonon::PhononData>,
+    #[serde(skip)]
+    pub active_phonon_mode: Option<usize>,
+    #[serde(skip)]
+    pub phonon_phase: f64,
 }
 
 impl Default for CrystalState {
@@ -60,6 +102,10 @@ impl Default for CrystalState {
             atomic_numbers: Vec::new(),
             cart_positions: Vec::new(),
             version: 0,
+            bond_analysis: None,
+            phonon_data: None,
+            active_phonon_mode: None,
+            phonon_phase: 0.0,
         }
     }
 }
@@ -99,6 +145,10 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n),
             cart_positions: Vec::new(),
             version: 1,
+            bond_analysis: None,
+            phonon_data: None,
+            active_phonon_mode: None,
+            phonon_phase: 0.0,
         };
 
         for site in data.sites {
@@ -449,6 +499,10 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n_new_usize),
             cart_positions: Vec::new(),
             version: 1,
+            bond_analysis: None,
+            phonon_data: None,
+            active_phonon_mode: None,
+            phonon_phase: 0.0,
         };
 
         // Create a fast lookup for original atoms by their atomic_number to get label/element
@@ -584,6 +638,10 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n_new_usize),
             cart_positions: Vec::new(),
             version: 1,
+            bond_analysis: None,
+            phonon_data: None,
+            active_phonon_mode: None,
+            phonon_phase: 0.0,
         };
 
         for i in 0..n_new_usize {
@@ -719,6 +777,201 @@ impl CrystalState {
         }
         self.version += 1;
     }
+
+    // =====================================================================
+    // Bond Analysis (M10)
+    // =====================================================================
+
+    /// Compute bond analysis: find all bonds and per-atom coordination shells.
+    /// Requires `cart_positions` to be populated first.
+    pub fn compute_bond_analysis(&mut self, threshold_factor: f64) {
+        let n = self.num_atoms();
+        if n == 0 {
+            self.bond_analysis = Some(BondAnalysis::default());
+            return;
+        }
+
+        // Prepare flat f64 cart positions for C++ kernel
+        let mut flat_cart = Vec::with_capacity(n * 3);
+        for pos in &self.cart_positions {
+            flat_cart.push(pos[0] as f64);
+            flat_cart.push(pos[1] as f64);
+            flat_cart.push(pos[2] as f64);
+        }
+
+        // Covalent radii per atom
+        let cov_radii: Vec<f64> = self
+            .atomic_numbers
+            .iter()
+            .map(|&z| covalent_radius(z) as f64)
+            .collect();
+
+        let min_bond_length = 0.4; // Angstroms
+        let max_bonds = n * n; // Upper bound (for safety)
+        let max_bonds = max_bonds.min(100_000); // Hard cap
+
+        let mut out_i = vec![0i32; max_bonds];
+        let mut out_j = vec![0i32; max_bonds];
+        let mut out_dist = vec![0.0f64; max_bonds];
+
+        let bond_count = unsafe {
+            ffi::compute_bonds(
+                flat_cart.as_ptr(),
+                cov_radii.as_ptr(),
+                n,
+                threshold_factor,
+                min_bond_length,
+                out_i.as_mut_ptr(),
+                out_j.as_mut_ptr(),
+                out_dist.as_mut_ptr(),
+                max_bonds,
+            )
+        };
+
+        let bond_count = bond_count.max(0) as usize;
+        let mut bonds = Vec::with_capacity(bond_count);
+        for k in 0..bond_count {
+            bonds.push(BondInfo {
+                atom_i: out_i[k] as usize,
+                atom_j: out_j[k] as usize,
+                distance: out_dist[k],
+            });
+        }
+
+        // Per-atom coordination
+        let max_neighbors: usize = 24; // Enough for most coordination shells
+        let mut coordination = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut neigh_idx = vec![0i32; max_neighbors];
+            let mut neigh_dist = vec![0.0f64; max_neighbors];
+
+            let cn = unsafe {
+                ffi::find_coordination_shell(
+                    flat_cart.as_ptr(),
+                    cov_radii.as_ptr(),
+                    n,
+                    i,
+                    threshold_factor,
+                    min_bond_length,
+                    neigh_idx.as_mut_ptr(),
+                    neigh_dist.as_mut_ptr(),
+                    max_neighbors,
+                )
+            };
+
+            let cn = cn.max(0) as usize;
+            let neighbor_indices: Vec<usize> =
+                neigh_idx[..cn].iter().map(|&v| v as usize).collect();
+            let neighbor_distances: Vec<f64> = neigh_dist[..cn].to_vec();
+
+            let poly_type = classify_polyhedron(cn);
+
+            coordination.push(CoordinationInfo {
+                center_idx: i,
+                element: self.elements[i].clone(),
+                coordination_number: cn,
+                neighbor_indices,
+                neighbor_distances,
+                polyhedron_type: poly_type.to_string(),
+            });
+        }
+
+        self.bond_analysis = Some(BondAnalysis {
+            bonds,
+            coordination,
+            threshold_factor,
+        });
+    }
+}
+
+/// Classify polyhedron type from coordination number.
+fn classify_polyhedron(cn: usize) -> &'static str {
+    match cn {
+        2 => "Linear",
+        3 => "Trigonal Planar",
+        4 => "Tetrahedron",
+        5 => "Trigonal Bipyramid",
+        6 => "Octahedron",
+        8 => "Cube",
+        12 => "Cuboctahedron",
+        _ => "",
+    }
+}
+
+// =========================================================================
+// Bond Statistics (M10 Node 3)
+// =========================================================================
+
+/// Bond length statistics for a specific element pair (e.g., Ti-O).
+#[derive(Clone, Debug, Serialize)]
+pub struct BondLengthStat {
+    pub element_a: String,
+    pub element_b: String,
+    pub count: usize,
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+}
+
+impl BondAnalysis {
+    /// Compute per-element-pair bond length statistics.
+    pub fn bond_length_stats(&self, elements: &[String]) -> Vec<BondLengthStat> {
+        use std::collections::HashMap;
+
+        let mut groups: HashMap<(String, String), Vec<f64>> = HashMap::new();
+
+        for bond in &self.bonds {
+            let mut ea = elements[bond.atom_i].clone();
+            let mut eb = elements[bond.atom_j].clone();
+            // Canonical key: alphabetical order
+            if ea > eb {
+                std::mem::swap(&mut ea, &mut eb);
+            }
+            groups.entry((ea, eb)).or_default().push(bond.distance);
+        }
+
+        let mut stats: Vec<BondLengthStat> = groups
+            .into_iter()
+            .map(|((ea, eb), dists)| {
+                let count = dists.len();
+                let min = dists.iter().cloned().fold(f64::INFINITY, f64::min);
+                let max = dists.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let mean = dists.iter().sum::<f64>() / count as f64;
+                BondLengthStat {
+                    element_a: ea,
+                    element_b: eb,
+                    count,
+                    min,
+                    max,
+                    mean,
+                }
+            })
+            .collect();
+
+        stats.sort_by(|a, b| a.element_a.cmp(&b.element_a).then(a.element_b.cmp(&b.element_b)));
+        stats
+    }
+
+    /// Compute polyhedral distortion index for a coordination environment.
+    /// Δ = (1/n) Σ |dᵢ − d̄| / d̄
+    /// Returns 0.0 for perfect polyhedra, increases with distortion.
+    pub fn distortion_index(coord: &CoordinationInfo) -> f64 {
+        let n = coord.neighbor_distances.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let d_mean = coord.neighbor_distances.iter().sum::<f64>() / n as f64;
+        if d_mean < 1e-10 {
+            return 0.0;
+        }
+        let delta: f64 = coord
+            .neighbor_distances
+            .iter()
+            .map(|d| (d - d_mean).abs() / d_mean)
+            .sum::<f64>()
+            / n as f64;
+        delta
+    }
 }
 
 #[cfg(test)]
@@ -745,6 +998,10 @@ mod tests {
             atomic_numbers: vec![1, 8],
             cart_positions: vec![],
             version: 1,
+            bond_analysis: None,
+            phonon_data: None,
+            active_phonon_mode: None,
+            phonon_phase: 0.0,
         };
         state.fractional_to_cartesian();
         state
@@ -798,5 +1055,56 @@ mod tests {
         assert_eq!(c.elements[1], "S", "Element should be S");
         assert_eq!(c.atomic_numbers[1], 16, "Atomic number should be 16");
         assert_eq!(c.version, 2, "Version should be incremented");
+    }
+
+    #[test]
+    fn test_compute_bond_analysis() {
+        let mut c = dummy_crystal();
+        // Move atoms close together to form a bond
+        c.cell_a = 5.0;
+        c.cell_b = 5.0;
+        c.cell_c = 5.0;
+        c.fract_x = vec![0.0, 0.1]; // distance is 0.5 Angstroms
+        c.fract_y = vec![0.0, 0.0];
+        c.fract_z = vec![0.0, 0.0];
+        c.fractional_to_cartesian();
+        
+        c.compute_bond_analysis(1.2);
+        let analysis = c.bond_analysis.as_ref().unwrap();
+        // Since H and O are close, there should be 1 bond
+        assert_eq!(analysis.bonds.len(), 1, "Should detect 1 bond");
+        
+        assert_eq!(analysis.coordination.len(), 2, "Should have 2 coordination shells");
+        assert_eq!(analysis.coordination[0].coordination_number, 1);
+        assert_eq!(analysis.coordination[1].coordination_number, 1);
+    }
+
+    #[test]
+    fn test_distortion_index() {
+        let coord = CoordinationInfo {
+            center_idx: 0,
+            element: "Ti".to_string(),
+            coordination_number: 6,
+            neighbor_indices: vec![1, 2, 3, 4, 5, 6],
+            neighbor_distances: vec![2.0, 2.0, 2.0, 2.0, 2.0, 2.0], // Perfect octahedron
+            polyhedron_type: "Octahedron".to_string(),
+        };
+        
+        let delta = BondAnalysis::distortion_index(&coord);
+        assert!((delta - 0.0).abs() < 1e-10, "Perfect octahedron should have 0 distortion");
+
+        let distorted_coord = CoordinationInfo {
+            center_idx: 0,
+            element: "Ti".to_string(),
+            coordination_number: 6,
+            neighbor_indices: vec![1, 2, 3, 4, 5, 6],
+            neighbor_distances: vec![1.9, 2.1, 1.9, 2.1, 1.9, 2.1], // Distorted
+            polyhedron_type: "Octahedron".to_string(),
+        };
+        
+        let delta_distorted = BondAnalysis::distortion_index(&distorted_coord);
+        // mean is 2.0, |d - d_mean| is 0.1 for all
+        // Delta = (1/6) * (6 * 0.1 / 2.0) = 0.05
+        assert!((delta_distorted - 0.05).abs() < 1e-10, "Distortion should be exactly 0.05");
     }
 }

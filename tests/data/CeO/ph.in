@@ -1,0 +1,9 @@
+&inputph
+  tr2_ph  = 1.0d-18,
+  prefix  = 'CeO',
+  ldisp   = .true.,
+  nq1=6, nq2=6, nq3=6,
+  fildyn  = 'CeO.dyn.xml',
+  fildvscf= 'dvscf'
+  epsil   = .true.
+/

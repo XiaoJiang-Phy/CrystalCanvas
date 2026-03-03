@@ -620,7 +620,11 @@ fn main() {
             commands::apply_slab,
             commands::set_camera_view_axis,
             commands::get_settings,
-            commands::update_settings
+            commands::update_settings,
+            commands::get_bond_analysis,
+            commands::load_phonon,
+            commands::set_phonon_mode,
+            commands::set_phonon_phase
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

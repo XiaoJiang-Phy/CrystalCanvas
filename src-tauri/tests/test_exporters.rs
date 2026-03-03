@@ -23,6 +23,10 @@ fn get_dummy_state() -> CrystalState {
         atomic_numbers: vec![],
         cart_positions: vec![],
         version: 1,
+        bond_analysis: None,
+        phonon_data: None,
+        active_phonon_mode: None,
+        phonon_phase: 0.0,
     };
     state.try_add_atom("Na", 11, [0.0, 0.0, 0.0]).unwrap();
     state.try_add_atom("Cl", 17, [0.5, 0.5, 0.5]).unwrap();
