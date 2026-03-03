@@ -21,31 +21,70 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let sep_app2 = PredefinedMenuItem::separator(app)?;
     let quit = PredefinedMenuItem::quit(app, None::<&str>)?;
     let app_menu = Submenu::with_items(
-        app, "CrystalCanvas", true,
+        app,
+        "CrystalCanvas",
+        true,
         &[&about, &sep_app1, &settings, &sep_app2, &quit],
     )?;
 
     // ── File Menu ────────────────────────────────────────────────────────
-    let new_structure = MenuItem::with_id(app, "menu_new_structure", "New Structure", true, None::<&str>)?;
+    let new_structure = MenuItem::with_id(
+        app,
+        "menu_new_structure",
+        "New Structure",
+        true,
+        None::<&str>,
+    )?;
     let sep_f1 = PredefinedMenuItem::separator(app)?;
     let open_file = MenuItem::with_id(app, "menu_open_file", "Open...", true, None::<&str>)?;
     let sep_f2 = PredefinedMenuItem::separator(app)?;
     // Export submenu
     let exp_poscar = MenuItem::with_id(app, "menu_export_poscar", "POSCAR...", true, None::<&str>)?;
-    let exp_qe = MenuItem::with_id(app, "menu_export_qe", "Quantum ESPRESSO...", true, None::<&str>)?;
-    let exp_lammps = MenuItem::with_id(app, "menu_export_lammps", "LAMMPS Data...", true, None::<&str>)?;
+    let exp_qe = MenuItem::with_id(
+        app,
+        "menu_export_qe",
+        "Quantum ESPRESSO...",
+        true,
+        None::<&str>,
+    )?;
+    let exp_lammps = MenuItem::with_id(
+        app,
+        "menu_export_lammps",
+        "LAMMPS Data...",
+        true,
+        None::<&str>,
+    )?;
     let exp_sep = PredefinedMenuItem::separator(app)?;
     let exp_xyz = MenuItem::with_id(app, "menu_export_xyz", "XYZ...", false, None::<&str>)?; // placeholder
     let exp_cif = MenuItem::with_id(app, "menu_export_cif", "CIF...", false, None::<&str>)?; // placeholder
     let export_sub = Submenu::with_items(
-        app, "Export As", true,
-        &[&exp_poscar, &exp_qe, &exp_lammps, &exp_sep, &exp_xyz, &exp_cif],
+        app,
+        "Export As",
+        true,
+        &[
+            &exp_poscar,
+            &exp_qe,
+            &exp_lammps,
+            &exp_sep,
+            &exp_xyz,
+            &exp_cif,
+        ],
     )?;
     let sep_f3 = PredefinedMenuItem::separator(app)?;
     let close_win = PredefinedMenuItem::close_window(app, None::<&str>)?;
     let file_menu = Submenu::with_items(
-        app, "File", true,
-        &[&new_structure, &sep_f1, &open_file, &sep_f2, &export_sub, &sep_f3, &close_win],
+        app,
+        "File",
+        true,
+        &[
+            &new_structure,
+            &sep_f1,
+            &open_file,
+            &sep_f2,
+            &export_sub,
+            &sep_f3,
+            &close_win,
+        ],
     )?;
 
     // ── Edit Menu (macOS requires this for Cmd+C/V to work in WebView) ──
@@ -53,26 +92,63 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let redo = PredefinedMenuItem::redo(app, None::<&str>)?;
     let sep_e1 = PredefinedMenuItem::separator(app)?;
     let select_all = PredefinedMenuItem::select_all(app, None::<&str>)?;
-    let deselect_all = MenuItem::with_id(app, "menu_deselect_all", "Deselect All", false, None::<&str>)?;
+    let deselect_all = MenuItem::with_id(
+        app,
+        "menu_deselect_all",
+        "Deselect All",
+        false,
+        None::<&str>,
+    )?;
     let sep_e2 = PredefinedMenuItem::separator(app)?;
-    let delete_sel = MenuItem::with_id(app, "menu_delete_selected", "Delete Selected", true, None::<&str>)?;
+    let delete_sel = MenuItem::with_id(
+        app,
+        "menu_delete_selected",
+        "Delete Selected",
+        true,
+        None::<&str>,
+    )?;
     let sep_e3 = PredefinedMenuItem::separator(app)?;
     let cut = PredefinedMenuItem::cut(app, None::<&str>)?;
     let copy = PredefinedMenuItem::copy(app, None::<&str>)?;
     let paste = PredefinedMenuItem::paste(app, None::<&str>)?;
     let edit_menu = Submenu::with_items(
-        app, "Edit", true,
-        &[&undo, &redo, &sep_e1, &select_all, &deselect_all, &sep_e2,
-          &delete_sel, &sep_e3, &cut, &copy, &paste],
+        app,
+        "Edit",
+        true,
+        &[
+            &undo,
+            &redo,
+            &sep_e1,
+            &select_all,
+            &deselect_all,
+            &sep_e2,
+            &delete_sel,
+            &sep_e3,
+            &cut,
+            &copy,
+            &paste,
+        ],
     )?;
 
     // ── View Menu ────────────────────────────────────────────────────────
-    let v_persp = MenuItem::with_id(app, "menu_view_perspective", "Perspective", true, Some("CommandOrControl+1"))?;
-    let v_ortho = MenuItem::with_id(app, "menu_view_orthographic", "Orthographic", true, Some("CommandOrControl+2"))?;
+    let v_persp = MenuItem::with_id(
+        app,
+        "menu_view_perspective",
+        "Perspective",
+        true,
+        Some("CommandOrControl+1"),
+    )?;
+    let v_ortho = MenuItem::with_id(
+        app,
+        "menu_view_orthographic",
+        "Orthographic",
+        true,
+        Some("CommandOrControl+2"),
+    )?;
     let sep_v1 = PredefinedMenuItem::separator(app)?;
-    let v_a  = MenuItem::with_id(app, "menu_view_a",  "View Along a",  true, None::<&str>)?;
-    let v_b  = MenuItem::with_id(app, "menu_view_b",  "View Along b",  true, None::<&str>)?;
-    let v_c  = MenuItem::with_id(app, "menu_view_c",  "View Along c",  true, None::<&str>)?;
+    let v_a = MenuItem::with_id(app, "menu_view_a", "View Along a", true, None::<&str>)?;
+    let v_b = MenuItem::with_id(app, "menu_view_b", "View Along b", true, None::<&str>)?;
+    let v_c = MenuItem::with_id(app, "menu_view_c", "View Along c", true, None::<&str>)?;
     let v_as = MenuItem::with_id(app, "menu_view_a_star", "View Along a*", true, None::<&str>)?;
     let v_bs = MenuItem::with_id(app, "menu_view_b_star", "View Along b*", true, None::<&str>)?;
     let v_cs = MenuItem::with_id(app, "menu_view_c_star", "View Along c*", true, None::<&str>)?;
@@ -80,57 +156,125 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let v_reset = MenuItem::with_id(app, "menu_reset_view", "Reset View", true, None::<&str>)?;
     let sep_v3 = PredefinedMenuItem::separator(app)?;
     let v_labels = MenuItem::with_id(app, "menu_toggle_labels", "Show Labels", true, None::<&str>)?;
-    let v_cell   = MenuItem::with_id(app, "menu_toggle_cell",   "Show Unit Cell", true, None::<&str>)?;
-    let v_bonds  = MenuItem::with_id(app, "menu_toggle_bonds",  "Show Bonds", false, None::<&str>)?; // placeholder
+    let v_cell = MenuItem::with_id(
+        app,
+        "menu_toggle_cell",
+        "Show Unit Cell",
+        true,
+        None::<&str>,
+    )?;
+    let v_bonds = MenuItem::with_id(app, "menu_toggle_bonds", "Show Bonds", false, None::<&str>)?; // placeholder
     let sep_v4 = PredefinedMenuItem::separator(app)?;
-    let v_dark = MenuItem::with_id(app, "menu_toggle_dark", "Toggle Dark Mode", true, None::<&str>)?;
+    let v_dark = MenuItem::with_id(
+        app,
+        "menu_toggle_dark",
+        "Toggle Dark Mode",
+        true,
+        None::<&str>,
+    )?;
     let view_menu = Submenu::with_items(
-        app, "View", true,
-        &[&v_persp, &v_ortho, &sep_v1,
-          &v_a, &v_b, &v_c, &v_as, &v_bs, &v_cs, &sep_v2,
-          &v_reset, &sep_v3,
-          &v_labels, &v_cell, &v_bonds, &sep_v4, &v_dark],
+        app,
+        "View",
+        true,
+        &[
+            &v_persp, &v_ortho, &sep_v1, &v_a, &v_b, &v_c, &v_as, &v_bs, &v_cs, &sep_v2, &v_reset,
+            &sep_v3, &v_labels, &v_cell, &v_bonds, &sep_v4, &v_dark,
+        ],
     )?;
 
     // ── Structure Menu ───────────────────────────────────────────────────
-    let s_super = MenuItem::with_id(app, "menu_build_supercell", "Build Supercell...", true, None::<&str>)?;
-    let s_slab  = MenuItem::with_id(app, "menu_cleave_slab",     "Cleave Slab...",    true, None::<&str>)?;
+    let s_super = MenuItem::with_id(
+        app,
+        "menu_build_supercell",
+        "Build Supercell...",
+        true,
+        None::<&str>,
+    )?;
+    let s_slab = MenuItem::with_id(
+        app,
+        "menu_cleave_slab",
+        "Cleave Slab...",
+        true,
+        None::<&str>,
+    )?;
     let sep_s1 = PredefinedMenuItem::separator(app)?;
-    let s_add   = MenuItem::with_id(app, "menu_add_atom",     "Add Atom...",        true, None::<&str>)?;
-    let s_repl  = MenuItem::with_id(app, "menu_replace_elem", "Replace Element...", true, None::<&str>)?;
+    let s_add = MenuItem::with_id(app, "menu_add_atom", "Add Atom...", true, None::<&str>)?;
+    let s_repl = MenuItem::with_id(
+        app,
+        "menu_replace_elem",
+        "Replace Element...",
+        true,
+        None::<&str>,
+    )?;
     let sep_s2 = PredefinedMenuItem::separator(app)?;
-    let s_sg    = MenuItem::with_id(app, "menu_spacegroup",   "Space Group Analysis", true, None::<&str>)?;
-    let s_val   = MenuItem::with_id(app, "menu_validate",     "Validate Structure",   false, None::<&str>)?; // placeholder
+    let s_sg = MenuItem::with_id(
+        app,
+        "menu_spacegroup",
+        "Space Group Analysis",
+        true,
+        None::<&str>,
+    )?;
+    let s_val = MenuItem::with_id(
+        app,
+        "menu_validate",
+        "Validate Structure",
+        false,
+        None::<&str>,
+    )?; // placeholder
     let structure_menu = Submenu::with_items(
-        app, "Structure", true,
-        &[&s_super, &s_slab, &sep_s1, &s_add, &s_repl, &sep_s2, &s_sg, &s_val],
+        app,
+        "Structure",
+        true,
+        &[
+            &s_super, &s_slab, &sep_s1, &s_add, &s_repl, &sep_s2, &s_sg, &s_val,
+        ],
     )?;
 
     // ── Window Menu ──────────────────────────────────────────────────────
-    let w_llm = MenuItem::with_id(app, "menu_toggle_llm", "Toggle LLM Assistant", true, None::<&str>)?;
+    let w_llm = MenuItem::with_id(
+        app,
+        "menu_toggle_llm",
+        "Toggle LLM Assistant",
+        true,
+        None::<&str>,
+    )?;
     let sep_w1 = PredefinedMenuItem::separator(app)?;
     let w_min = PredefinedMenuItem::minimize(app, None::<&str>)?;
     let w_zoom = PredefinedMenuItem::maximize(app, None::<&str>)?;
     let w_full = PredefinedMenuItem::fullscreen(app, None::<&str>)?;
     let window_menu = Submenu::with_items(
-        app, "Window", true,
+        app,
+        "Window",
+        true,
         &[&w_llm, &sep_w1, &w_min, &w_zoom, &w_full],
     )?;
 
     // ── Help Menu ────────────────────────────────────────────────────────
-    let h_docs   = MenuItem::with_id(app, "menu_docs",   "Documentation",  true, None::<&str>)?;
-    let h_issues = MenuItem::with_id(app, "menu_issues", "Report Issue",   true, None::<&str>)?;
+    let h_docs = MenuItem::with_id(app, "menu_docs", "Documentation", true, None::<&str>)?;
+    let h_issues = MenuItem::with_id(app, "menu_issues", "Report Issue", true, None::<&str>)?;
     let sep_h1 = PredefinedMenuItem::separator(app)?;
-    let h_about = MenuItem::with_id(app, "menu_about_cc", "About CrystalCanvas", true, None::<&str>)?;
-    let help_menu = Submenu::with_items(
-        app, "Help", true,
-        &[&h_docs, &h_issues, &sep_h1, &h_about],
+    let h_about = MenuItem::with_id(
+        app,
+        "menu_about_cc",
+        "About CrystalCanvas",
+        true,
+        None::<&str>,
     )?;
+    let help_menu =
+        Submenu::with_items(app, "Help", true, &[&h_docs, &h_issues, &sep_h1, &h_about])?;
 
     // ── Assemble Full Menu Bar ───────────────────────────────────────────
     let menu = Menu::with_items(
         app,
-        &[&app_menu, &file_menu, &edit_menu, &view_menu, &structure_menu, &window_menu, &help_menu],
+        &[
+            &app_menu,
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &structure_menu,
+            &window_menu,
+            &help_menu,
+        ],
     )?;
     app.set_menu(menu)?;
     Ok(())
@@ -154,7 +298,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                 *cs = crate::crystal_state::CrystalState::default();
             }
             // Clear renderer
-            if let Some(r) = app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
+            if let Some(r) =
+                app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
                 && let Ok(mut renderer) = r.try_lock()
             {
                 renderer.update_atoms(&[]);
@@ -181,16 +326,24 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 *cs = state.clone();
                             }
                             let instances = crate::renderer::instance::build_instance_data(
-                                &state.cart_positions, &state.atomic_numbers, &state.elements,
+                                &state.cart_positions,
+                                &state.atomic_numbers,
+                                &state.elements,
                             );
-                            if let Some(r) = handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
+                            if let Some(r) = handle
+                                .try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>(
+                                )
                                 && let Ok(mut renderer) = r.try_lock()
                             {
                                 renderer.update_atoms(&instances);
                                 renderer.update_lines(&state);
-                                let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
-                                renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
-                                renderer.camera.target = glam::Vec3::ZERO;
+                                let extent =
+                                    state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
+                                let center = state.unit_cell_center();
+                                let center_vec = glam::Vec3::from_array(center);
+                                renderer.camera.eye =
+                                    center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+                                renderer.camera.target = center_vec;
                                 if !renderer.camera.is_perspective {
                                     renderer.camera.set_orthographic(extent * 1.5);
                                 }
@@ -202,7 +355,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                 });
         }
         "menu_export_poscar" => handle_export(app_handle, "POSCAR", "poscar"),
-        "menu_export_qe"     => handle_export(app_handle, "QE", "in"),
+        "menu_export_qe" => handle_export(app_handle, "QE", "in"),
         "menu_export_lammps" => handle_export(app_handle, "LAMMPS", "lmp"),
 
         // ── Edit ─────────────────────────────────────────────────────
@@ -216,33 +369,68 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
 
         // ── View ─────────────────────────────────────────────────────
         "menu_view_perspective" => {
-            if let Some(r) = app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
+            if let Some(r) =
+                app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
                 && let Ok(mut renderer) = r.try_lock()
             {
                 renderer.camera.set_perspective();
+                #[derive(Clone, serde::Serialize)]
+                struct Payload {
+                    is_perspective: bool,
+                }
+                let _ = app_handle.emit(
+                    "view_projection_changed",
+                    Payload {
+                        is_perspective: true,
+                    },
+                );
             }
         }
         "menu_view_orthographic" => {
-            if let Some(r) = app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
+            if let Some(r) =
+                app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
                 && let Ok(mut renderer) = r.try_lock()
             {
                 renderer.camera.set_orthographic(30.0);
+                #[derive(Clone, serde::Serialize)]
+                struct Payload {
+                    is_perspective: bool,
+                }
+                let _ = app_handle.emit(
+                    "view_projection_changed",
+                    Payload {
+                        is_perspective: false,
+                    },
+                );
             }
         }
-        "menu_view_a" | "menu_view_b" | "menu_view_c" |
-        "menu_view_a_star" | "menu_view_b_star" | "menu_view_c_star" => {
+        "menu_view_a" | "menu_view_b" | "menu_view_c" | "menu_view_a_star" | "menu_view_b_star"
+        | "menu_view_c_star" => {
             let axis = id.replace("menu_view_", "");
             log::info!("View along axis: {}", axis);
             let _ = app_handle.emit("menu-action", &format!("view_axis_{}", axis));
         }
         "menu_reset_view" => {
-            if let Some(r) = app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
+            if let Some(r) =
+                app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
                 && let Ok(mut renderer) = r.try_lock()
             {
-                // Reset camera to default position
-                renderer.camera.eye = glam::Vec3::new(0.0, 0.0, 20.0);
-                renderer.camera.target = glam::Vec3::ZERO;
+                let mut dist = 20.0;
+                let mut center_vec = glam::Vec3::ZERO;
+                if let Some(cs_mutex) =
+                    app_handle.try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                    && let Ok(cs) = cs_mutex.try_lock()
+                {
+                    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+                    dist = extent * 2.5;
+                    center_vec = glam::Vec3::from_array(cs.unit_cell_center());
+                }
+                renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
+                renderer.camera.target = center_vec;
                 renderer.camera.up = glam::Vec3::Y;
+                if !renderer.camera.is_perspective {
+                    renderer.camera.set_orthographic(dist * 0.6);
+                }
             }
         }
         "menu_toggle_labels" | "menu_toggle_cell" | "menu_toggle_bonds" => {
@@ -322,9 +510,13 @@ fn handle_export(app_handle: &tauri::AppHandle, format: &'static str, extension:
                 && let Ok(cs) = cs_mutex.try_lock()
             {
                 let result = match format {
-                    "POSCAR" => crate::io::export::export_poscar(&cs, &path_str).map_err(|e| e.to_string()),
-                    "QE"     => crate::io::export::export_qe_input(&cs, &path_str).map_err(|e| e.to_string()),
-                    "LAMMPS" => crate::io::export::export_lammps_data(&cs, &path_str).map_err(|e| e.to_string()),
+                    "POSCAR" => {
+                        crate::io::export::export_poscar(&cs, &path_str).map_err(|e| e.to_string())
+                    }
+                    "QE" => crate::io::export::export_qe_input(&cs, &path_str)
+                        .map_err(|e| e.to_string()),
+                    "LAMMPS" => crate::io::export::export_lammps_data(&cs, &path_str)
+                        .map_err(|e| e.to_string()),
                     _ => Err(format!("Unsupported format: {}", format)),
                 };
                 match result {

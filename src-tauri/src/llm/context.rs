@@ -36,13 +36,16 @@ pub struct LatticeParams {
 }
 
 /// Builds a compressed context summary of the crystal state.
-pub fn build_crystal_context(state: &CrystalState, selected_indices: Option<&[usize]>) -> CrystalContext {
+pub fn build_crystal_context(
+    state: &CrystalState,
+    selected_indices: Option<&[usize]>,
+) -> CrystalContext {
     let mut comp = HashMap::new();
     for el in &state.elements {
         *comp.entry(el.clone()).or_insert(0) += 1;
     }
 
-    // Heuristic: Gather up to a small number of atoms per element (e.g., 5) to act as 
+    // Heuristic: Gather up to a small number of atoms per element (e.g., 5) to act as
     // "Asymmetric Unit fractionals proxy" to avoid token overflow.
     let mut representative_atoms = Vec::new();
     let mut seen_elements_count = HashMap::new();

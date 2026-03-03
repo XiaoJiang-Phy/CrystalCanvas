@@ -6,22 +6,16 @@ import { getJmolColor } from '../../utils/colors';
 
 import { safeInvoke } from '../../utils/tauri-mock';
 import { CrystalState } from '../../types/crystal';
-
 interface LeftSidebarProps {
     crystalState: CrystalState | null;
-    atomScale: number;
-    onAtomScaleChange: (scale: number) => void;
-    showLabels: boolean;
-    onToggleLabels: () => void;
-    showCell: boolean;
-    onToggleCell: () => void;
-    showBonds: boolean;
-    onToggleBonds: () => void;
+    selectedAtomIdx: number | null;
+    onSelectionChange: (idx: number | null) => void;
 }
 
 export const LeftSidebar: React.FC<LeftSidebarProps> = ({
-    crystalState, atomScale, onAtomScaleChange, showLabels, onToggleLabels,
-    showCell, onToggleCell, showBonds, onToggleBonds
+    crystalState,
+    selectedAtomIdx,
+    onSelectionChange
 }) => {
     const numAtoms = crystalState ? crystalState.labels.length : 0;
     const vol = crystalState ?
@@ -50,7 +44,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
             </Panel>
 
             <Panel title="Atom Management">
-                <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden text-xs max-h-[90px] overflow-y-auto custom-scrollbar">
+                <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 text-[10px] max-h-[200px] overflow-x-auto overflow-y-auto custom-scrollbar">
                     <table className="w-full text-left">
                         <thead className="bg-slate-100 dark:bg-slate-800/80 font-medium text-slate-500 dark:text-slate-400">
                             <tr>
@@ -66,38 +60,17 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                             {crystalState && crystalState.labels.map((_label, i) => (
                                 <AtomRow
                                     key={i}
-                                    id={i + 1}
+                                    id={i}
                                     element={crystalState.elements[i]}
                                     x={crystalState.fract_x[i].toFixed(2)}
                                     y={crystalState.fract_y[i].toFixed(2)}
                                     z={crystalState.fract_z[i].toFixed(2)}
+                                    isSelected={selectedAtomIdx === i}
+                                    onClick={() => onSelectionChange(i)}
                                 />
                             ))}
                         </tbody>
                     </table>
-                </div>
-            </Panel>
-
-            <Panel title="Visual Settings">
-                <div className="space-y-3 text-xs">
-                    <SliderRow
-                        label="Atomic Size"
-                        value={atomScale}
-                        onChange={onAtomScaleChange}
-                        min={0.1} max={3.0} step={0.1}
-                    />
-                    <SliderRow
-                        label="Bond Length"
-                        value={1.0}
-                        onChange={() => { }}
-                        min={0.1} max={3.0} step={0.1}
-                        disabled
-                    />
-                    <div className="space-y-2 pt-1">
-                        <CheckboxRow label="Show Cell" checked={showCell} onChange={onToggleCell} />
-                        <CheckboxRow label="Show Bonds" checked={showBonds} onChange={onToggleBonds} />
-                        <CheckboxRow label="Show Labels" checked={showLabels} onChange={onToggleLabels} />
-                    </div>
                 </div>
             </Panel>
 
@@ -156,11 +129,19 @@ const UnitCellInput = ({ label, paramKey, value, unit }: { label: string; paramK
     );
 };
 
-const AtomRow = ({ id, element, x, y, z }: { id: number; element: string; x: string; y: string; z: string }) => {
+const AtomRow = ({ id, element, x, y, z, isSelected, onClick }: { id: number; element: string; x: string; y: string; z: string; isSelected?: boolean; onClick?: () => void }) => {
     const hexColor = getJmolColor(element);
     return (
-        <tr className="hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors">
-            <td className="px-2 py-1.5 text-slate-500">{id}</td>
+        <tr
+            onClick={onClick}
+            className={cn(
+                "transition-colors cursor-pointer",
+                isSelected
+                    ? "bg-emerald-100 dark:bg-emerald-900/40"
+                    : "hover:bg-slate-100 dark:hover:bg-slate-800/50"
+            )}
+        >
+            <td className="px-2 py-1.5 text-slate-500">{id + 1}</td>
             <td className="px-2 py-1.5 font-medium">{element}</td>
             <td className="px-2 py-1.5 tabular-nums">{x}</td>
             <td className="px-2 py-1.5 tabular-nums">{y}</td>
@@ -175,47 +156,3 @@ const AtomRow = ({ id, element, x, y, z }: { id: number; element: string; x: str
         </tr>
     )
 };
-
-const SliderRow = ({ label, value, min, max, step, onChange, disabled }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; disabled?: boolean; }) => (
-    <div className={cn("space-y-1", disabled && "opacity-50 grayscale")}>
-        <div className="flex justify-between">
-            <span className="text-slate-600 dark:text-slate-400">{label}</span>
-        </div>
-        <input
-            type="range"
-            min={min} max={max} step={step}
-            value={value}
-            disabled={disabled}
-            onChange={(e) => onChange(parseFloat(e.target.value))}
-            className={cn("w-full h-1 accent-emerald-500", !disabled && "cursor-pointer")}
-            title={disabled ? "Coming in M10" : ""}
-        />
-    </div>
-);
-
-const CheckboxRow = ({ label, checked, onChange }: { label: string; checked?: boolean; onChange: (checked: boolean) => void }) => (
-    <label className="flex items-center gap-2 cursor-pointer group">
-        <div className={cn(
-            "w-3.5 h-3.5 rounded-sm flex items-center justify-center transition-colors border",
-            checked
-                ? "bg-emerald-500 border-emerald-500 text-white"
-                : "border-slate-300 dark:border-slate-600 group-hover:border-emerald-500"
-        )}>
-            {checked && (
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3} className="w-2.5 h-2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-            )}
-            {/* hidden native input to handle state correctly */}
-            <input
-                type="checkbox"
-                className="hidden"
-                checked={checked || false}
-                onChange={(e) => onChange(e.target.checked)}
-            />
-        </div>
-        <span className="text-slate-700 dark:text-slate-300 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-            {label}
-        </span>
-    </label>
-);

@@ -12,8 +12,7 @@ pub struct CollisionError;
 /// The central crystal structure state, holding all atom data in SoA layout.
 /// - f64 fields for physics calculations (fractional coords)
 /// - f32 fields for GPU rendering (Cartesian coords, populated on demand)
-#[allow(dead_code)]
-#[derive(Clone, Default, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct CrystalState {
     pub name: String,
     // Unit cell parameters (angstroms, degrees)
@@ -40,6 +39,31 @@ pub struct CrystalState {
     pub version: u32,
 }
 
+impl Default for CrystalState {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            cell_a: 0.0,
+            cell_b: 0.0,
+            cell_c: 0.0,
+            cell_alpha: 90.0,
+            cell_beta: 90.0,
+            cell_gamma: 90.0,
+            spacegroup_hm: String::new(),
+            spacegroup_number: 0,
+            labels: Vec::new(),
+            elements: Vec::new(),
+            fract_x: Vec::new(),
+            fract_y: Vec::new(),
+            fract_z: Vec::new(),
+            occupancies: Vec::new(),
+            atomic_numbers: Vec::new(),
+            cart_positions: Vec::new(),
+            version: 0,
+        }
+    }
+}
+
 impl CrystalState {
     /// Construct a CrystalState by parsing a CIF file.
     pub fn from_cif(path: &str) -> std::result::Result<Self, String> {
@@ -50,14 +74,20 @@ impl CrystalState {
     /// Construct from FFI data returned by the C++ parser.
     pub fn from_ffi(data: ffi::FfiCrystalData) -> Self {
         let n = data.sites.len();
+        log::info!(
+            "[from_ffi] C++ returned {} sites, spacegroup_hm='{}', spacegroup_number={}",
+            n,
+            data.spacegroup_hm,
+            data.spacegroup_number
+        );
         let mut state = CrystalState {
             name: data.name,
             cell_a: data.a,
             cell_b: data.b,
             cell_c: data.c,
-            cell_alpha: data.alpha,
-            cell_beta: data.beta,
-            cell_gamma: data.gamma,
+            cell_alpha: if data.alpha == 0.0 { 90.0 } else { data.alpha },
+            cell_beta: if data.beta == 0.0 { 90.0 } else { data.beta },
+            cell_gamma: if data.gamma == 0.0 { 90.0 } else { data.gamma },
             spacegroup_hm: data.spacegroup_hm,
             spacegroup_number: data.spacegroup_number,
             labels: Vec::with_capacity(n),
@@ -80,9 +110,153 @@ impl CrystalState {
             state.occupancies.push(site.occ);
             state.atomic_numbers.push(site.atomic_number);
         }
-
+        state.apply_boundary_mirroring();
         state.fractional_to_cartesian();
+        state.detect_spacegroup();
         state
+    }
+
+    /// Duplicate atoms residing on the fractional boundaries (0.0 or 1.0) for visual continuity
+    pub fn apply_boundary_mirroring(&mut self) {
+        if self.num_atoms() == 0 {
+            return;
+        }
+        let eps = 1e-4;
+        let mut new_labels = Vec::new();
+        let mut new_elements = Vec::new();
+        let mut new_fract_x = Vec::new();
+        let mut new_fract_y = Vec::new();
+        let mut new_fract_z = Vec::new();
+        let mut new_occupancies = Vec::new();
+        let mut new_atomic_numbers = Vec::new();
+
+        for i in 0..self.num_atoms() {
+            let x = self.fract_x[i];
+            let y = self.fract_y[i];
+            let z = self.fract_z[i];
+
+            for dx in 0..=1 {
+                for dy in 0..=1 {
+                    for dz in 0..=1 {
+                        if dx == 0 && dy == 0 && dz == 0 {
+                            continue;
+                        }
+
+                        let mut add = true;
+                        let mut nx = x;
+                        let mut ny = y;
+                        let mut nz = z;
+
+                        if dx == 1 {
+                            if x.abs() < eps || (x - 1.0).abs() < eps {
+                                nx = if x.abs() < eps { x + 1.0 } else { x - 1.0 };
+                            } else {
+                                add = false;
+                            }
+                        }
+                        if dy == 1 {
+                            if y.abs() < eps || (y - 1.0).abs() < eps {
+                                ny = if y.abs() < eps { y + 1.0 } else { y - 1.0 };
+                            } else {
+                                add = false;
+                            }
+                        }
+                        if dz == 1 {
+                            if z.abs() < eps || (z - 1.0).abs() < eps {
+                                nz = if z.abs() < eps { z + 1.0 } else { z - 1.0 };
+                            } else {
+                                add = false;
+                            }
+                        }
+
+                        if add {
+                            // Only add if not already in the list
+                            let mut exists = false;
+                            for j in 0..self.num_atoms() {
+                                if (self.fract_x[j] - nx).abs() < eps
+                                    && (self.fract_y[j] - ny).abs() < eps
+                                    && (self.fract_z[j] - nz).abs() < eps
+                                {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if !exists {
+                                new_labels.push(self.labels[i].clone());
+                                new_elements.push(self.elements[i].clone());
+                                new_fract_x.push(nx);
+                                new_fract_y.push(ny);
+                                new_fract_z.push(nz);
+                                new_occupancies.push(self.occupancies[i]);
+                                new_atomic_numbers.push(self.atomic_numbers[i]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.labels.extend(new_labels);
+        self.elements.extend(new_elements);
+        self.fract_x.extend(new_fract_x);
+        self.fract_y.extend(new_fract_y);
+        self.fract_z.extend(new_fract_z);
+        self.occupancies.extend(new_occupancies);
+        self.atomic_numbers.extend(new_atomic_numbers);
+    }
+
+    pub fn detect_spacegroup(&mut self) {
+        if self.num_atoms() == 0 {
+            return;
+        }
+
+        // Prepare lattice in col-major
+        let alpha = self.cell_alpha.to_radians();
+        let beta = self.cell_beta.to_radians();
+        let gamma = self.cell_gamma.to_radians();
+        let a = self.cell_a;
+        let b = self.cell_b;
+        let c = self.cell_c;
+
+        let cx = c * beta.cos();
+        let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
+        let cz = (c * c - cx * cx - cy * cy).max(0.0).sqrt();
+
+        let lattice_col_major = [
+            a,
+            0.0,
+            0.0,
+            b * gamma.cos(),
+            b * gamma.sin(),
+            0.0,
+            cx,
+            cy,
+            cz,
+        ];
+
+        let mut flat_positions = Vec::with_capacity(self.num_atoms() * 3);
+        let mut types = Vec::with_capacity(self.num_atoms());
+        for i in 0..self.num_atoms() {
+            flat_positions.push(self.fract_x[i]);
+            flat_positions.push(self.fract_y[i]);
+            flat_positions.push(self.fract_z[i]);
+            types.push(self.atomic_numbers[i] as i32);
+        }
+
+        let sg = unsafe {
+            ffi::get_spacegroup(
+                lattice_col_major.as_ptr(),
+                flat_positions.as_ptr(),
+                types.as_ptr(),
+                self.num_atoms(),
+                1e-5, // symprec
+            )
+        };
+
+        if sg > 0 {
+            self.spacegroup_number = sg;
+            self.spacegroup_hm = format!("Spglib #{}", sg);
+        }
     }
 
     /// Number of atom sites.
@@ -129,6 +303,25 @@ impl CrystalState {
         }
     }
 
+    /// Calculate the geometric center of the unit cell.
+    pub fn unit_cell_center(&self) -> [f32; 3] {
+        let alpha = self.cell_alpha.to_radians();
+        let beta = self.cell_beta.to_radians();
+        let gamma = self.cell_gamma.to_radians();
+
+        let cx = self.cell_c * beta.cos();
+        let cy = self.cell_c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
+        let cz = (self.cell_c * self.cell_c - cx * cx - cy * cy)
+            .max(0.0)
+            .sqrt();
+
+        // The center in fractional coordinates is exactly (0.5, 0.5, 0.5)
+        let x = 0.5 * self.cell_a + 0.5 * self.cell_b * gamma.cos() + 0.5 * cx;
+        let y = 0.5 * self.cell_b * gamma.sin() + 0.5 * cy;
+        let z = 0.5 * cz;
+
+        [x as f32, y as f32, z as f32]
+    }
     /// Generate a slab based on Miller indices and layers.
     /// Returns a new CrystalState representing the slab.
     pub fn generate_slab(
@@ -286,7 +479,9 @@ impl CrystalState {
             new_state.atomic_numbers.push(t);
         }
 
+        new_state.apply_boundary_mirroring();
         new_state.fractional_to_cartesian();
+        new_state.detect_spacegroup();
 
         Ok(new_state)
     }
@@ -412,7 +607,9 @@ impl CrystalState {
             new_state.atomic_numbers.push(t);
         }
 
+        new_state.apply_boundary_mirroring();
         new_state.fractional_to_cartesian();
+        new_state.detect_spacegroup();
 
         Ok(new_state)
     }

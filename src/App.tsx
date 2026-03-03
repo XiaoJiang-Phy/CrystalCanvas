@@ -53,6 +53,7 @@ function App() {
         let unlistenHover = () => { };
         let unlistenCancel = () => { };
         let unlistenMenu = () => { };
+        let unlistenProjection = () => { };
 
         safeListen<{ paths: string[] }>('tauri://file-drop', (event) => {
             setIsDragging(false);
@@ -125,14 +126,21 @@ function App() {
                 if (flag === 'cell') { toggleCell(); }
                 else if (flag === 'bonds') { toggleBonds(); }
                 else if (flag === 'labels') { toggleLabels(); }
+            } else if (action === 'show_about') {
+                alert("CrystalCanvas\\nVersion 1.0\\nPowered by Tauri, React, wgpu, and C++.\\nLicense: MIT OR Apache-2.0");
             }
         }).then(f => unlistenMenu = f).catch(console.warn);
+        // Listen for projection changes explicitly triggered by the Rust backend
+        safeListen<{ is_perspective: boolean }>('view_projection_changed', (event) => {
+            setIsPerspective(event.payload.is_perspective);
+        }).then((f: () => void) => unlistenProjection = f).catch(console.warn);
 
         return () => {
             unlistenDrop();
             unlistenHover();
             unlistenCancel();
             unlistenMenu();
+            unlistenProjection();
         };
     }, []);
 
@@ -169,12 +177,13 @@ function App() {
                 setContextMenu({ x: e.clientX, y: e.clientY });
                 return;
             }
+
+            pointerDownPos.current = { x: e.clientX, y: e.clientY };
+
             if (interactionMode === 'rotate' || interactionMode === 'move' || e.button === 1) {
                 isDraggingCamera.current = true;
                 lastMousePos.current = { x: e.clientX, y: e.clientY };
                 el.setPointerCapture(e.pointerId);
-            } else if (interactionMode === 'select') {
-                pointerDownPos.current = { x: e.clientX, y: e.clientY };
             }
         };
 
@@ -184,7 +193,7 @@ function App() {
             const dy = e.clientY - lastMousePos.current.y;
             lastMousePos.current = { x: e.clientX, y: e.clientY };
             if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
-                safeInvoke('pan_camera', { dx, dy: -dy }).catch(console.error);
+                safeInvoke('pan_camera', { dx, dy }).catch(console.error);
             } else if (e.buttons === 1 && interactionMode === 'rotate') {
                 safeInvoke('rotate_camera', { dx: dx * 1.0, dy: dy * 1.0 }).catch(console.error);
             }
@@ -194,22 +203,25 @@ function App() {
             if (isDraggingCamera.current) {
                 isDraggingCamera.current = false;
                 el.releasePointerCapture(e.pointerId);
-                return;
             }
-            if (interactionMode === 'select' && e.button === 0) {
+            if (e.button === 0) {
                 const ddx = Math.abs(e.clientX - pointerDownPos.current.x);
                 const ddy = Math.abs(e.clientY - pointerDownPos.current.y);
                 if (ddx < 5 && ddy < 5) {
                     const rect = el.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
+                    const dpr = window.devicePixelRatio || 1;
+                    const x = (e.clientX - rect.left) * dpr;
+                    const y = (e.clientY - rect.top) * dpr;
                     safeInvoke<number | null>('pick_atom', {
                         x, y,
-                        screen_w: rect.width,
-                        screen_h: rect.height
+                        screen_w: rect.width * dpr,
+                        screen_h: rect.height * dpr
                     }).then((idx) => {
+                        console.log("pick_atom returned:", idx, "at", { x, y });
                         setSelectedAtomIdx(idx ?? null);
-                    }).catch(console.error);
+                    }).catch((err) => {
+                        console.error("pick_atom error:", err);
+                    });
                 }
             }
         };
@@ -268,7 +280,7 @@ function App() {
 
         // Middle click = always pan. Left click + move mode = pan.
         if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
-            safeInvoke('pan_camera', { dx, dy: -dy }).catch(console.error); // Invert y for standard screen coords
+            safeInvoke('pan_camera', { dx, dy }).catch(console.error); // Invert y for standard screen coords
         }
         // Left click + rotate mode = rotate.
         else if (e.buttons === 1 && interactionMode === 'rotate') {
@@ -280,6 +292,11 @@ function App() {
         const next = !showCell;
         setShowCell(next);
         safeInvoke('set_render_flags', { show_cell: next, show_bonds: showBonds }).catch(console.error);
+    };
+
+    const handleSetPerspective = (perspective: boolean) => {
+        setIsPerspective(perspective);
+        safeInvoke('set_camera_projection', { is_perspective: perspective }).catch(console.error);
     };
 
     const toggleBonds = () => {
@@ -341,11 +358,7 @@ function App() {
                     showAssistant={showAssistant}
                     onToggleAssistant={() => setShowAssistant(prev => !prev)}
                     isPerspective={isPerspective}
-                    onTogglePerspective={() => {
-                        const next = !isPerspective;
-                        setIsPerspective(next);
-                        safeInvoke('set_camera_projection', { is_perspective: next }).catch(console.error);
-                    }}
+                    onSetPerspective={handleSetPerspective}
                     showLabels={showLabels}
                     onToggleLabels={() => {
                         const next = !showLabels;
@@ -362,14 +375,8 @@ function App() {
                     <div className="absolute top-16 left-0 bottom-0 pointer-events-none z-10 p-2 pl-3 pb-4">
                         <LeftSidebar
                             crystalState={crystalState}
-                            atomScale={atomScale}
-                            onAtomScaleChange={setAtomScale}
-                            showLabels={showLabels}
-                            onToggleLabels={toggleLabels}
-                            showCell={showCell}
-                            onToggleCell={toggleCell}
-                            showBonds={showBonds}
-                            onToggleBonds={toggleBonds}
+                            selectedAtomIdx={selectedAtomIdx}
+                            onSelectionChange={setSelectedAtomIdx}
                         />
                     </div>
                     <div className="absolute top-0 right-0 bottom-0 pointer-events-none z-10 p-2 pr-3 pb-4">

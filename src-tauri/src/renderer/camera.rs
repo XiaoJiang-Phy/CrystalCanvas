@@ -118,8 +118,11 @@ impl Camera {
         // Calculate current angles
         let current_pitch = offset.y.asin();
         // safe pitch limits to avoid singularity lock (gimbal lock style logic but for orbital camera)
-        let new_pitch = (current_pitch + delta_pitch).clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
-        
+        let new_pitch = (current_pitch + delta_pitch).clamp(
+            -std::f32::consts::FRAC_PI_2 + 0.01,
+            std::f32::consts::FRAC_PI_2 - 0.01,
+        );
+
         let current_yaw = offset.z.atan2(offset.x);
         let new_yaw = current_yaw - delta_yaw;
 
@@ -145,7 +148,7 @@ impl Camera {
         }
 
         self.eye = self.target + offset.normalize() * radius;
-        
+
         // Adjust orthographic scale in tandem
         self.orthographic_scale *= 1.0 + delta * zoom_speed;
         if self.orthographic_scale < 1.0 {

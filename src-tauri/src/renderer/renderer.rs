@@ -73,9 +73,12 @@ impl Renderer {
         // Pipeline
         let (render_pipeline, camera_bind_group_layout) =
             pipeline::create_render_pipeline(&gpu.device, gpu.surface_format());
-        
-        let line_pipeline = 
-            pipeline::create_line_pipeline(&gpu.device, gpu.surface_format(), &camera_bind_group_layout);
+
+        let line_pipeline = pipeline::create_line_pipeline(
+            &gpu.device,
+            gpu.surface_format(),
+            &camera_bind_group_layout,
+        );
 
         // Camera bind group
         let camera_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -117,16 +120,20 @@ impl Renderer {
             position: [0.0, 0.0, 0.0],
             color: [0.0, 0.0, 0.0, 0.0],
         }];
-        let cell_line_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cell Line Buffer"),
-            contents: bytemuck::cast_slice(&dummy_line),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-        let bond_line_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Bond Line Buffer"),
-            contents: bytemuck::cast_slice(&dummy_line),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
+        let cell_line_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Cell Line Buffer"),
+                contents: bytemuck::cast_slice(&dummy_line),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        let bond_line_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bond Line Buffer"),
+                contents: bytemuck::cast_slice(&dummy_line),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
 
         Self {
             gpu,
@@ -196,21 +203,27 @@ impl Renderer {
         let cell_lines = crate::renderer::instance::build_cell_lines(state);
         self.cell_line_count = cell_lines.len() as u32;
         if self.cell_line_count > 0 {
-            self.cell_line_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Cell Line Buffer"),
-                contents: bytemuck::cast_slice(&cell_lines),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            self.cell_line_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Cell Line Buffer"),
+                        contents: bytemuck::cast_slice(&cell_lines),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
         }
 
         let bond_lines = crate::renderer::instance::build_bond_lines(state);
         self.bond_line_count = bond_lines.len() as u32;
         if self.bond_line_count > 0 {
-            self.bond_line_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Bond Line Buffer"),
-                contents: bytemuck::cast_slice(&bond_lines),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            self.bond_line_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Bond Line Buffer"),
+                        contents: bytemuck::cast_slice(&bond_lines),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
         }
     }
 
@@ -277,7 +290,7 @@ impl Renderer {
                 render_pass.draw(0..6, 0..self.instance_count);
             }
 
-            // Draw lines 
+            // Draw lines
             // Reuse the camera bind group but switch to the Line pipeline
             if self.show_cell && self.cell_line_count > 0 {
                 render_pass.set_pipeline(&self.line_pipeline);

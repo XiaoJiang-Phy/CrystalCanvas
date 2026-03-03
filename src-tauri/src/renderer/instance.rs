@@ -92,31 +92,113 @@ pub fn element_color(symbol: &str) -> [f32; 4] {
     get_jmol_color(symbol)
 }
 
-/// Default covalent radius in Å for display purposes.
-/// Scaled down to 0.4× for visual clarity.
+/// Empirical covalent radii in Å (Cordero et al., Dalton Trans., 2008).
+/// Scaled by a display factor for ball-and-stick rendering (VESTA-like).
 pub fn element_radius(atomic_number: u8) -> f32 {
-    let covalent = match atomic_number {
-        1 => 0.31,
-        6 => 0.76,
-        7 => 0.71,
-        8 => 0.66,
-        9 => 0.57,
-        11 => 1.66,
-        12 => 1.41,
-        13 => 1.21,
-        14 => 1.11,
-        15 => 1.07,
-        16 => 1.05,
-        17 => 1.02,
-        20 => 1.76,
-        22 => 1.60,
-        26 => 1.52,
-        29 => 1.32,
-        30 => 1.22,
-        79 => 1.36,
-        _ => 1.20,
-    };
-    covalent as f32 * 0.6 // scale for visual display
+    // Covalent radii for Z=1..96 (index 0 is dummy for Z=0)
+    #[rustfmt::skip]
+    const COVALENT_RADII: [f32; 97] = [
+        0.50, // 0: dummy
+        0.31, // 1: H
+        0.28, // 2: He
+        1.28, // 3: Li
+        0.96, // 4: Be
+        0.84, // 5: B
+        0.76, // 6: C
+        0.71, // 7: N
+        0.66, // 8: O
+        0.57, // 9: F
+        0.58, // 10: Ne
+        1.66, // 11: Na
+        1.41, // 12: Mg
+        1.21, // 13: Al
+        1.11, // 14: Si
+        1.07, // 15: P
+        1.05, // 16: S
+        1.02, // 17: Cl
+        1.06, // 18: Ar
+        2.03, // 19: K
+        1.76, // 20: Ca
+        1.70, // 21: Sc
+        1.60, // 22: Ti
+        1.53, // 23: V
+        1.39, // 24: Cr
+        1.39, // 25: Mn (low spin)
+        1.32, // 26: Fe (low spin)
+        1.26, // 27: Co (low spin)
+        1.24, // 28: Ni
+        1.32, // 29: Cu
+        1.22, // 30: Zn
+        1.22, // 31: Ga
+        1.20, // 32: Ge
+        1.19, // 33: As
+        1.20, // 34: Se
+        1.20, // 35: Br
+        1.16, // 36: Kr
+        2.20, // 37: Rb
+        1.95, // 38: Sr
+        1.90, // 39: Y
+        1.75, // 40: Zr
+        1.64, // 41: Nb
+        1.54, // 42: Mo
+        1.47, // 43: Tc
+        1.46, // 44: Ru
+        1.42, // 45: Rh
+        1.39, // 46: Pd
+        1.45, // 47: Ag
+        1.44, // 48: Cd
+        1.42, // 49: In
+        1.39, // 50: Sn
+        1.39, // 51: Sb
+        1.38, // 52: Te
+        1.39, // 53: I
+        1.40, // 54: Xe
+        2.44, // 55: Cs
+        2.15, // 56: Ba
+        2.07, // 57: La
+        2.04, // 58: Ce
+        2.03, // 59: Pr
+        2.01, // 60: Nd
+        1.99, // 61: Pm
+        1.98, // 62: Sm
+        1.98, // 63: Eu
+        1.96, // 64: Gd
+        1.94, // 65: Tb
+        1.92, // 66: Dy
+        1.92, // 67: Ho
+        1.89, // 68: Er
+        1.90, // 69: Tm
+        1.87, // 70: Yb
+        1.87, // 71: Lu
+        1.75, // 72: Hf
+        1.70, // 73: Ta
+        1.62, // 74: W
+        1.51, // 75: Re
+        1.44, // 76: Os
+        1.41, // 77: Ir
+        1.36, // 78: Pt
+        1.36, // 79: Au
+        1.32, // 80: Hg
+        1.45, // 81: Tl
+        1.46, // 82: Pb
+        1.48, // 83: Bi
+        1.40, // 84: Po
+        1.50, // 85: At
+        1.50, // 86: Rn
+        2.60, // 87: Fr
+        2.21, // 88: Ra
+        2.15, // 89: Ac
+        2.06, // 90: Th
+        2.00, // 91: Pa
+        1.96, // 92: U
+        1.90, // 93: Np
+        1.87, // 94: Pu
+        1.80, // 95: Am
+        1.69, // 96: Cm
+    ];
+
+    let idx = (atomic_number as usize).min(COVALENT_RADII.len() - 1);
+    COVALENT_RADII[idx] * 0.25 // scale for ball-and-stick display
 }
 
 /// Build an array of `AtomInstance` from a `CrystalState`.
@@ -205,10 +287,24 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
     let m01 = b * cos_gamma;
     let m02 = c * cos_beta;
     let m11 = b * sin_gamma;
+    if sin_gamma.abs() < 1e-6 {
+        log::warn!(
+            "build_cell_lines: sin_gamma is near zero, cell angles are likely invalid. a={} b={} c={} alpha={} beta={} gamma={}",
+            a,
+            b,
+            c,
+            cs.cell_alpha,
+            cs.cell_beta,
+            cs.cell_gamma
+        );
+        return Vec::new();
+    }
+
     let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
     let m22 = c
         * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma
             + 2.0 * cos_alpha * cos_beta * cos_gamma)
+            .max(0.0) // Defensive square root check
             .sqrt())
         / sin_gamma;
 
@@ -223,16 +319,29 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
     let abc = v_a + v_b + v_c;
 
     let edges = [
-        (o, v_a), (o, v_b), (o, v_c),
-        (v_a, ab), (v_b, ab),
-        (v_a, ac), (v_c, ac),
-        (v_b, bc), (v_c, bc),
-        (ab, abc), (ac, abc), (bc, abc),
+        (o, v_a),
+        (o, v_b),
+        (o, v_c),
+        (v_a, ab),
+        (v_b, ab),
+        (v_a, ac),
+        (v_c, ac),
+        (v_b, bc),
+        (v_c, bc),
+        (ab, abc),
+        (ac, abc),
+        (bc, abc),
     ];
 
     for (v1, v2) in edges {
-        lines.push(LineVertex { position: v1.into(), color });
-        lines.push(LineVertex { position: v2.into(), color });
+        lines.push(LineVertex {
+            position: v1.into(),
+            color,
+        });
+        lines.push(LineVertex {
+            position: v2.into(),
+            color,
+        });
     }
 
     lines
@@ -245,23 +354,29 @@ pub fn build_bond_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
 
     for i in 0..n {
         for j in (i + 1)..n {
-            let p1 = glam::Vec3::from(cs.cart_positions[i].map(|x| x as f32));
-            let p2 = glam::Vec3::from(cs.cart_positions[j].map(|x| x as f32));
+            let p1 = glam::Vec3::from(cs.cart_positions[i]);
+            let p2 = glam::Vec3::from(cs.cart_positions[j]);
             let dist = (p1 - p2).length();
 
             let r1 = element_radius(cs.atomic_numbers[i]);
             let r2 = element_radius(cs.atomic_numbers[j]);
-            
+
             // Empirical bond threshold: sum of covalent radii * 1.3, minimum 0.5 (to avoid self-bonds or overlaps)
             let max_bond_len = (r1 + r2) / 0.6 * 1.3; // since elements are scaled down by 0.6 for visual radius
 
             if dist > 0.5 && dist < max_bond_len {
                 let color = [0.5, 0.5, 0.5, 0.8]; // Gray bonds
-                lines.push(LineVertex { position: p1.into(), color });
-                lines.push(LineVertex { position: p2.into(), color });
+                lines.push(LineVertex {
+                    position: p1.into(),
+                    color,
+                });
+                lines.push(LineVertex {
+                    position: p2.into(),
+                    color,
+                });
             }
         }
     }
-    
+
     lines
 }

@@ -233,9 +233,9 @@ fn test_sandbox_supercell_negative_det() {
 #[test]
 fn test_end_to_end_mock_llm() {
     use crystal_canvas::crystal_state::CrystalState;
-    use crystal_canvas::llm::sandbox::validate_command;
-    use crystal_canvas::llm::router::execute_command;
     use crystal_canvas::llm::command::CrystalCommand;
+    use crystal_canvas::llm::router::execute_command;
+    use crystal_canvas::llm::sandbox::validate_command;
 
     // 1. Initial State
     let mut state = CrystalState::default();
@@ -251,7 +251,8 @@ fn test_end_to_end_mock_llm() {
     }"#;
 
     // 3. Layer 1: Schema Validation (Parse gate)
-    let command: CrystalCommand = serde_json::from_str(json_response).expect("Schema validation failed");
+    let command: CrystalCommand =
+        serde_json::from_str(json_response).expect("Schema validation failed");
 
     // 4. Layer 2: Physics Sandbox
     validate_command(&command, &state).expect("Physics sandbox validation failed");

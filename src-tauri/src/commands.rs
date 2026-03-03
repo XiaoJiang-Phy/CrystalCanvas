@@ -80,8 +80,10 @@ pub fn load_cif_file(
 
         // Auto-adjust camera distance based on unit cell size
         let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
-        renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        renderer.camera.target = glam::Vec3::ZERO;
+        let center = state.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
         // Optionally update the orthographic scale
         if !renderer.camera.is_perspective {
             renderer.camera.set_orthographic(extent * 1.5);
@@ -214,9 +216,15 @@ pub fn apply_supercell(
 ) -> Result<(), String> {
     // Flatten the 3x3 matrix into the [i32; 9] format expected by generate_supercell
     let expansion: [i32; 9] = [
-        matrix[0][0], matrix[0][1], matrix[0][2],
-        matrix[1][0], matrix[1][1], matrix[1][2],
-        matrix[2][0], matrix[2][1], matrix[2][2],
+        matrix[0][0],
+        matrix[0][1],
+        matrix[0][2],
+        matrix[1][0],
+        matrix[1][1],
+        matrix[1][2],
+        matrix[2][0],
+        matrix[2][1],
+        matrix[2][2],
     ];
     log::info!("apply_supercell: {:?}", expansion);
 
@@ -233,6 +241,7 @@ pub fn apply_supercell(
             .try_lock()
             .map_err(|_| "Failed to lock state")?;
         *cs = new_state;
+        cs.detect_spacegroup();
     }
 
     // Update renderer
@@ -250,8 +259,10 @@ pub fn apply_supercell(
 
         // Auto-adjust camera distance for the new structure
         let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-        renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        renderer.camera.target = glam::Vec3::ZERO;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
         if !renderer.camera.is_perspective {
             renderer.camera.set_orthographic(extent * 1.5);
         }
@@ -289,6 +300,7 @@ pub fn apply_slab(
             .try_lock()
             .map_err(|_| "Failed to lock state")?;
         *cs = new_state;
+        cs.detect_spacegroup();
     }
 
     // Update renderer
@@ -305,8 +317,10 @@ pub fn apply_slab(
         renderer.update_lines(&cs);
 
         let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-        renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        renderer.camera.target = glam::Vec3::ZERO;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
         if !renderer.camera.is_perspective {
             renderer.camera.set_orthographic(extent * 1.5);
         }
@@ -350,42 +364,44 @@ pub fn set_camera_view_axis(
         .try_lock()
         .map_err(|_| "Failed to lock renderer")?;
 
-    renderer.camera.target = glam::Vec3::ZERO;
+    let center = cs.unit_cell_center();
+    let center_vec = glam::Vec3::from_array(center);
+    renderer.camera.target = center_vec;
 
     match axis.as_str() {
         "a" => {
             let dir = va.normalize();
-            renderer.camera.eye = dir * dist;
+            renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
         "b" => {
             let dir = vb.normalize();
-            renderer.camera.eye = dir * dist;
+            renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
         "c" => {
             let dir = vc.normalize();
-            renderer.camera.eye = dir * dist;
+            renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Y;
         }
         "a_star" => {
             // a* is perpendicular to b-c plane
             let dir = vb.cross(vc).normalize();
-            renderer.camera.eye = dir * dist;
+            renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
         "b_star" => {
             let dir = vc.cross(va).normalize();
-            renderer.camera.eye = dir * dist;
+            renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
         "c_star" => {
             let dir = va.cross(vb).normalize();
-            renderer.camera.eye = dir * dist;
+            renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Y;
         }
         "reset" => {
-            renderer.camera.eye = glam::Vec3::new(0.0, 0.0, dist);
+            renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
             renderer.camera.up = glam::Vec3::Y;
         }
         _ => {
@@ -441,18 +457,18 @@ fn get_api_key(provider: &str, provided_key: &str) -> String {
         }
         return provided_key.to_string();
     }
-    
+
     // Try to load from keychain
-    if let Ok(entry) = keyring::Entry::new("CrystalCanvas", provider) {
-        if let Ok(pwd) = entry.get_password() {
-            return pwd;
-        }
+    if let Ok(entry) = keyring::Entry::new("CrystalCanvas", provider)
+        && let Ok(pwd) = entry.get_password()
+    {
+        return pwd;
     }
 
     // Fallback to .env for development
     dotenvy::dotenv().ok();
     dotenvy::from_path("../.env").ok();
-    
+
     let env_key = match provider {
         "openai" => "OPENAI_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
@@ -460,7 +476,7 @@ fn get_api_key(provider: &str, provided_key: &str) -> String {
         "gemini" => "GEMINI_API_KEY",
         _ => "",
     };
-    
+
     std::env::var(env_key)
         .or_else(|_| std::env::var(format!("{}_API_KEY", provider.to_uppercase())))
         .unwrap_or_default()
@@ -480,13 +496,29 @@ pub fn llm_configure(
     state: State<'_, LlmState>,
 ) -> Result<(), String> {
     let pt = provider_type.to_lowercase();
-    let resolved_key = if pt == "ollama" { String::new() } else { get_api_key(&pt, &api_key) };
+    let resolved_key = if pt == "ollama" {
+        String::new()
+    } else {
+        get_api_key(&pt, &api_key)
+    };
 
     let config = match pt.as_str() {
-        "openai" => crate::llm::provider::ProviderConfig::OpenAi { api_key: resolved_key, model },
-        "deepseek" => crate::llm::provider::ProviderConfig::DeepSeek { api_key: resolved_key, model },
-        "claude" => crate::llm::provider::ProviderConfig::Claude { api_key: resolved_key, model },
-        "gemini" => crate::llm::provider::ProviderConfig::Gemini { api_key: resolved_key, model },
+        "openai" => crate::llm::provider::ProviderConfig::OpenAi {
+            api_key: resolved_key,
+            model,
+        },
+        "deepseek" => crate::llm::provider::ProviderConfig::DeepSeek {
+            api_key: resolved_key,
+            model,
+        },
+        "claude" => crate::llm::provider::ProviderConfig::Claude {
+            api_key: resolved_key,
+            model,
+        },
+        "gemini" => crate::llm::provider::ProviderConfig::Gemini {
+            api_key: resolved_key,
+            model,
+        },
         "ollama" => crate::llm::provider::ProviderConfig::Ollama { model },
         _ => return Err(format!("Unknown provider type: {}", provider_type)),
     };
@@ -576,7 +608,9 @@ pub fn llm_execute_command(
 pub fn get_crystal_state(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<crate::crystal_state::CrystalState, String> {
-    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
     Ok(cs.clone())
 }
 
@@ -628,8 +662,10 @@ pub fn reset_camera(
         if let Ok(cs) = crystal_state.try_lock() {
             let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
             let dist = extent * 2.5;
-            renderer.camera.target = glam::Vec3::ZERO;
-            renderer.camera.eye = glam::Vec3::new(0.0, 0.0, dist);
+            let center = cs.unit_cell_center();
+            let center_vec = glam::Vec3::from_array(center);
+            renderer.camera.target = center_vec;
+            renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
             renderer.camera.orthographic_scale = extent * 1.5;
         } else {
             renderer.camera = crate::renderer::camera::Camera::default_for_crystal();
@@ -648,44 +684,59 @@ pub fn pick_atom(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<Option<usize>, String> {
-    let (_camera_eye, view_proj) = {
-        let renderer = renderer_state.try_lock().map_err(|_| "Failed to lock renderer")?;
-        let vp = renderer.camera.build_view_projection_matrix();
-        (renderer.camera.eye, vp)
+    log::info!(
+        "pick_atom: window screen_w={} screen_h={} pointer x={} y={}",
+        screen_w,
+        screen_h,
+        x,
+        y
+    );
+    let (camera_eye, view_proj, is_perspective) = {
+        let renderer = renderer_state
+            .try_lock()
+            .map_err(|_| "Failed to lock renderer")?;
+        let vp = renderer.camera.build_projection_matrix() * renderer.camera.build_view_matrix();
+        (renderer.camera.eye, vp, renderer.camera.is_perspective)
     };
 
     let inv_vp = view_proj.inverse();
 
     let nx = (2.0 * x) / screen_w - 1.0;
     let ny = 1.0 - (2.0 * y) / screen_h;
-    
-    // Near plane point
-    let p_near = inv_vp * glam::Vec4::new(nx, ny, 0.0, 1.0);
-    let p_near = p_near.truncate() / p_near.w;
-    
+
     // Far plane point
     let p_far = inv_vp * glam::Vec4::new(nx, ny, 1.0, 1.0);
     let p_far = p_far.truncate() / p_far.w;
-    
-    let ray_dir = (p_far - p_near).normalize();
-    let ray_origin = p_near;
 
-    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
-    
+    // Near plane point (only used for Ortho origin)
+    let p_near = inv_vp * glam::Vec4::new(nx, ny, 0.0, 1.0);
+    let p_near = p_near.truncate() / p_near.w;
+
+    let ray_origin = if is_perspective { camera_eye } else { p_near };
+    let ray_dir = (p_far - ray_origin).normalize();
+
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
+
     let mut closest_idx = None;
     let mut min_t = f32::MAX;
 
     // Use a fixed hit radius for now, scale it up so atoms are easy to click
-    let hit_radius_sq = 1.5 * 1.5; 
+    let hit_radius_sq = 1.5 * 1.5;
 
     for (i, pos) in cs.cart_positions.iter().enumerate() {
-        let center = glam::Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
+        let center = glam::Vec3::new(pos[0], pos[1], pos[2]);
         let l = center - ray_origin;
         let tca = l.dot(ray_dir);
-        if tca < 0.0 { continue; } // Behind ray
+        if tca < 0.0 {
+            continue;
+        } // Behind ray
 
         let d2 = l.length_squared() - tca * tca;
-        if d2 > hit_radius_sq { continue; } // Ray misses sphere
+        if d2 > hit_radius_sq {
+            continue;
+        } // Ray misses sphere
 
         let thc = (hit_radius_sq - d2).sqrt();
         let t = tca - thc;
@@ -695,6 +746,8 @@ pub fn pick_atom(
             closest_idx = Some(i);
         }
     }
+
+    log::info!("pick_atom completed: found closest idx = {:?}", closest_idx);
 
     Ok(closest_idx)
 }

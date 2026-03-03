@@ -11,7 +11,7 @@ interface TopNavBarProps {
     showAssistant: boolean;
     onToggleAssistant: () => void;
     isPerspective: boolean;
-    onTogglePerspective: () => void;
+    onSetPerspective: (perspective: boolean) => void;
     showLabels: boolean;
     onToggleLabels: () => void;
     interactionMode: 'select' | 'move' | 'rotate' | 'measure';
@@ -20,7 +20,7 @@ interface TopNavBarProps {
 
 export const TopNavBar: React.FC<TopNavBarProps> = ({
     showAssistant, onToggleAssistant,
-    isPerspective, onTogglePerspective,
+    isPerspective, onSetPerspective,
     showLabels, onToggleLabels,
     interactionMode, setInteractionMode
 }) => {
@@ -55,7 +55,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             {/* Center: View Perspectives */}
             <div className="flex items-center gap-1">
                 <button
-                    onClick={onTogglePerspective}
+                    onClick={() => onSetPerspective(true)}
                     className={cn(
                         "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                         isPerspective
@@ -65,7 +65,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     Perspective
                 </button>
                 <button
-                    onClick={onTogglePerspective}
+                    onClick={() => onSetPerspective(false)}
                     className={cn(
                         "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                         !isPerspective

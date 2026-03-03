@@ -11,7 +11,7 @@ export const RightSidebar: React.FC<{
     onSelectionChange?: (idx: number | null) => void
 }> = ({ crystalState, selectedAtomIdx = null, onSelectionChange }) => {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
-    const [slab, setSlab] = useState({ h: 0, k: 0, l: 1, layers: 3, vacuum: 15.0 });
+    const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
 
     const handleSupercell = () => {
         const matrix = [
@@ -23,11 +23,16 @@ export const RightSidebar: React.FC<{
     };
 
     const handleSlabCut = () => {
+        if (slab.h === 0 && slab.k === 0 && slab.l === 0) {
+            alert("Invalid Miller indices: returning to default (1, 1, 1).");
+            setSlab(s => ({ ...s, h: 1, k: 1, l: 1 }));
+            return;
+        }
         safeInvoke('apply_slab', {
             miller: [slab.h, slab.k, slab.l],
             layers: slab.layers,
             vacuum_a: slab.vacuum
-        }).catch(console.error);
+        }).then(() => console.log("Slab applied")).catch(console.error);
     };
 
     const handleDeleteAtom = () => {
@@ -43,8 +48,8 @@ export const RightSidebar: React.FC<{
         if (newElem && newElem.trim().length > 0) {
             safeInvoke('substitute_atoms', {
                 indices: [selectedAtomIdx],
-                newElementSymbol: newElem.trim(),
-                newAtomicNumber: 0 // Backend can map symbol to number
+                new_element_symbol: newElem.trim(),
+                new_atomic_number: 0 // Backend can map symbol to number
             }).catch(console.error);
         }
     };
@@ -91,7 +96,7 @@ export const RightSidebar: React.FC<{
 
                     <div className="flex gap-2">
                         <ActionButton label="Cut" onClick={handleSlabCut} />
-                        <ActionButton label="Reset" onClick={() => console.log("Reset requested")} />
+                        <ActionButton label="Reset" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                     </div>
                 </div>
             </Accordion>

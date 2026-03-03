@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-#include "crystal_parser.hpp"  // cxx-generated types + function declaration
+#include "crystal_parser.hpp" // cxx-generated types + function declaration
 
 // Gemmi headers included only in .cpp — never leaked into public header
 #include <gemmi/cif.hpp>   // cif::read_file (header-only PEGTL parser)
@@ -11,6 +11,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <cstdio>
 
 FfiCrystalData parse_cif_file(rust::Str path) {
   try {
@@ -43,8 +44,32 @@ FfiCrystalData parse_cif_file(rust::Str path) {
     result.spacegroup_hm = rust::String(st.spacegroup_hm);
     result.spacegroup_number = st.spacegroup_number;
 
+    // Fallback: if make_small_structure_from_block failed to determine spacegroup
+    // (e.g. non-standard H-M string), use IT number directly.
+    // We must NOT re-run "S.H2" here because the '.' after 'S' can short-circuit
+    // if symops form a complete but non-tabulated group, preventing 'n' from running.
+    if (!st.spacegroup && st.spacegroup_number > 0) {
+      fprintf(stderr, "[CIF] spacegroup was null, trying IT number %d\n", st.spacegroup_number);
+      st.determine_and_set_spacegroup("n");
+    } else if (!st.spacegroup) {
+      fprintf(stderr, "[CIF] spacegroup null and no IT number, calling setup_cell_images\n");
+      st.setup_cell_images();
+    }
+
+    fprintf(stderr, "[CIF] spacegroup=%s, cell.images.size=%zu, sites=%zu, symops=%zu\n",
+            st.spacegroup ? st.spacegroup->hm : "NULL",
+            st.cell.images.size(),
+            st.sites.size(),
+            st.symops.size());
+
+    // Expand the asymmetric unit to the full unit cell using Gemmi
+    std::vector<gemmi::SmallStructure::Site> full_sites =
+        st.get_all_unit_cell_sites();
+
+    fprintf(stderr, "[CIF] After expansion: full_sites=%zu\n", full_sites.size());
+
     // Atom sites
-    for (const auto &site : st.sites) {
+    for (const auto &site : full_sites) {
       FfiAtomSite atom;
       atom.label = rust::String(site.label);
       atom.element_symbol = rust::String(std::string(site.element.name()));
@@ -62,12 +87,12 @@ FfiCrystalData parse_cif_file(rust::Str path) {
   }
 }
 
-rust::Vec<FfiVec3f> translate_positions(
-    rust::Vec<FfiVec3f> const& positions, float offset) {
+rust::Vec<FfiVec3f> translate_positions(rust::Vec<FfiVec3f> const &positions,
+                                        float offset) {
   try {
     rust::Vec<FfiVec3f> result;
     result.reserve(positions.size());
-    for (const auto& pos : positions) {
+    for (const auto &pos : positions) {
       FfiVec3f translated;
       translated.x = pos.x + offset;
       translated.y = pos.y + offset;
@@ -76,7 +101,7 @@ rust::Vec<FfiVec3f> translate_positions(
     }
     return result;
   } catch (const std::exception &e) {
-    throw std::runtime_error(
-        std::string("translate_positions error: ") + e.what());
+    throw std::runtime_error(std::string("translate_positions error: ") +
+                             e.what());
   }
 }
