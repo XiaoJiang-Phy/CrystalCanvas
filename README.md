@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" width="200" alt="CrystalCanvas Logo">
+</p>
+
 # 🔬 CrystalCanvas
 
 **High-performance crystal structure modeling, slab cleaving, and DFT/MD file preparation — in a native desktop app.**

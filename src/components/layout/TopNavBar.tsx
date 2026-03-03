@@ -20,6 +20,8 @@ interface TopNavBarProps {
     onOpenSettings: () => void;
 }
 
+import logoUrl from '../../assets/logo.svg';
+
 export const TopNavBar: React.FC<TopNavBarProps> = ({
     showAssistant, onToggleAssistant,
     isPerspective, onSetPerspective,
@@ -40,7 +42,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             {/* Left: Brand + Basic Tools */}
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 font-semibold text-base tracking-tight text-emerald-600 dark:text-emerald-400">
-                    <Sparkles className="w-4 h-4" />
+                    <img src={logoUrl} className="w-5 h-5 object-contain" alt="Logo" />
                     <span>CrystalCanvas</span>
                 </div>
 
