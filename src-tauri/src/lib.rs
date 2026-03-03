@@ -8,4 +8,5 @@ pub mod ffi;
 pub mod io;
 pub mod llm;
 pub mod renderer;
+pub mod settings;
 pub mod utils;

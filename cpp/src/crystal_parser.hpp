@@ -1,3 +1,4 @@
+// [Overview: Header file for the C++ crystal parser interface.]
 // Thin C++ wrapper for Gemmi CIF parsing — declares the FFI function for cxx bridge
 //
 // NOTE: FfiAtomSite and FfiCrystalData structs are defined by cxx code generation

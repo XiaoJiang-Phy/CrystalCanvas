@@ -1,3 +1,4 @@
+// [Overview: Safe Tauri API wrappers for seamless browser fallback development.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 /**

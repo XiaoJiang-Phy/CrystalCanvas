@@ -1,3 +1,4 @@
+// [Overview: Unified export file for all Lucide-react icons used in the app.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 /**

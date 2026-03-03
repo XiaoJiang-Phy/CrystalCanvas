@@ -5,7 +5,7 @@
 use wgpu;
 
 use super::camera::CameraUniform;
-use super::instance::{AtomInstance, LineVertex};
+use super::instance::{AtomInstance, BondInstance, LineVertex};
 
 /// Create the main render pipeline for Impostor Sphere rendering.
 ///
@@ -140,6 +140,69 @@ pub fn create_line_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// Create the render pipeline for drawing cylinder bonds (instanced geometry).
+pub fn create_bond_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader_source = include_str!("../../shaders/bond_cylinder.wgsl");
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Bond Cylinder Shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Bond Pipeline Layout"),
+        bind_group_layouts: &[camera_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Bond Render Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: Some("vs_main"),
+            buffers: &[BondInstance::buffer_layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None, // No backface culling
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,

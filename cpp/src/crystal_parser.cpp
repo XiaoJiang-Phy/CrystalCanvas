@@ -1,3 +1,4 @@
+// [Overview: C++ implementation of the crystal parser using Gemmi, providing fast CIF reading and symmetry expansion.]
 // Implementation of CIF parsing wrapper — uses Gemmi header-only CIF parser
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0

@@ -1,3 +1,4 @@
+// [Overview: Root React application component managing global state and layout interactions.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useEffect, useRef, useState } from 'react';
@@ -9,6 +10,7 @@ import { LeftSidebar } from './components/layout/LeftSidebar';
 import { RightSidebar } from './components/layout/RightSidebar';
 import { BottomStatusBar } from './components/layout/BottomStatusBar';
 import { LlmAssistant } from './components/layout/LlmAssistant';
+import { SettingsModal } from './components/layout/SettingsModal';
 
 function App() {
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -16,10 +18,11 @@ function App() {
     const [showAssistant, setShowAssistant] = useState(true);
 
     // Global UI State
-    const [isPerspective, setIsPerspective] = useState(true);
+    const [isPerspective, setIsPerspective] = useState(false);
     const [showCell, setShowCell] = useState(true);
-    const [showBonds, setShowBonds] = useState(false);
+    const [showBonds, setShowBonds] = useState(true);
     const [showLabels, setShowLabels] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [atomScale, setAtomScale] = useState(1.0);
     const [interactionMode, setInteractionMode] = useState<'select' | 'move' | 'rotate' | 'measure'>('rotate');
 
@@ -76,6 +79,8 @@ function App() {
                 document.documentElement.classList.toggle('dark');
             } else if (action === 'toggle_llm_assistant') {
                 setShowAssistant(prev => !prev);
+            } else if (action === 'view_settings') {
+                setIsSettingsOpen(true);
             } else if (action.startsWith('view_axis_')) {
                 safeInvoke('set_camera_view_axis', { axis: action.replace('view_axis_', '') })
                     .catch(console.error);
@@ -365,6 +370,7 @@ function App() {
                         setShowLabels(next);
                         // TODO: safeInvoke('set_render_flags', ...) when available
                     }}
+                    onOpenSettings={() => setIsSettingsOpen(true)}
                     interactionMode={interactionMode}
                     setInteractionMode={setInteractionMode}
                 />
@@ -423,6 +429,11 @@ function App() {
                     </div>
                 )}
             </Shell>
+            <SettingsModal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                elements={crystalState?.elements ? Array.from(new Set(crystalState.elements)) : []}
+            />
         </div>
     );
 }

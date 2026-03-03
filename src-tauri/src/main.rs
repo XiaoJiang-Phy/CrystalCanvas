@@ -17,7 +17,7 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     // ── CrystalCanvas (App) Menu ─────────────────────────────────────────
     let about = PredefinedMenuItem::about(app, None::<&str>, None)?;
     let sep_app1 = PredefinedMenuItem::separator(app)?;
-    let settings = MenuItem::with_id(app, "menu_settings", "Settings...", false, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "menu_settings", "Settings...", true, None::<&str>)?;
     let sep_app2 = PredefinedMenuItem::separator(app)?;
     let quit = PredefinedMenuItem::quit(app, None::<&str>)?;
     let app_menu = Submenu::with_items(
@@ -288,6 +288,9 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
     log::info!("Menu event: {}", id);
 
     match id {
+        "menu_settings" => {
+            let _ = app_handle.emit("menu-action", "view_settings");
+        }
         // ── File ─────────────────────────────────────────────────────
         "menu_new_structure" => {
             // Reset crystal state to empty
@@ -319,33 +322,45 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                     log::info!("Opening file: {}", path_str);
                     match crate::io::import::load_file(&path_str) {
                         Ok(state) => {
+                            // Block until crystal state lock is available
                             if let Some(cs_mutex) = handle
                                 .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
-                                && let Ok(mut cs) = cs_mutex.try_lock()
                             {
-                                *cs = state.clone();
+                                match cs_mutex.lock() {
+                                    Ok(mut cs) => *cs = state.clone(),
+                                    Err(e) => log::error!("Failed to lock crystal state: {}", e),
+                                }
                             }
+                            let settings_st = handle.state::<std::sync::Mutex<crate::settings::AppSettings>>();
+                            let settings = settings_st.lock().unwrap();
+
                             let instances = crate::renderer::instance::build_instance_data(
                                 &state.cart_positions,
                                 &state.atomic_numbers,
                                 &state.elements,
+                                &settings,
                             );
+                            // Block until renderer lock is available
                             if let Some(r) = handle
                                 .try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>(
                                 )
-                                && let Ok(mut renderer) = r.try_lock()
                             {
-                                renderer.update_atoms(&instances);
-                                renderer.update_lines(&state);
-                                let extent =
-                                    state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
-                                let center = state.unit_cell_center();
-                                let center_vec = glam::Vec3::from_array(center);
-                                renderer.camera.eye =
-                                    center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
-                                renderer.camera.target = center_vec;
-                                if !renderer.camera.is_perspective {
-                                    renderer.camera.set_orthographic(extent * 1.5);
+                                match r.lock() {
+                                    Ok(mut renderer) => {
+                                        renderer.update_atoms(&instances);
+                                        renderer.update_lines(&state, &settings);
+                                        let extent =
+                                            state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
+                                        let center = state.unit_cell_center();
+                                        let center_vec = glam::Vec3::from_array(center);
+                                        renderer.camera.eye =
+                                            center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+                                        renderer.camera.target = center_vec;
+                                        if !renderer.camera.is_perspective {
+                                            renderer.camera.set_orthographic(extent * 1.5);
+                                        }
+                                    }
+                                    Err(e) => log::error!("Failed to lock renderer: {}", e),
                                 }
                             }
                             log::info!("File loaded: {}", path_str);
@@ -369,9 +384,9 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
 
         // ── View ─────────────────────────────────────────────────────
         "menu_view_perspective" => {
-            if let Some(r) =
+            if let Some(r_mutex) =
                 app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
-                && let Ok(mut renderer) = r.try_lock()
+                && let Ok(mut renderer) = r_mutex.lock()
             {
                 renderer.camera.set_perspective();
                 #[derive(Clone, serde::Serialize)]
@@ -387,11 +402,19 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             }
         }
         "menu_view_orthographic" => {
-            if let Some(r) =
+            if let Some(r_mutex) =
                 app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
-                && let Ok(mut renderer) = r.try_lock()
+                && let Ok(mut renderer) = r_mutex.lock()
             {
-                renderer.camera.set_orthographic(30.0);
+                let mut scale = 15.0;
+                if let Some(cs_mutex) = app_handle
+                    .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                    && let Ok(cs) = cs_mutex.lock()
+                {
+                    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+                    scale = if extent > 0.0 { extent * 1.5 } else { 15.0 };
+                }
+                renderer.camera.set_orthographic(scale);
                 #[derive(Clone, serde::Serialize)]
                 struct Payload {
                     is_perspective: bool,
@@ -411,15 +434,15 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             let _ = app_handle.emit("menu-action", &format!("view_axis_{}", axis));
         }
         "menu_reset_view" => {
-            if let Some(r) =
+            if let Some(r_mutex) =
                 app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
-                && let Ok(mut renderer) = r.try_lock()
+                && let Ok(mut renderer) = r_mutex.lock()
             {
-                let mut dist = 20.0;
+                let mut dist = 30.0;
                 let mut center_vec = glam::Vec3::ZERO;
-                if let Some(cs_mutex) =
-                    app_handle.try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
-                    && let Ok(cs) = cs_mutex.try_lock()
+                if let Some(cs_mutex) = app_handle
+                    .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                    && let Ok(cs) = cs_mutex.lock()
                 {
                     let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
                     dist = extent * 2.5;
@@ -560,6 +583,8 @@ fn main() {
             // Store it in Tauri managed state so commands and the event loop can access it
             app.manage(std::sync::Mutex::new(renderer));
             app.manage(std::sync::Mutex::new(crystal_state::CrystalState::default()));
+            let loaded_settings = crate::settings::AppSettings::load(app.handle());
+            app.manage(std::sync::Mutex::new(loaded_settings));
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
 
             // --- Menu Construction ---
@@ -593,7 +618,9 @@ fn main() {
             commands::set_render_flags,
             commands::apply_supercell,
             commands::apply_slab,
-            commands::set_camera_view_axis
+            commands::set_camera_view_axis,
+            commands::get_settings,
+            commands::update_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

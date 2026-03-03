@@ -31,12 +31,15 @@ pub struct Renderer {
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
 
-    // Lines rendering
+    // Lines rendering (Unit cell box)
     line_pipeline: wgpu::RenderPipeline,
     cell_line_buffer: wgpu::Buffer,
     cell_line_count: u32,
-    bond_line_buffer: wgpu::Buffer,
-    bond_line_count: u32,
+
+    // Thick Cylinder Bonding
+    bond_pipeline: wgpu::RenderPipeline,
+    bond_instance_buffer: wgpu::Buffer,
+    bond_instance_count: u32,
 
     pub show_cell: bool,
     pub show_bonds: bool,
@@ -75,6 +78,12 @@ impl Renderer {
             pipeline::create_render_pipeline(&gpu.device, gpu.surface_format());
 
         let line_pipeline = pipeline::create_line_pipeline(
+            &gpu.device,
+            gpu.surface_format(),
+            &camera_bind_group_layout,
+        );
+
+        let bond_pipeline = pipeline::create_bond_pipeline(
             &gpu.device,
             gpu.surface_format(),
             &camera_bind_group_layout,
@@ -127,11 +136,18 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&dummy_line),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
-        let bond_line_buffer = gpu
+        let dummy_bond = [crate::renderer::instance::BondInstance {
+            start: [0.0, 0.0, 0.0],
+            radius: 0.0,
+            end: [0.0, 0.0, 0.0],
+            _pad: 0.0,
+            color: [0.0, 0.0, 0.0, 0.0],
+        }];
+        let bond_instance_buffer = gpu
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Bond Line Buffer"),
-                contents: bytemuck::cast_slice(&dummy_line),
+                label: Some("Bond Instance Buffer"),
+                contents: bytemuck::cast_slice(&dummy_bond),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -149,10 +165,11 @@ impl Renderer {
             line_pipeline,
             cell_line_buffer,
             cell_line_count: 0,
-            bond_line_buffer,
-            bond_line_count: 0,
+            bond_pipeline,
+            bond_instance_buffer,
+            bond_instance_count: 0,
             show_cell: true,
-            show_bonds: false,
+            show_bonds: true,
             clear_color: default_clear,
         }
     }
@@ -198,8 +215,12 @@ impl Renderer {
         );
     }
 
-    /// Update cell boundaries and bond lines from the CrystalState.
-    pub fn update_lines(&mut self, state: &crate::crystal_state::CrystalState) {
+    /// Update cell boundaries and bond lines from the CrystalState and settings.
+    pub fn update_lines(
+        &mut self,
+        state: &crate::crystal_state::CrystalState,
+        settings: &crate::settings::AppSettings,
+    ) {
         let cell_lines = crate::renderer::instance::build_cell_lines(state);
         self.cell_line_count = cell_lines.len() as u32;
         if self.cell_line_count > 0 {
@@ -213,18 +234,25 @@ impl Renderer {
                     });
         }
 
-        let bond_lines = crate::renderer::instance::build_bond_lines(state);
-        self.bond_line_count = bond_lines.len() as u32;
-        if self.bond_line_count > 0 {
-            self.bond_line_buffer =
-                self.gpu
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Bond Line Buffer"),
-                        contents: bytemuck::cast_slice(&bond_lines),
-                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    });
+        let bond_instances = crate::renderer::instance::build_bond_instances(state, settings);
+        self.update_bonds(&bond_instances);
+    }
+
+    /// Update actual bond cylinder instances.
+    pub fn update_bonds(&mut self, instances: &[crate::renderer::instance::BondInstance]) {
+        self.bond_instance_count = instances.len() as u32;
+        if instances.is_empty() {
+            return;
         }
+
+        self.bond_instance_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Bond Instance Buffer"),
+                    contents: bytemuck::cast_slice(instances),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
     }
 
     /// Update camera uniform and upload to GPU. Call once per frame (or on camera change).
@@ -299,11 +327,12 @@ impl Renderer {
                 render_pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
                 render_pass.draw(0..self.cell_line_count, 0..1);
             }
-            if self.show_bonds && self.bond_line_count > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
+            if self.show_bonds && self.bond_instance_count > 0 {
+                render_pass.set_pipeline(&self.bond_pipeline);
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.bond_line_buffer.slice(..));
-                render_pass.draw(0..self.bond_line_count, 0..1);
+                render_pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
+                // 12 segments * 6 vertices = 72 vertices per impostor cylinder quad equivalent
+                render_pass.draw(0..72, 0..self.bond_instance_count);
             }
         }
 

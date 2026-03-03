@@ -40,7 +40,7 @@ impl Camera {
             aspect: 16.0 / 9.0,
             znear: 0.1,
             zfar: 200.0,
-            is_perspective: true,
+            is_perspective: false,
             orthographic_scale: 30.0,
         }
     }

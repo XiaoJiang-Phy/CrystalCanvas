@@ -3,7 +3,7 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use tauri::State;
+use tauri::{Emitter, State};
 
 /// Sent by the React frontend via ResizeObserver when the transparent viewport <div> resizes.
 #[tauri::command]
@@ -13,26 +13,44 @@ pub fn update_viewport_size(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     log::info!("update_viewport_size: {}x{}", width, height);
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        renderer.resize(winit::dpi::PhysicalSize::new(width, height));
-    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+    renderer.resize(winit::dpi::PhysicalSize::new(width, height));
     Ok(())
 }
 
-/// Sets the camera projection mode.
 #[tauri::command]
 pub fn set_camera_projection(
     is_perspective: bool,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     log::info!("set_camera_projection: perspective={}", is_perspective);
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        if is_perspective {
-            renderer.camera.set_perspective();
-        } else {
-            renderer.camera.set_orthographic(30.0); // Assuming 30.0 orthographic scale for now
+
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+
+    if is_perspective {
+        renderer.camera.set_perspective();
+    } else {
+        let mut scale = 15.0; // Fallback
+        if let Ok(cs) = crystal_state.lock() {
+            let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+            scale = if extent > 0.0 { extent * 1.5 } else { 15.0 };
         }
+        renderer.camera.set_orthographic(scale);
     }
+
+    // Sync frontend UI (topbar might already be in sync, but menu and LLM need it)
+    #[derive(Clone, serde::Serialize)]
+    struct Payload {
+        is_perspective: bool,
+    }
+    let _ = app.emit("view_projection_changed", Payload { is_perspective });
+
     Ok(())
 }
 
@@ -43,10 +61,11 @@ pub fn set_render_flags(
     show_bonds: bool,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        renderer.show_cell = show_cell;
-        renderer.show_bonds = show_bonds;
-    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+    renderer.show_cell = show_cell;
+    renderer.show_bonds = show_bonds;
     Ok(())
 }
 
@@ -56,27 +75,40 @@ pub fn load_cif_file(
     path: String,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("load_cif_file: {}", path);
 
     // 1 & 2. Load file (delegating to our format importer)
     let state = crate::io::import::load_file(&path)?;
 
-    if let Ok(mut cs) = crystal_state.try_lock() {
+    // Update crystal state — must block until lock is available
+    {
+        let mut cs = crystal_state
+            .lock()
+            .map_err(|e| format!("Failed to lock crystal state: {}", e))?;
         *cs = state.clone();
     }
 
     // 3. Build instance data for the Renderer
+    let settings = settings_state
+        .lock()
+        .map_err(|e| format!("Failed to lock settings: {}", e))?;
+
     let instances = crate::renderer::instance::build_instance_data(
         &state.cart_positions,
         &state.atomic_numbers,
         &state.elements,
+        &settings,
     );
 
-    // 4. Update the renderer
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    // 4. Update the renderer — must block until lock is available
+    {
+        let mut renderer = renderer_state
+            .lock()
+            .map_err(|e| format!("Failed to lock renderer: {}", e))?;
         renderer.update_atoms(&instances);
-        renderer.update_lines(&state);
+        renderer.update_lines(&state, &settings);
 
         // Auto-adjust camera distance based on unit cell size
         let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
@@ -100,6 +132,7 @@ pub fn add_atom(
     fract_pos: [f64; 3],
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
 
@@ -109,14 +142,16 @@ pub fn add_atom(
     cs.try_add_atom(&element_symbol, atomic_number, fract_pos)
         .map_err(|_| "Collision detected: atom too close to existing atoms")?;
 
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
+        &settings,
     );
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
-        renderer.update_lines(&cs);
+        renderer.update_lines(&cs, &settings);
     }
 
     Ok(())
@@ -127,6 +162,7 @@ pub fn delete_atoms(
     indices: Vec<usize>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("delete_atoms: {:?}", indices);
 
@@ -135,14 +171,16 @@ pub fn delete_atoms(
         .map_err(|_| "Failed to lock state")?;
     cs.delete_atoms(&indices);
 
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
+        &settings,
     );
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
-        renderer.update_lines(&cs);
+        renderer.update_lines(&cs, &settings);
     }
 
     Ok(())
@@ -155,6 +193,7 @@ pub fn substitute_atoms(
     new_atomic_number: u8,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("substitute_atoms: {:?} -> {}", indices, new_element_symbol);
 
@@ -163,14 +202,16 @@ pub fn substitute_atoms(
         .map_err(|_| "Failed to lock state")?;
     cs.substitute_atoms(&indices, &new_element_symbol, new_atomic_number);
 
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
+        &settings,
     );
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
-        renderer.update_lines(&cs);
+        renderer.update_lines(&cs, &settings);
     }
 
     Ok(())
@@ -213,6 +254,7 @@ pub fn apply_supercell(
     matrix: [[i32; 3]; 3],
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     // Flatten the 3x3 matrix into the [i32; 9] format expected by generate_supercell
     let expansion: [i32; 9] = [
@@ -248,14 +290,16 @@ pub fn apply_supercell(
     let cs = crystal_state
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
+        &settings,
     );
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
-        renderer.update_lines(&cs);
+        renderer.update_lines(&cs, &settings);
 
         // Auto-adjust camera distance for the new structure
         let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
@@ -279,6 +323,7 @@ pub fn apply_slab(
     vacuum_a: f64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!(
         "apply_slab: miller={:?} layers={} vacuum={}",
@@ -307,14 +352,16 @@ pub fn apply_slab(
     let cs = crystal_state
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
+        &settings,
     );
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
-        renderer.update_lines(&cs);
+        renderer.update_lines(&cs, &settings);
 
         let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
         let center = cs.unit_cell_center();
@@ -560,6 +607,7 @@ pub fn llm_execute_command(
     command_json: String,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     // 1. Layer 1: Schema parse validation
     let command: crate::llm::command::CrystalCommand = serde_json::from_str(&command_json)
@@ -588,17 +636,22 @@ pub fn llm_execute_command(
     // Release the lock early so we don't hold it over the renderer update if it's slow
     drop(cs);
 
-    let instances =
-        crate::renderer::instance::build_instance_data(&cart_positions, &atomic_numbers, &elements);
-    if let Ok(mut renderer) = renderer_state.try_lock() {
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cart_positions,
+        &atomic_numbers,
+        &elements,
+        &settings,
+    );
+    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
         // We technically need `cs` to build lines, but we just dropped it!
         // We shouldn't drop `cs` if we use it for lines since we just computed state.
         // Wait, the fastest way is to skip re-locking and just not drop it. Since we already refactored commands, let's lock it again.
     }
-    let cs = crystal_state.try_lock().map_err(|_| "Failed")?;
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        renderer.update_lines(&cs);
+    let cs = crystal_state.lock().map_err(|_| "Failed")?;
+    if let Ok(mut renderer) = renderer_state.lock() {
+        renderer.update_lines(&cs, &settings);
     }
 
     Ok(())
@@ -621,9 +674,10 @@ pub fn rotate_camera(
     dy: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        renderer.camera.rotate_around_target(dx, dy);
-    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+    renderer.camera.rotate_around_target(dx, dy);
     Ok(())
 }
 
@@ -633,9 +687,10 @@ pub fn zoom_camera(
     delta: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        renderer.camera.zoom_towards_target(delta);
-    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+    renderer.camera.zoom_towards_target(delta);
     Ok(())
 }
 
@@ -646,9 +701,10 @@ pub fn pan_camera(
     dy: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        renderer.camera.pan(dx, dy);
-    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+    renderer.camera.pan(dx, dy);
     Ok(())
 }
 
@@ -658,19 +714,22 @@ pub fn reset_camera(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
-    if let Ok(mut renderer) = renderer_state.try_lock() {
-        if let Ok(cs) = crystal_state.try_lock() {
-            let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-            let dist = extent * 2.5;
-            let center = cs.unit_cell_center();
-            let center_vec = glam::Vec3::from_array(center);
-            renderer.camera.target = center_vec;
-            renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
-            renderer.camera.orthographic_scale = extent * 1.5;
-        } else {
-            renderer.camera = crate::renderer::camera::Camera::default_for_crystal();
-        }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+
+    if let Ok(cs) = crystal_state.lock() {
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        let dist = extent * 2.5;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.target = center_vec;
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
+        renderer.camera.orthographic_scale = extent * 1.5;
+    } else {
+        renderer.camera = crate::renderer::camera::Camera::default_for_crystal();
     }
+
     Ok(())
 }
 
@@ -750,4 +809,52 @@ pub fn pick_atom(
     log::info!("pick_atom completed: found closest idx = {:?}", closest_idx);
 
     Ok(closest_idx)
+}
+
+#[tauri::command]
+pub fn get_settings(
+    settings: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<crate::settings::AppSettings, String> {
+    Ok(settings.lock().map_err(|e| e.to_string())?.clone())
+}
+
+#[tauri::command]
+pub fn update_settings(
+    app: tauri::AppHandle,
+    new_settings: crate::settings::AppSettings,
+    settings: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    *settings.lock().map_err(|e| e.to_string())? = new_settings.clone();
+    
+    // Save to disk
+    let _ = new_settings.save(&app).map_err(|e| log::warn!("Failed to save settings: {}", e));
+
+    // Rebuild instances using new settings
+    let renderer_lock = renderer_state.lock();
+    let cs_lock = crystal_state.lock();
+
+    if let (Ok(mut renderer), Ok(cs)) = (renderer_lock, cs_lock) {
+        let instances = crate::renderer::instance::build_instance_data(
+            &cs.cart_positions,
+            &cs.atomic_numbers,
+            &cs.elements,
+            &new_settings,
+        );
+        renderer.update_atoms(&instances);
+
+        let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &new_settings);
+        renderer.update_bonds(&bond_instances);
+
+        // Re-apply clear color
+        renderer.clear_color = wgpu::Color {
+            r: 15.0 / 255.0, // Hardcoded for now, or could use settings
+            g: 23.0 / 255.0,
+            b: 42.0 / 255.0,
+            a: 1.0,
+        };
+    }
+
+    Ok(())
 }

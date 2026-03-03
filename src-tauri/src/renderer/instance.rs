@@ -64,6 +64,33 @@ pub struct LineVertex {
     pub color: [f32; 4],
 }
 
+/// Instance data for rendering thick bonds via instanced cylinders.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+pub struct BondInstance {
+    pub start: [f32; 3],
+    pub radius: f32,      // radius of the bond cylinder
+    pub end: [f32; 3],
+    pub _pad: f32,        // align to 16 bytes (vec4)
+    pub color: [f32; 4],
+}
+
+impl BondInstance {
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        static ATTRIBUTES: &[wgpu::VertexAttribute] = &[
+            wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
+            wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32 },
+            wgpu::VertexAttribute { offset: 16, shader_location: 2, format: wgpu::VertexFormat::Float32x3 },
+            wgpu::VertexAttribute { offset: 32, shader_location: 3, format: wgpu::VertexFormat::Float32x4 },
+        ];
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<BondInstance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: ATTRIBUTES,
+        }
+    }
+}
+
 impl LineVertex {
     pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
         static ATTRIBUTES: &[wgpu::VertexAttribute] = &[
@@ -93,8 +120,7 @@ pub fn element_color(symbol: &str) -> [f32; 4] {
 }
 
 /// Empirical covalent radii in Å (Cordero et al., Dalton Trans., 2008).
-/// Scaled by a display factor for ball-and-stick rendering (VESTA-like).
-pub fn element_radius(atomic_number: u8) -> f32 {
+pub fn covalent_radius(atomic_number: u8) -> f32 {
     // Covalent radii for Z=1..96 (index 0 is dummy for Z=0)
     #[rustfmt::skip]
     const COVALENT_RADII: [f32; 97] = [
@@ -198,7 +224,15 @@ pub fn element_radius(atomic_number: u8) -> f32 {
     ];
 
     let idx = (atomic_number as usize).min(COVALENT_RADII.len() - 1);
-    COVALENT_RADII[idx] * 0.25 // scale for ball-and-stick display
+    COVALENT_RADII[idx]
+}
+
+/// Visual radius for rendering atoms. Uses a compressed non-linear scaling
+/// to ensure both small and large elements are visible (VESTA-like aesthetic).
+pub fn element_radius(atomic_number: u8, scale_factor: f32) -> f32 {
+    let r = covalent_radius(atomic_number);
+    // Map covalent radii [0.6, 2.0] into a narrower visual range [0.3, 0.45]
+    (0.25 + r * 0.1) * scale_factor
 }
 
 /// Build an array of `AtomInstance` from a `CrystalState`.
@@ -207,14 +241,19 @@ pub fn build_instance_data(
     cart_positions: &[[f32; 3]],
     atomic_numbers: &[u8],
     element_symbols: &[String],
+    settings: &crate::settings::AppSettings,
 ) -> Vec<AtomInstance> {
     let n = cart_positions.len();
     let mut instances = Vec::with_capacity(n);
     for i in 0..n {
+        let mut color = element_color(&element_symbols[i]);
+        if let Some(custom_color) = settings.custom_atom_colors.get(&element_symbols[i]) {
+            color = *custom_color;
+        }
         instances.push(AtomInstance {
             position: cart_positions[i],
-            radius: element_radius(atomic_numbers[i]),
-            color: element_color(&element_symbols[i]),
+            radius: element_radius(atomic_numbers[i], settings.atom_scale),
+            color,
         });
     }
     instances
@@ -247,7 +286,7 @@ pub fn build_test_instances(
                         iy as f32 * spacing - offset_y,
                         iz as f32 * spacing - offset_z,
                     ],
-                    radius: element_radius(elem),
+                    radius: element_radius(elem, 1.0),
                     color: element_color(match elem {
                         11 => "Na",
                         17 => "Cl",
@@ -347,10 +386,13 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
     lines
 }
 
-/// Build chemical bond lines based on distance.
-pub fn build_bond_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVertex> {
+/// Build chemical bond instances based on distance, for thick cylinder rendering.
+pub fn build_bond_instances(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+) -> Vec<BondInstance> {
     let n = cs.cart_positions.len();
-    let mut lines = Vec::new();
+    let mut instances = Vec::new();
 
     for i in 0..n {
         for j in (i + 1)..n {
@@ -358,25 +400,22 @@ pub fn build_bond_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
             let p2 = glam::Vec3::from(cs.cart_positions[j]);
             let dist = (p1 - p2).length();
 
-            let r1 = element_radius(cs.atomic_numbers[i]);
-            let r2 = element_radius(cs.atomic_numbers[j]);
+            let r1 = covalent_radius(cs.atomic_numbers[i]);
+            let r2 = covalent_radius(cs.atomic_numbers[j]);
 
-            // Empirical bond threshold: sum of covalent radii * 1.3, minimum 0.5 (to avoid self-bonds or overlaps)
-            let max_bond_len = (r1 + r2) / 0.6 * 1.3; // since elements are scaled down by 0.6 for visual radius
+            let max_bond_len = r1 + r2 + settings.bond_tolerance;
 
             if dist > 0.5 && dist < max_bond_len {
-                let color = [0.5, 0.5, 0.5, 0.8]; // Gray bonds
-                lines.push(LineVertex {
-                    position: p1.into(),
-                    color,
-                });
-                lines.push(LineVertex {
-                    position: p2.into(),
-                    color,
+                instances.push(BondInstance {
+                    start: p1.into(),
+                    radius: settings.bond_radius,
+                    end: p2.into(),
+                    _pad: 0.0,
+                    color: settings.bond_color,
                 });
             }
         }
     }
 
-    lines
+    instances
 }

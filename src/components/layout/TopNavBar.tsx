@@ -1,3 +1,4 @@
+// [Overview: Top navigation bar for main actions and view toggles.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React from 'react';
@@ -16,13 +17,15 @@ interface TopNavBarProps {
     onToggleLabels: () => void;
     interactionMode: 'select' | 'move' | 'rotate' | 'measure';
     setInteractionMode: (mode: 'select' | 'move' | 'rotate' | 'measure') => void;
+    onOpenSettings: () => void;
 }
 
 export const TopNavBar: React.FC<TopNavBarProps> = ({
     showAssistant, onToggleAssistant,
     isPerspective, onSetPerspective,
     showLabels, onToggleLabels,
-    interactionMode, setInteractionMode
+    interactionMode, setInteractionMode,
+    onOpenSettings
 }) => {
     const { theme, toggleTheme } = useTheme();
 
@@ -117,7 +120,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
                 </button>
 
-                <button className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+                <button
+                    onClick={onOpenSettings}
+                    className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+                >
                     <Settings className="w-3.5 h-3.5" />
                 </button>
             </div>
