@@ -1,18 +1,23 @@
-// [Overview: Right sidebar component for supercell and slab modeling tools.]
-// Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
-// SPDX-License-Identifier: MIT OR Apache-2.0
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { cn } from '../../utils/cn';
 import { safeInvoke } from '../../utils/tauri-mock';
-import { CrystalState } from '../../types/crystal';
+import { CrystalState, BondAnalysisResult, PhononModeSummary } from '../../types/crystal';
 
 export const RightSidebar: React.FC<{
     crystalState: CrystalState | null,
     selectedAtomIdx?: number | null,
-    onSelectionChange?: (idx: number | null) => void
-}> = ({ crystalState, selectedAtomIdx = null, onSelectionChange }) => {
+    onSelectionChange?: (idx: number | null) => void,
+    onBondCountUpdate?: (count: number) => void,
+    onActivePhononModeUpdate?: (mode: PhononModeSummary | null) => void
+}> = ({ crystalState, selectedAtomIdx = null, onSelectionChange, onBondCountUpdate, onActivePhononModeUpdate }) => {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
     const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
+
+    const [bondAnalysis, setBondAnalysis] = useState<BondAnalysisResult | null>(null);
+    const [phononModes, setPhononModes] = useState<PhononModeSummary[] | null>(null);
+    const [activeModeIdx, setActiveModeIdx] = useState<number | null>(null);
+    const [isAnimating, setIsAnimating] = useState(false);
+    const [amplitude, setAmplitude] = useState(1.0);
 
     const handleSupercell = () => {
         const matrix = [
@@ -55,25 +60,169 @@ export const RightSidebar: React.FC<{
         }
     };
 
+    const handleRefeshBonds = () => {
+        safeInvoke<BondAnalysisResult>('get_bond_analysis', { threshold_factor: 1.2 })
+            .then(res => {
+                if (res) {
+                    setBondAnalysis(res);
+                    if (onBondCountUpdate) onBondCountUpdate(res.bonds.length);
+                }
+            })
+            .catch(console.error);
+    };
+
+    const handleLoadPhonon = () => {
+        const path = window.prompt("Enter path to .mold or .dat file:");
+        if (path) {
+            safeInvoke<PhononModeSummary[]>('load_phonon', { path })
+                .then(modes => {
+                    if (modes) {
+                        setPhononModes(modes);
+                        setActiveModeIdx(null);
+                        setIsAnimating(false);
+                    }
+                })
+                .catch(console.error);
+        }
+    };
+
+    const handleSelectMode = (idx: number) => {
+        setActiveModeIdx(idx);
+        if (phononModes && onActivePhononModeUpdate) {
+            const mode = phononModes.find(m => m.index === idx);
+            onActivePhononModeUpdate(mode || null);
+        }
+        safeInvoke('set_phonon_mode', { mode_index: idx }).catch(console.error);
+    };
+
+    useEffect(() => {
+        if (!isAnimating) return;
+        let animationFrameId: number;
+        const start = performance.now();
+
+        const render = (time: number) => {
+            // Full cycle every 1000ms -> 2pi
+            const phase = ((time - start) / 1000.0) * 2.0 * Math.PI;
+            safeInvoke('set_phonon_phase', { phase, amplitude }).catch(console.error);
+            animationFrameId = requestAnimationFrame(render);
+        };
+        animationFrameId = requestAnimationFrame(render);
+        return () => cancelAnimationFrame(animationFrameId);
+    }, [isAnimating, amplitude]);
+
     return (
         <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
 
+            {/* Bond Analysis Accordion */}
+            <Accordion title="Structural Analysis" defaultOpen>
+                <div className="space-y-3">
+                    <ActionButton label="Calculate Bonds & Polyhedra" onClick={handleRefeshBonds} />
+
+                    {bondAnalysis && (
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 space-y-2">
+                            <div className="flex justify-between font-bold border-b border-slate-200 dark:border-slate-700 pb-1">
+                                <span>Total Bonds: {bondAnalysis.bonds.length}</span>
+                            </div>
+
+                            {/* Bond Length Stats */}
+                            <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-1">
+                                {bondAnalysis.bond_length_stats.map((stat, i) => (
+                                    <div key={i} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/40 p-1 rounded">
+                                        <span className="font-medium">{stat.element_a}-{stat.element_b}</span>
+                                        <span className="tabular-nums">
+                                            {stat.count} pair | {stat.mean.toFixed(2)} Å
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Selected Atom Distortion Index */}
+                            {selectedAtomIdx !== null && bondAnalysis.coordination[selectedAtomIdx] && (
+                                <div className="mt-2 p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-md border border-emerald-100 dark:border-emerald-800/30">
+                                    <div className="font-medium text-emerald-800 dark:text-emerald-300 mb-1">
+                                        Atom #{selectedAtomIdx} ({bondAnalysis.coordination[selectedAtomIdx].element})
+                                    </div>
+                                    <div>Coordination: {bondAnalysis.coordination[selectedAtomIdx].coordination_number}</div>
+                                    {bondAnalysis.coordination[selectedAtomIdx].polyhedron_type && (
+                                        <div>Polyhedron: {bondAnalysis.coordination[selectedAtomIdx].polyhedron_type}</div>
+                                    )}
+                                    {bondAnalysis.distortion_indices[selectedAtomIdx] > 0 && (
+                                        <div>Distortion Δ: {bondAnalysis.distortion_indices[selectedAtomIdx].toFixed(4)}</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </Accordion>
+
+            {/* Phonon Animation Accordion */}
+            <Accordion title="Phonon Animation" defaultOpen>
+                <div className="space-y-3">
+                    <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handleLoadPhonon} />
+
+                    {phononModes && (
+                        <>
+                            <div className="space-y-1">
+                                <label className="text-[11px] text-slate-500 dark:text-slate-400">Select Mode</label>
+                                <select
+                                    className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
+                                    value={activeModeIdx ?? ""}
+                                    onChange={(e) => handleSelectMode(parseInt(e.target.value))}
+                                >
+                                    <option value="" disabled>-- Select Mode --</option>
+                                    {phononModes.map((m) => (
+                                        <option key={m.index} value={m.index}>
+                                            Mode {m.index + 1}: {m.frequency_cm1.toFixed(2)} cm⁻¹ {m.is_imaginary ? '(i)' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="space-y-1">
+                                <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
+                                    <span>Amplitude: {amplitude.toFixed(1)}</span>
+                                </div>
+                                <input
+                                    type="range" min={0.1} max={5.0} step={0.1}
+                                    value={amplitude}
+                                    onChange={e => setAmplitude(parseFloat(e.target.value))}
+                                    className="w-full h-1 accent-emerald-500 cursor-pointer pointer-events-auto"
+                                />
+                            </div>
+
+                            <button
+                                onClick={() => setIsAnimating(!isAnimating)}
+                                disabled={activeModeIdx === null}
+                                className={cn(
+                                    "w-full py-1.5 text-white rounded-md text-xs font-medium transition-colors shadow-sm pointer-events-auto",
+                                    activeModeIdx === null ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed" :
+                                        isAnimating ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-500 hover:bg-emerald-600"
+                                )}
+                            >
+                                {isAnimating ? "⏸ Pause Animation" : "▶ Play Animation"}
+                            </button>
+                        </>
+                    )}
+                </div>
+            </Accordion>
+
             {/* Supercell Accordion */}
-            <Accordion title="Supercell Construction" defaultOpen>
+            <Accordion title="Supercell Construction" defaultOpen={false}>
                 <div className="space-y-3">
                     <div className="flex gap-2 text-xs">
                         <NumberInput label="Nx" value={sc.nx} onChange={v => setSc(s => ({ ...s, nx: v }))} />
                         <NumberInput label="Ny" value={sc.ny} onChange={v => setSc(s => ({ ...s, ny: v }))} />
                         <NumberInput label="Nz" value={sc.nz} onChange={v => setSc(s => ({ ...s, nz: v }))} />
                     </div>
-                    <button onClick={handleSupercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98]">
+                    <button onClick={handleSupercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98] pointer-events-auto">
                         Execute Supercell
                     </button>
                 </div>
             </Accordion>
 
             {/* Cutting Plane Accordion */}
-            <Accordion title="Cutting Plane (hkl)" defaultOpen>
+            <Accordion title="Cutting Plane (hkl)" defaultOpen={false}>
                 <div className="space-y-3">
                     <div className="flex gap-2 text-xs">
                         <NumberInput label="h" value={slab.h} onChange={v => setSlab(s => ({ ...s, h: v }))} />
@@ -85,14 +234,14 @@ export const RightSidebar: React.FC<{
                         <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
                             <span>Layers: {slab.layers}</span>
                         </div>
-                        <input type="range" min={1} max={10} step={1} value={slab.layers} onChange={e => setSlab(s => ({ ...s, layers: parseInt(e.target.value) }))} className="w-full h-1 accent-emerald-500 cursor-pointer" />
+                        <input type="range" min={1} max={10} step={1} value={slab.layers} onChange={e => setSlab(s => ({ ...s, layers: parseInt(e.target.value) }))} className="w-full h-1 accent-emerald-500 cursor-pointer pointer-events-auto" />
                     </div>
 
                     <div className="space-y-1">
                         <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
                             <span>Vacuum: {slab.vacuum} Å</span>
                         </div>
-                        <input type="range" min={0} max={30} step={1} value={slab.vacuum} onChange={e => setSlab(s => ({ ...s, vacuum: parseFloat(e.target.value) }))} className="w-full h-1 accent-emerald-500 cursor-pointer" />
+                        <input type="range" min={0} max={30} step={1} value={slab.vacuum} onChange={e => setSlab(s => ({ ...s, vacuum: parseFloat(e.target.value) }))} className="w-full h-1 accent-emerald-500 cursor-pointer pointer-events-auto" />
                     </div>
 
                     <div className="flex gap-2">
@@ -103,7 +252,7 @@ export const RightSidebar: React.FC<{
             </Accordion>
 
             {/* Atom Operations Accordion */}
-            <Accordion title="Atom Operations" defaultOpen>
+            <Accordion title="Atom Operations" defaultOpen={false}>
                 <div className="space-y-3">
                     <div className="text-xs space-y-1">
                         <div className="text-slate-500 dark:text-slate-400">
@@ -122,7 +271,7 @@ export const RightSidebar: React.FC<{
                         {selectedAtomIdx !== null ? (
                             <>
                                 <ActionButton label="Replace Atom" onClick={handleReplaceAtom} />
-                                <button onClick={handleDeleteAtom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98]">
+                                <button onClick={handleDeleteAtom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98] pointer-events-auto">
                                     Delete Atom
                                 </button>
                                 <DisabledButton label="Add Sub-Atom" />
@@ -152,7 +301,7 @@ const NumberInput = ({ label, value, onChange }: { label: string; value: number;
             value={value}
             onChange={(e) => onChange(parseInt(e.target.value) || 0)}
             min={label.startsWith('N') ? 1 : undefined}
-            className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1 outline-none border border-slate-200 dark:border-slate-700 text-xs focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-all text-slate-700 dark:text-slate-300"
+            className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1 outline-none border border-slate-200 dark:border-slate-700 text-xs focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-all text-slate-700 dark:text-slate-300 pointer-events-auto"
         />
     </div>
 );

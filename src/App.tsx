@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useEffect, useRef, useState } from 'react';
 import { safeInvoke, safeListen } from './utils/tauri-mock';
-import { CrystalState } from './types/crystal';
+import { CrystalState, PhononModeSummary } from './types/crystal';
 import { Shell } from './components/layout/Shell';
 import { TopNavBar } from './components/layout/TopNavBar';
 import { LeftSidebar } from './components/layout/LeftSidebar';
@@ -34,6 +34,8 @@ function App() {
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [crystalState, setCrystalState] = useState<CrystalState | null>(null);
     const [selectedAtomIdx, setSelectedAtomIdx] = useState<number | null>(null);
+    const [bondCount, setBondCount] = useState<number | undefined>(undefined);
+    const [activePhononMode, setActivePhononMode] = useState<PhononModeSummary | null>(null);
 
     const fetchCrystalState = async () => {
         try {
@@ -390,6 +392,8 @@ function App() {
                             crystalState={crystalState}
                             selectedAtomIdx={selectedAtomIdx}
                             onSelectionChange={setSelectedAtomIdx}
+                            onBondCountUpdate={setBondCount}
+                            onActivePhononModeUpdate={setActivePhononMode}
                         />
                     </div>
 
@@ -405,7 +409,11 @@ function App() {
 
                 {/* Overlays */}
                 <LlmAssistant isOpen={showAssistant} onClose={() => setShowAssistant(false)} />
-                <BottomStatusBar crystalState={crystalState} />
+                <BottomStatusBar
+                    crystalState={crystalState}
+                    bondCount={bondCount}
+                    activePhononMode={activePhononMode}
+                />
 
                 {/* Right-Click Context Menu */}
                 {contextMenu && (

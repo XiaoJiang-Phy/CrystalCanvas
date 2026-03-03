@@ -45,3 +45,45 @@ export interface CollisionError {
     distance: number;
     indices: [number, number];
 }
+
+// =========================================================================
+// Structural Analysis Data Types (M10)
+// =========================================================================
+
+export interface BondInfo {
+    atom_i: number;
+    atom_j: number;
+    distance: number;
+}
+
+export interface CoordinationInfo {
+    center_idx: number;
+    element: string;
+    coordination_number: number;
+    neighbor_indices: number[];
+    neighbor_distances: number[];
+    polyhedron_type: string;
+}
+
+export interface BondLengthStat {
+    element_a: string;
+    element_b: string;
+    count: number;
+    min: number;
+    max: number;
+    mean: number;
+}
+
+export interface BondAnalysisResult {
+    bonds: BondInfo[];
+    coordination: CoordinationInfo[];
+    bond_length_stats: BondLengthStat[];
+    distortion_indices: number[];
+    threshold_factor: number;
+}
+
+export interface PhononModeSummary {
+    index: number;
+    frequency_cm1: number;
+    is_imaginary: boolean;
+}

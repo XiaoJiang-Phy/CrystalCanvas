@@ -2,9 +2,13 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React from 'react';
-import { CrystalState } from '../../types/crystal';
+import { CrystalState, PhononModeSummary } from '../../types/crystal';
 
-export const BottomStatusBar: React.FC<{ crystalState: CrystalState | null }> = ({ crystalState }) => {
+export const BottomStatusBar: React.FC<{
+    crystalState: CrystalState | null,
+    bondCount?: number,
+    activePhononMode?: PhononModeSummary | null
+}> = ({ crystalState, bondCount, activePhononMode }) => {
     const numAtoms = crystalState?.labels.length || 0;
     const sg = crystalState?.spacegroup_hm || 'N/A';
     const vol = crystalState ?
@@ -21,6 +25,14 @@ export const BottomStatusBar: React.FC<{ crystalState: CrystalState | null }> = 
                 <span>Volume: <span className="font-medium text-slate-700 dark:text-slate-300">{vol} Å³</span></span>
             </div>
             <div className="flex items-center gap-6 text-slate-500 dark:text-slate-400">
+                {activePhononMode && (
+                    <span className="text-amber-600 dark:text-amber-500">
+                        Phonon Mode {activePhononMode.index + 1}: <span className="font-medium">{activePhononMode.frequency_cm1.toFixed(2)} cm⁻¹</span>
+                    </span>
+                )}
+                {bondCount !== undefined && (
+                    <span>Bonds: <span className="font-medium text-slate-700 dark:text-slate-300">{bondCount}</span></span>
+                )}
                 <span>Total Atoms: <span className="font-medium text-slate-700 dark:text-slate-300">{numAtoms}</span></span>
                 <span>Selected: <span className="font-medium text-slate-700 dark:text-slate-300">0</span></span>
             </div>
