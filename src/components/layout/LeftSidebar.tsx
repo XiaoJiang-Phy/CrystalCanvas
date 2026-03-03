@@ -4,9 +4,25 @@ import React from 'react';
 import { cn } from '../../utils/cn';
 import { getJmolColor } from '../../utils/colors';
 
+import { safeInvoke } from '../../utils/tauri-mock';
 import { CrystalState } from '../../types/crystal';
 
-export const LeftSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ crystalState }) => {
+interface LeftSidebarProps {
+    crystalState: CrystalState | null;
+    atomScale: number;
+    onAtomScaleChange: (scale: number) => void;
+    showLabels: boolean;
+    onToggleLabels: () => void;
+    showCell: boolean;
+    onToggleCell: () => void;
+    showBonds: boolean;
+    onToggleBonds: () => void;
+}
+
+export const LeftSidebar: React.FC<LeftSidebarProps> = ({
+    crystalState, atomScale, onAtomScaleChange, showLabels, onToggleLabels,
+    showCell, onToggleCell, showBonds, onToggleBonds
+}) => {
     const numAtoms = crystalState ? crystalState.labels.length : 0;
     const vol = crystalState ?
         (crystalState.cell_a * crystalState.cell_b * crystalState.cell_c *
@@ -22,12 +38,12 @@ export const LeftSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ c
                     <InfoRow label="Atoms:" value={numAtoms.toString()} />
                     <InfoRow label="Space Group:" value={crystalState?.spacegroup_hm || "N/A"} />
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2">
-                        <UnitCellInput label="a" value={crystalState?.cell_a.toFixed(2) || "0.00"} unit="Å" />
-                        <UnitCellInput label="α" value={crystalState?.cell_alpha.toFixed(1) || "0.0"} unit="°" />
-                        <UnitCellInput label="b" value={crystalState?.cell_b.toFixed(2) || "0.00"} unit="Å" />
-                        <UnitCellInput label="β" value={crystalState?.cell_beta.toFixed(1) || "0.0"} unit="°" />
-                        <UnitCellInput label="c" value={crystalState?.cell_c.toFixed(2) || "0.00"} unit="Å" />
-                        <UnitCellInput label="γ" value={crystalState?.cell_gamma.toFixed(1) || "0.0"} unit="°" />
+                        <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a.toFixed(2) || "0.00"} unit="Å" />
+                        <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha.toFixed(1) || "0.0"} unit="°" />
+                        <UnitCellInput label="b" paramKey="b" value={crystalState?.cell_b.toFixed(2) || "0.00"} unit="Å" />
+                        <UnitCellInput label="β" paramKey="beta" value={crystalState?.cell_beta.toFixed(1) || "0.0"} unit="°" />
+                        <UnitCellInput label="c" paramKey="c" value={crystalState?.cell_c.toFixed(2) || "0.00"} unit="Å" />
+                        <UnitCellInput label="γ" paramKey="gamma" value={crystalState?.cell_gamma.toFixed(1) || "0.0"} unit="°" />
                     </div>
                     <InfoRow label="Volume:" value={`${vol} Å³`} className="pt-1.5 font-medium" />
                 </div>
@@ -64,12 +80,23 @@ export const LeftSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ c
 
             <Panel title="Visual Settings">
                 <div className="space-y-3 text-xs">
-                    <SliderRow label="Atomic Size" />
-                    <SliderRow label="Bond Length" />
+                    <SliderRow
+                        label="Atomic Size"
+                        value={atomScale}
+                        onChange={onAtomScaleChange}
+                        min={0.1} max={3.0} step={0.1}
+                    />
+                    <SliderRow
+                        label="Bond Length"
+                        value={1.0}
+                        onChange={() => { }}
+                        min={0.1} max={3.0} step={0.1}
+                        disabled
+                    />
                     <div className="space-y-2 pt-1">
-                        <CheckboxRow label="Show Cell" checked />
-                        <CheckboxRow label="Show Bonds" checked />
-                        <CheckboxRow label="Show Labels" checked={false} />
+                        <CheckboxRow label="Show Cell" checked={showCell} onChange={onToggleCell} />
+                        <CheckboxRow label="Show Bonds" checked={showBonds} onChange={onToggleBonds} />
+                        <CheckboxRow label="Show Labels" checked={showLabels} onChange={onToggleLabels} />
                     </div>
                 </div>
             </Panel>
@@ -103,19 +130,31 @@ const InfoRow = ({ label, value, className }: { label: string; value: string; cl
     </div>
 );
 
-const UnitCellInput = ({ label, value, unit }: { label: string; value: string; unit: string }) => (
-    <div className="flex items-center gap-1.5">
-        <span className="w-3 text-slate-500 dark:text-slate-400 font-medium">{label}</span>
-        <div className="flex-1 flex items-center bg-slate-100 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
-            <input
-                type="text"
-                defaultValue={value}
-                className="w-full bg-transparent outline-none text-slate-700 dark:text-slate-300 min-w-0 text-xs"
-            />
-            <span className="text-slate-400 ml-0.5 text-[10px]">{unit}</span>
+const UnitCellInput = ({ label, paramKey, value, unit }: { label: string; paramKey: string; value: string; unit: string }) => {
+    const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        const val = parseFloat(e.target.value);
+        if (!isNaN(val)) {
+            // Note: In a complete implementation, we'd gather all 6 parameters and call update_lattice_params.
+            // For now, emit a log or call a partial safeInvoke.
+            console.log(`Update lattice ${paramKey} -> ${val}`);
+        }
+    };
+    return (
+        <div className="flex items-center gap-1.5">
+            <span className="w-3 text-slate-500 dark:text-slate-400 font-medium">{label}</span>
+            <div className="flex-1 flex items-center bg-slate-100 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
+                <input
+                    type="text"
+                    key={value} // Force re-render on value change from outside
+                    defaultValue={value}
+                    onBlur={handleBlur}
+                    className="w-full bg-transparent outline-none text-slate-700 dark:text-slate-300 min-w-0 text-xs"
+                />
+                <span className="text-slate-400 ml-0.5 text-[10px]">{unit}</span>
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
 const AtomRow = ({ id, element, x, y, z }: { id: number; element: string; x: string; y: string; z: string }) => {
     const hexColor = getJmolColor(element);
@@ -137,19 +176,24 @@ const AtomRow = ({ id, element, x, y, z }: { id: number; element: string; x: str
     )
 };
 
-const SliderRow = ({ label }: { label: string }) => (
-    <div className="space-y-1">
+const SliderRow = ({ label, value, min, max, step, onChange, disabled }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; disabled?: boolean; }) => (
+    <div className={cn("space-y-1", disabled && "opacity-50 grayscale")}>
         <div className="flex justify-between">
             <span className="text-slate-600 dark:text-slate-400">{label}</span>
         </div>
         <input
             type="range"
-            className="w-full h-1 accent-emerald-500 cursor-pointer"
+            min={min} max={max} step={step}
+            value={value}
+            disabled={disabled}
+            onChange={(e) => onChange(parseFloat(e.target.value))}
+            className={cn("w-full h-1 accent-emerald-500", !disabled && "cursor-pointer")}
+            title={disabled ? "Coming in M10" : ""}
         />
     </div>
 );
 
-const CheckboxRow = ({ label, checked }: { label: string; checked?: boolean }) => (
+const CheckboxRow = ({ label, checked, onChange }: { label: string; checked?: boolean; onChange: (checked: boolean) => void }) => (
     <label className="flex items-center gap-2 cursor-pointer group">
         <div className={cn(
             "w-3.5 h-3.5 rounded-sm flex items-center justify-center transition-colors border",
@@ -162,6 +206,13 @@ const CheckboxRow = ({ label, checked }: { label: string; checked?: boolean }) =
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
             )}
+            {/* hidden native input to handle state correctly */}
+            <input
+                type="checkbox"
+                className="hidden"
+                checked={checked || false}
+                onChange={(e) => onChange(e.target.checked)}
+            />
         </div>
         <span className="text-slate-700 dark:text-slate-300 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
             {label}

@@ -104,6 +104,66 @@ impl Camera {
             )
         }
     }
+
+    /// Rotate the camera around the target using mouse delta.
+    pub fn rotate_around_target(&mut self, dx: f32, dy: f32) {
+        let sensitivity = 0.01;
+        let delta_yaw = dx * sensitivity;
+        let delta_pitch = dy * sensitivity;
+
+        let mut offset = self.eye - self.target;
+        let radius = offset.length();
+        offset = offset.normalize();
+
+        // Calculate current angles
+        let current_pitch = offset.y.asin();
+        // safe pitch limits to avoid singularity lock (gimbal lock style logic but for orbital camera)
+        let new_pitch = (current_pitch + delta_pitch).clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
+        
+        let current_yaw = offset.z.atan2(offset.x);
+        let new_yaw = current_yaw - delta_yaw;
+
+        offset = Vec3::new(
+            new_pitch.cos() * new_yaw.cos(),
+            new_pitch.sin(),
+            new_pitch.cos() * new_yaw.sin(),
+        );
+
+        self.eye = self.target + offset * radius;
+    }
+
+    /// Zoom in and out.
+    pub fn zoom_towards_target(&mut self, delta: f32) {
+        let zoom_speed = 0.005;
+        let offset = self.eye - self.target;
+        let mut radius = offset.length();
+        let min_radius = 2.0;
+
+        radius *= 1.0 + delta * zoom_speed;
+        if radius < min_radius {
+            radius = min_radius;
+        }
+
+        self.eye = self.target + offset.normalize() * radius;
+        
+        // Adjust orthographic scale in tandem
+        self.orthographic_scale *= 1.0 + delta * zoom_speed;
+        if self.orthographic_scale < 1.0 {
+            self.orthographic_scale = 1.0;
+        }
+    }
+
+    /// Pan the camera in the view plane.
+    pub fn pan(&mut self, dx: f32, dy: f32) {
+        let pan_speed = 0.002 * (self.eye - self.target).length();
+        let forward = (self.target - self.eye).normalize();
+        let right = forward.cross(self.up).normalize();
+        let up = right.cross(forward).normalize();
+
+        let translation = -right * dx * pan_speed + up * dy * pan_speed;
+        self.eye += translation;
+        self.target += translation;
+    }
 }
 
 /// GPU-uploadable camera uniform data.

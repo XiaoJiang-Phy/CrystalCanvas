@@ -2,10 +2,53 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useState } from 'react';
 import { cn } from '../../utils/cn';
-
+import { safeInvoke } from '../../utils/tauri-mock';
 import { CrystalState } from '../../types/crystal';
 
-export const RightSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ crystalState }) => {
+export const RightSidebar: React.FC<{
+    crystalState: CrystalState | null,
+    selectedAtomIdx?: number | null,
+    onSelectionChange?: (idx: number | null) => void
+}> = ({ crystalState, selectedAtomIdx = null, onSelectionChange }) => {
+    const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
+    const [slab, setSlab] = useState({ h: 0, k: 0, l: 1, layers: 3, vacuum: 15.0 });
+
+    const handleSupercell = () => {
+        const matrix = [
+            [sc.nx, 0, 0],
+            [0, sc.ny, 0],
+            [0, 0, sc.nz]
+        ];
+        safeInvoke('apply_supercell', { matrix }).catch(console.error);
+    };
+
+    const handleSlabCut = () => {
+        safeInvoke('apply_slab', {
+            miller: [slab.h, slab.k, slab.l],
+            layers: slab.layers,
+            vacuum_a: slab.vacuum
+        }).catch(console.error);
+    };
+
+    const handleDeleteAtom = () => {
+        if (selectedAtomIdx === null) return;
+        safeInvoke('delete_atoms', { indices: [selectedAtomIdx] }).then(() => {
+            if (onSelectionChange) onSelectionChange(null);
+        }).catch(console.error);
+    };
+
+    const handleReplaceAtom = () => {
+        if (selectedAtomIdx === null) return;
+        const newElem = window.prompt("Enter new element symbol (e.g., Fe, O, C):");
+        if (newElem && newElem.trim().length > 0) {
+            safeInvoke('substitute_atoms', {
+                indices: [selectedAtomIdx],
+                newElementSymbol: newElem.trim(),
+                newAtomicNumber: 0 // Backend can map symbol to number
+            }).catch(console.error);
+        }
+    };
+
     return (
         <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
 
@@ -13,11 +56,11 @@ export const RightSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ 
             <Accordion title="Supercell Construction" defaultOpen>
                 <div className="space-y-3">
                     <div className="flex gap-2 text-xs">
-                        <NumberInput label="Nx" defaultValue={1} />
-                        <NumberInput label="Ny" defaultValue={1} />
-                        <NumberInput label="Nz" defaultValue={1} />
+                        <NumberInput label="Nx" value={sc.nx} onChange={v => setSc(s => ({ ...s, nx: v }))} />
+                        <NumberInput label="Ny" value={sc.ny} onChange={v => setSc(s => ({ ...s, ny: v }))} />
+                        <NumberInput label="Nz" value={sc.nz} onChange={v => setSc(s => ({ ...s, nz: v }))} />
                     </div>
-                    <button className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98]">
+                    <button onClick={handleSupercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98]">
                         Execute Supercell
                     </button>
                 </div>
@@ -27,19 +70,28 @@ export const RightSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ 
             <Accordion title="Cutting Plane (hkl)" defaultOpen>
                 <div className="space-y-3">
                     <div className="flex gap-2 text-xs">
-                        <NumberInput label="h" defaultValue={0} />
-                        <NumberInput label="k" defaultValue={0} />
-                        <NumberInput label="l" defaultValue={0} />
+                        <NumberInput label="h" value={slab.h} onChange={v => setSlab(s => ({ ...s, h: v }))} />
+                        <NumberInput label="k" value={slab.k} onChange={v => setSlab(s => ({ ...s, k: v }))} />
+                        <NumberInput label="l" value={slab.l} onChange={v => setSlab(s => ({ ...s, l: v }))} />
                     </div>
 
                     <div className="space-y-1">
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">Cutting Depth</span>
-                        <input type="range" className="w-full h-1 accent-emerald-500 cursor-pointer" />
+                        <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
+                            <span>Layers: {slab.layers}</span>
+                        </div>
+                        <input type="range" min={1} max={10} step={1} value={slab.layers} onChange={e => setSlab(s => ({ ...s, layers: parseInt(e.target.value) }))} className="w-full h-1 accent-emerald-500 cursor-pointer" />
+                    </div>
+
+                    <div className="space-y-1">
+                        <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
+                            <span>Vacuum: {slab.vacuum} Å</span>
+                        </div>
+                        <input type="range" min={0} max={30} step={1} value={slab.vacuum} onChange={e => setSlab(s => ({ ...s, vacuum: parseFloat(e.target.value) }))} className="w-full h-1 accent-emerald-500 cursor-pointer" />
                     </div>
 
                     <div className="flex gap-2">
-                        <ActionButton label="Cut" />
-                        <ActionButton label="Reset" />
+                        <ActionButton label="Cut" onClick={handleSlabCut} />
+                        <ActionButton label="Reset" onClick={() => console.log("Reset requested")} />
                     </div>
                 </div>
             </Accordion>
@@ -49,17 +101,33 @@ export const RightSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ 
                 <div className="space-y-3">
                     <div className="text-xs space-y-1">
                         <div className="text-slate-500 dark:text-slate-400">
-                            Selected: <span className="text-slate-800 dark:text-slate-200 font-medium">None</span>
+                            Selected: <span className="text-slate-800 dark:text-slate-200 font-medium">
+                                {selectedAtomIdx !== null ? `Atom #${selectedAtomIdx}` : "None"}
+                            </span>
                         </div>
                         <div className="text-slate-500 dark:text-slate-400">
-                            Element: <span className="text-slate-800 dark:text-slate-200 font-medium">-</span>
+                            Element: <span className="text-slate-800 dark:text-slate-200 font-medium">
+                                {selectedAtomIdx !== null && crystalState ? crystalState.elements[selectedAtomIdx] : "-"}
+                            </span>
                         </div>
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                        <DisabledButton label="Replace Atom" />
-                        <DisabledButton label="Delete Atom" />
-                        <DisabledButton label="Add Sub-Atom" />
+                        {selectedAtomIdx !== null ? (
+                            <>
+                                <ActionButton label="Replace Atom" onClick={handleReplaceAtom} />
+                                <button onClick={handleDeleteAtom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98]">
+                                    Delete Atom
+                                </button>
+                                <DisabledButton label="Add Sub-Atom" />
+                            </>
+                        ) : (
+                            <>
+                                <DisabledButton label="Replace Atom" />
+                                <DisabledButton label="Delete Atom" />
+                                <DisabledButton label="Add Sub-Atom" />
+                            </>
+                        )}
                     </div>
                 </div>
             </Accordion>
@@ -70,20 +138,21 @@ export const RightSidebar: React.FC<{ crystalState: CrystalState | null }> = ({ 
 
 // --- Subcomponents ---
 
-const NumberInput = ({ label, defaultValue }: { label: string; defaultValue: number }) => (
+const NumberInput = ({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) => (
     <div className="flex-1 space-y-0.5">
         <label className="text-[11px] text-slate-500 dark:text-slate-400">{label}</label>
         <input
             type="number"
-            defaultValue={defaultValue}
+            value={value}
+            onChange={(e) => onChange(parseInt(e.target.value) || 0)}
             min={label.startsWith('N') ? 1 : undefined}
             className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1 outline-none border border-slate-200 dark:border-slate-700 text-xs focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 transition-all text-slate-700 dark:text-slate-300"
         />
     </div>
 );
 
-const ActionButton = ({ label }: { label: string }) => (
-    <button className="flex-1 py-1.5 bg-slate-100 dark:bg-slate-800/60 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors border border-slate-200 dark:border-slate-700 active:scale-[0.98]">
+const ActionButton = ({ label, onClick }: { label: string; onClick?: () => void }) => (
+    <button onClick={onClick} className="flex-1 py-1.5 bg-slate-100 dark:bg-slate-800/60 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors border border-slate-200 dark:border-slate-700 active:scale-[0.98]">
         {label}
     </button>
 );

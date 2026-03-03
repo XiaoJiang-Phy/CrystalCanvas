@@ -30,6 +30,19 @@ pub struct Renderer {
     // Depth buffer
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
+
+    // Lines rendering
+    line_pipeline: wgpu::RenderPipeline,
+    cell_line_buffer: wgpu::Buffer,
+    cell_line_count: u32,
+    bond_line_buffer: wgpu::Buffer,
+    bond_line_count: u32,
+
+    pub show_cell: bool,
+    pub show_bonds: bool,
+
+    // Background clear color (for dark/light mode toggles)
+    pub clear_color: wgpu::Color,
 }
 
 impl Renderer {
@@ -60,6 +73,9 @@ impl Renderer {
         // Pipeline
         let (render_pipeline, camera_bind_group_layout) =
             pipeline::create_render_pipeline(&gpu.device, gpu.surface_format());
+        
+        let line_pipeline = 
+            pipeline::create_line_pipeline(&gpu.device, gpu.surface_format(), &camera_bind_group_layout);
 
         // Camera bind group
         let camera_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -89,6 +105,29 @@ impl Renderer {
         let (_depth_texture, depth_view) =
             pipeline::create_depth_texture(&gpu.device, gpu.config.width, gpu.config.height);
 
+        // default dark mode color: #0f172a
+        let default_clear = wgpu::Color {
+            r: 15.0 / 255.0,
+            g: 23.0 / 255.0,
+            b: 42.0 / 255.0,
+            a: 1.0,
+        };
+
+        let dummy_line = [crate::renderer::instance::LineVertex {
+            position: [0.0, 0.0, 0.0],
+            color: [0.0, 0.0, 0.0, 0.0],
+        }];
+        let cell_line_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Cell Line Buffer"),
+            contents: bytemuck::cast_slice(&dummy_line),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+        let bond_line_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Bond Line Buffer"),
+            contents: bytemuck::cast_slice(&dummy_line),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
         Self {
             gpu,
             camera,
@@ -100,6 +139,14 @@ impl Renderer {
             instance_count: 0,
             _depth_texture,
             depth_view,
+            line_pipeline,
+            cell_line_buffer,
+            cell_line_count: 0,
+            bond_line_buffer,
+            bond_line_count: 0,
+            show_cell: true,
+            show_bonds: false,
+            clear_color: default_clear,
         }
     }
 
@@ -144,6 +191,29 @@ impl Renderer {
         );
     }
 
+    /// Update cell boundaries and bond lines from the CrystalState.
+    pub fn update_lines(&mut self, state: &crate::crystal_state::CrystalState) {
+        let cell_lines = crate::renderer::instance::build_cell_lines(state);
+        self.cell_line_count = cell_lines.len() as u32;
+        if self.cell_line_count > 0 {
+            self.cell_line_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Cell Line Buffer"),
+                contents: bytemuck::cast_slice(&cell_lines),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        }
+
+        let bond_lines = crate::renderer::instance::build_bond_lines(state);
+        self.bond_line_count = bond_lines.len() as u32;
+        if self.bond_line_count > 0 {
+            self.bond_line_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bond Line Buffer"),
+                contents: bytemuck::cast_slice(&bond_lines),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        }
+    }
+
     /// Update camera uniform and upload to GPU. Call once per frame (or on camera change).
     pub fn update_camera(&mut self) {
         self.camera_uniform.update_from_camera(&self.camera);
@@ -180,12 +250,7 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -210,6 +275,22 @@ impl Renderer {
                 render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
                 // 6 vertices per impostor quad (two triangles), instance_count instances
                 render_pass.draw(0..6, 0..self.instance_count);
+            }
+
+            // Draw lines 
+            // Reuse the camera bind group but switch to the Line pipeline
+            if self.show_cell && self.cell_line_count > 0 {
+                render_pass.set_pipeline(&self.line_pipeline);
+                // Bind group 0 is already camera_bind_group, but let's be explicit
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                render_pass.draw(0..self.cell_line_count, 0..1);
+            }
+            if self.show_bonds && self.bond_line_count > 0 {
+                render_pass.set_pipeline(&self.line_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.bond_line_buffer.slice(..));
+                render_pass.draw(0..self.bond_line_count, 0..1);
             }
         }
 

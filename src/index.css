@@ -18,15 +18,14 @@
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   }
 
-  /* Light mode: subtle gradient background (simulates sky behind wgpu viewport) */
+  /* Light mode: we now make the WebView entirely transparent to reveal wgpu underneath */
   html {
-    background: linear-gradient(135deg, #e8f0fe 0%, #d4e4f7 30%, #c8ddf0 70%, #dce8f4 100%);
-    transition: background 0.4s ease;
+    background-color: transparent !important;
   }
 
-  /* Dark mode: deep dark slate background */
+  /* Dark mode */
   html.dark {
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    background-color: transparent !important;
   }
 
   /* The root element remains transparent so background from html shines through */

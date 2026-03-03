@@ -5,12 +5,25 @@ import { useTheme } from './Shell';
 import { cn } from '../../utils/cn';
 import { MousePointerClick, Move, Rotate3D, BoxSelection, Sun, Moon, Sparkles, Settings, Bot } from '../../utils/Icons';
 
+import { safeInvoke } from '../../utils/tauri-mock';
+
 interface TopNavBarProps {
     showAssistant: boolean;
     onToggleAssistant: () => void;
+    isPerspective: boolean;
+    onTogglePerspective: () => void;
+    showLabels: boolean;
+    onToggleLabels: () => void;
+    interactionMode: 'select' | 'move' | 'rotate' | 'measure';
+    setInteractionMode: (mode: 'select' | 'move' | 'rotate' | 'measure') => void;
 }
 
-export const TopNavBar: React.FC<TopNavBarProps> = ({ showAssistant, onToggleAssistant }) => {
+export const TopNavBar: React.FC<TopNavBarProps> = ({
+    showAssistant, onToggleAssistant,
+    isPerspective, onTogglePerspective,
+    showLabels, onToggleLabels,
+    interactionMode, setInteractionMode
+}) => {
     const { theme, toggleTheme } = useTheme();
 
     return (
@@ -32,34 +45,52 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({ showAssistant, onToggleAss
 
                 {/* Tool Group */}
                 <div className="flex items-center gap-0.5 bg-slate-100/80 dark:bg-slate-800/80 p-0.5 rounded-lg">
-                    <ToolButton icon={<MousePointerClick className="w-3.5 h-3.5" />} active tooltip="Select" />
-                    <ToolButton icon={<Move className="w-3.5 h-3.5" />} tooltip="Move" />
-                    <ToolButton icon={<Rotate3D className="w-3.5 h-3.5" />} tooltip="Rotate" />
-                    <ToolButton icon={<BoxSelection className="w-3.5 h-3.5" />} tooltip="Box Select" />
+                    <ToolButton icon={<MousePointerClick className="w-3.5 h-3.5" />} active={interactionMode === 'select'} onClick={() => setInteractionMode('select')} tooltip="Select" />
+                    <ToolButton icon={<Move className="w-3.5 h-3.5" />} active={interactionMode === 'move'} onClick={() => setInteractionMode('move')} tooltip="Move" />
+                    <ToolButton icon={<Rotate3D className="w-3.5 h-3.5" />} active={interactionMode === 'rotate'} onClick={() => setInteractionMode('rotate')} tooltip="Rotate" />
+                    <ToolButton icon={<BoxSelection className="w-3.5 h-3.5" />} active={interactionMode === 'measure'} onClick={() => setInteractionMode('measure')} tooltip="Measure/Select" />
                 </div>
             </div>
 
             {/* Center: View Perspectives */}
             <div className="flex items-center gap-1">
-                <div className="px-2.5 py-1 text-xs font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded-md">
+                <button
+                    onClick={onTogglePerspective}
+                    className={cn(
+                        "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                        isPerspective
+                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+                            : "hover:bg-slate-200/70 dark:hover:bg-slate-800/70 border border-transparent hover:border-slate-300 dark:hover:border-slate-600"
+                    )}>
                     Perspective
-                </div>
-                <ViewButton label="[a]" />
-                <ViewButton label="[b]" />
-                <ViewButton label="[c]" />
-                <ViewButton label="[a*]" />
-                <ViewButton label="[b*]" />
-                <ViewButton label="[c*]" />
+                </button>
+                <button
+                    onClick={onTogglePerspective}
+                    className={cn(
+                        "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                        !isPerspective
+                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+                            : "hover:bg-slate-200/70 dark:hover:bg-slate-800/70 border border-transparent hover:border-slate-300 dark:hover:border-slate-600"
+                    )}>
+                    Ortho
+                </button>
+                <div className="w-2" />
+                <ViewButton label="[a]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a' })} />
+                <ViewButton label="[b]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b' })} />
+                <ViewButton label="[c]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c' })} />
+                <ViewButton label="[a*]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a_star' })} />
+                <ViewButton label="[b*]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b_star' })} />
+                <ViewButton label="[c*]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c_star' })} />
             </div>
 
             {/* Right: Toggles & Actions */}
             <div className="flex items-center gap-2">
-                <NavButton label="Reset View" />
+                <NavButton label="Reset View" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                 <NavButton label="Symmetry" />
 
-                <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium">Labels</span>
-                    <ToggleSwitch checked={false} />
+                <div className="flex items-center gap-1.5 cursor-pointer" onClick={onToggleLabels}>
+                    <span className="text-xs font-medium select-none">Labels</span>
+                    <ToggleSwitch checked={showLabels} />
                 </div>
 
                 <div className="h-4 w-px bg-slate-300 dark:bg-slate-700" />
@@ -97,8 +128,9 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({ showAssistant, onToggleAss
 
 // --- Subcomponents ---
 
-const ToolButton = ({ icon, active = false, tooltip }: { icon: React.ReactNode, active?: boolean, tooltip?: string }) => (
+const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.ReactNode, active?: boolean, tooltip?: string, onClick?: () => void }) => (
     <button
+        onClick={onClick}
         className={cn(
             "p-1.5 rounded-md transition-all duration-200",
             active
@@ -111,14 +143,14 @@ const ToolButton = ({ icon, active = false, tooltip }: { icon: React.ReactNode, 
     </button>
 );
 
-const ViewButton = ({ label }: { label: string }) => (
-    <button className="px-1.5 py-1 text-xs font-medium rounded-md hover:bg-slate-200/70 dark:hover:bg-slate-800/70 transition-colors border border-transparent hover:border-slate-300 dark:hover:border-slate-600">
+const ViewButton = ({ label, onClick }: { label: string, onClick?: () => void }) => (
+    <button onClick={onClick} className="px-1.5 py-1 text-xs font-medium rounded-md hover:bg-slate-200/70 dark:hover:bg-slate-800/70 transition-colors border border-transparent hover:border-slate-300 dark:hover:border-slate-600">
         {label}
     </button>
 );
 
-const NavButton = ({ label }: { label: string }) => (
-    <button className="text-xs font-medium hover:text-emerald-500 transition-colors px-2 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800">
+const NavButton = ({ label, onClick }: { label: string, onClick?: () => void }) => (
+    <button onClick={onClick} className="text-xs font-medium hover:text-emerald-500 transition-colors px-2 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800">
         {label}
     </button>
 );

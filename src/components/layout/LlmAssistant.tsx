@@ -1,9 +1,9 @@
-// [Overview: LLM Assistant chat panel with provider configuration and command preview]
+// [Overview: LLM Assistant chat panel with provider configuration, resizable layout, and command preview]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { cn } from '../../utils/cn';
-import { Bot, Settings2, Send, X, Loader2, Play } from '../../utils/Icons';
+import { Bot, Settings2, Send, X, Loader2, Play, Trash2 } from '../../utils/Icons';
 import { safeInvoke } from '../../utils/tauri-mock';
 
 interface LlmAssistantProps {
@@ -18,6 +18,11 @@ interface Message {
     commandJson?: string;
 }
 
+const MIN_W = 320;
+const MIN_H = 300;
+const DEFAULT_W = 400;
+const DEFAULT_H = 520;
+
 export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
@@ -27,22 +32,29 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     const [showSettings, setShowSettings] = useState(true);
     const [providerType, setProviderType] = useState('openai');
     const [apiKey, setApiKey] = useState('');
+    const [showApiKey, setShowApiKey] = useState(false);
     const [model, setModel] = useState('o4-mini');
+
+    // Resize state — stores panel pixel dimensions
+    const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H });
+    const panelRef = useRef<HTMLDivElement>(null);
+    const resizingRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Default models based on M9 configuration
-    const providerDefaults = {
+    // Default models based on provider
+    const providerDefaults: Record<string, string> = {
         openai: 'o4-mini',
-        deepseek: 'deepseek-r2',
-        claude: 'claude-4-sonnet-20260228',
-        gemini: 'gemini-3.0-flash',
-        ollama: 'qwen3.5-math'
+        deepseek: 'deepseek-reasoner',
+        claude: 'claude-sonnet-4-5',
+        gemini: 'gemini-2.5-flash',
+        ollama: 'qwen3:8b',
     };
 
     const handleProviderChange = async (newProvider: string) => {
         setProviderType(newProvider);
-        setModel(providerDefaults[newProvider as keyof typeof providerDefaults]);
+        setModel(providerDefaults[newProvider] ?? '');
+        setShowApiKey(false);
 
         if (newProvider === 'ollama') {
             setApiKey('');
@@ -50,18 +62,14 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         }
 
         try {
-            const hasKey = await safeInvoke<boolean>('check_api_key_status', { providerType: newProvider });
-            if (hasKey) {
-                setApiKey('********');
-            } else {
-                setApiKey('');
-            }
+            const hasKey = await safeInvoke<boolean>('check_api_key_status', { provider_type: newProvider });
+            setApiKey(hasKey ? '••••••••' : '');
         } catch {
             setApiKey('');
         }
     };
 
-    // Check status on component mount for default provider
+    // Check key status on settings open
     useEffect(() => {
         if (showSettings) {
             handleProviderChange(providerType);
@@ -70,18 +78,18 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
     const saveSettings = async () => {
         try {
-            await safeInvoke('llm_configure', { providerType, apiKey, model });
+            await safeInvoke('llm_configure', { provider_type: providerType, api_key: apiKey, model });
             setShowSettings(false);
             if (messages.length === 0) {
                 setMessages([{
                     id: Date.now().toString(),
                     role: 'system',
-                    text: 'Assistant configured. Wait for operations or type your request.'
+                    text: 'Assistant configured. Type your instruction below.',
                 }]);
             }
         } catch (e) {
             console.error('Failed to configure LLM:', e);
-            alert('Failed to configure LLM');
+            alert('Failed to configure LLM provider.');
         }
     };
 
@@ -94,54 +102,73 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         setLoading(true);
 
         try {
-            const rawResponse = await safeInvoke<string>('llm_chat', { userMessage: userMsg.text });
+            const rawResponse = await safeInvoke<string>('llm_chat', { user_message: userMsg.text, selected_indices: null });
             const response = rawResponse || '';
 
             let cleanResponse = response;
-            let commandJson: string | undefined = undefined;
+            let commandJson: string | undefined;
+
+            let parsedObj: any = null;
 
             try {
-                // Check if response is pure JSON mapping to Schema
-                const parsed = JSON.parse(response);
-                if (parsed.action) {
-                    commandJson = response;
-                    cleanResponse = `I have prepared the action: ${parsed.action}`;
-                }
+                parsedObj = JSON.parse(response);
             } catch {
-                // Look for markdown JSON blocks if LLM ignored strict instructions
                 const match = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
                 if (match) {
-                    commandJson = match[1];
                     try {
-                        JSON.parse(commandJson); // Validate
-                        cleanResponse = response.replace(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/, "\n[Command Extracted]\n");
-                    } catch {
-                        commandJson = undefined;
-                    }
+                        parsedObj = JSON.parse(match[1]);
+                    } catch { }
                 }
             }
 
-            const botMsg: Message = {
+            if (parsedObj && parsedObj.action) {
+                if (parsedObj.action === 'clarify' && parsedObj.params?.question) {
+                    cleanResponse = parsedObj.params.question;
+                    commandJson = undefined;
+                } else {
+                    commandJson = JSON.stringify(parsedObj, null, 2);
+                    cleanResponse = `Prepared action: \`${parsedObj.action}\``;
+                }
+            }
+
+
+            setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: 'assistant',
                 text: cleanResponse,
-                commandJson
-            };
-            setMessages(prev => [...prev, botMsg]);
+                commandJson,
+            }]);
 
         } catch (e: unknown) {
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: `Error: ${String(e)}` }]);
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                role: 'system',
+                text: `Error: ${String(e)}`,
+            }]);
         } finally {
             setLoading(false);
         }
     };
 
+    const handleNewChat = () => {
+        setMessages([]);
+        setInput('');
+    };
+
     const handleExecute = async (json: string) => {
         try {
-            await safeInvoke('llm_execute_command', { commandJson: json });
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: 'Command executed successfully in the sandbox.' }]);
+            await safeInvoke('llm_execute_command', { command_json: json });
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                role: 'system',
+                text: '✅ Command executed successfully.',
+            }]);
         } catch (e: unknown) {
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', text: `Execution failed: ${String(e)}` }]);
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                role: 'system',
+                text: `❌ Execution failed: ${String(e)}`,
+            }]);
         }
     };
 
@@ -149,25 +176,74 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    // ---- Resize via top-left corner drag handle ----
+    const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        resizingRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            startW: size.w,
+            startH: size.h,
+        };
+
+        const onMouseMove = (ev: MouseEvent) => {
+            if (!resizingRef.current) return;
+            const dx = resizingRef.current.startX - ev.clientX; // dragging left → expand width
+            const dy = resizingRef.current.startY - ev.clientY; // dragging up   → expand height
+            setSize({
+                w: Math.max(MIN_W, resizingRef.current.startW + dx),
+                h: Math.max(MIN_H, resizingRef.current.startH + dy),
+            });
+        };
+
+        const onMouseUp = () => {
+            resizingRef.current = null;
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    }, [size]);
+
     if (!isOpen) return null;
 
     return (
-        <div className={cn(
-            "absolute bottom-10 right-[250px] w-80 z-30",
-            "bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl",
-            "border border-white/30 dark:border-slate-700/50",
-            "rounded-xl shadow-2xl flex flex-col pointer-events-auto",
-            "animate-in slide-in-from-bottom-2",
-            "transition-all duration-300",
-            showSettings ? "max-h-[400px]" : "max-h-[500px]"
-        )}>
+        <div
+            ref={panelRef}
+            className={cn(
+                "absolute bottom-10 right-[250px] z-30",
+                "bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl",
+                "border border-white/20 dark:border-slate-700/50",
+                "rounded-xl shadow-2xl flex flex-col pointer-events-auto",
+            )}
+            style={{ width: size.w, height: size.h }}
+        >
+            {/* Top-left resize handle */}
+            <div
+                onMouseDown={onResizeMouseDown}
+                className="absolute -top-1.5 -left-1.5 w-6 h-6 cursor-nw-resize z-40 group flex items-center justify-center"
+                title="Drag to resize"
+            >
+                <div className="w-3 h-3 rounded-sm bg-slate-300/60 dark:bg-slate-600/60 group-hover:bg-emerald-400/80 transition-colors" />
+            </div>
+
             {/* Header */}
-            <div className="px-3 py-2.5 flex justify-between items-center bg-gradient-to-r from-emerald-500/10 to-transparent border-b border-slate-100 dark:border-slate-800">
+            <div className="px-3 py-2.5 flex justify-between items-center bg-gradient-to-r from-emerald-500/10 to-transparent border-b border-slate-100 dark:border-slate-800 rounded-t-xl shrink-0">
                 <div className="flex items-center gap-2">
                     <Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">LLM Assistant</h3>
                 </div>
                 <div className="flex items-center gap-2">
+                    {!showSettings && (
+                        <button
+                            onClick={handleNewChat}
+                            className="text-slate-400 hover:text-rose-400 transition-colors"
+                            title="New Chat (clear history)"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    )}
                     <button
                         onClick={() => setShowSettings(!showSettings)}
                         className={cn("transition-colors", showSettings ? "text-emerald-500" : "text-slate-400 hover:text-emerald-500")}
@@ -186,15 +262,16 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 overflow-hidden flex flex-col w-full h-[400px]">
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
                 {showSettings ? (
                     <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+                        {/* Provider */}
                         <div className="flex flex-col gap-1">
                             <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Provider</label>
                             <select
                                 value={providerType}
                                 onChange={(e) => handleProviderChange(e.target.value)}
-                                className="w-full text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none"
+                                className="w-full text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500"
                             >
                                 <option value="openai">OpenAI Compatible</option>
                                 <option value="deepseek">DeepSeek</option>
@@ -204,55 +281,78 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                             </select>
                         </div>
 
+                        {/* API Key with show/hide toggle */}
                         {providerType !== 'ollama' && (
                             <div className="flex flex-col gap-1">
                                 <label className="text-xs font-medium text-slate-600 dark:text-slate-300">API Key</label>
-                                <input
-                                    type="password"
-                                    value={apiKey}
-                                    onChange={(e) => setApiKey(e.target.value)}
-                                    placeholder="Enter API Key"
-                                    className="w-full text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
-                                />
+                                <div className="relative flex items-center">
+                                    <input
+                                        type={showApiKey ? 'text' : 'password'}
+                                        value={apiKey}
+                                        onChange={(e) => setApiKey(e.target.value)}
+                                        placeholder="Enter API Key (or loaded from Keychain)"
+                                        className="w-full text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1.5 pl-2 pr-9 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowApiKey(v => !v)}
+                                        className="absolute right-2 text-slate-400 hover:text-emerald-500 text-xs transition-colors select-none"
+                                        title={showApiKey ? 'Hide key' : 'Show key'}
+                                    >
+                                        {showApiKey ? '🙈' : '👁'}
+                                    </button>
+                                </div>
+                                {apiKey === '••••••••' && (
+                                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+                                        ✅ Key loaded from Keychain / .env
+                                    </p>
+                                )}
                             </div>
                         )}
 
+                        {/* Model */}
                         <div className="flex flex-col gap-1">
                             <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Model</label>
                             <input
                                 type="text"
                                 value={model}
                                 onChange={(e) => setModel(e.target.value)}
-                                className="w-full text-sm bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                                className="w-full text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono"
                             />
                         </div>
 
                         <button
                             onClick={saveSettings}
-                            className="mt-2 w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-sm font-medium transition-colors"
+                            className="mt-2 w-full py-2 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors shadow-sm"
                         >
-                            Save & Chat
+                            Save &amp; Start Chat
                         </button>
+
+                        <p className="text-[10px] text-center text-slate-400 dark:text-slate-500">
+                            Drag ↖ corner to resize • Shift+Enter for new line
+                        </p>
                     </div>
                 ) : (
                     <>
                         {/* Chat History */}
-                        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3 text-sm">
+                        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3 text-sm min-h-0">
                             {messages.map(msg => (
-                                <div key={msg.id} className={cn("flex flex-col max-w-[90%]",
-                                    msg.role === 'user' ? "items-end self-end" :
-                                        msg.role === 'system' ? "items-center self-center" : "items-start self-start"
+                                <div key={msg.id} className={cn("flex flex-col",
+                                    msg.role === 'user' ? "items-end" :
+                                        msg.role === 'system' ? "items-center" : "items-start"
                                 )}>
-                                    <div className={cn("px-3 py-2 rounded-lg",
-                                        msg.role === 'user' ? "bg-emerald-500 text-white" :
-                                            msg.role === 'system' ? "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 text-[11px] text-center" :
-                                                "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                    <div className={cn("px-3 py-2 rounded-lg max-w-[90%] leading-relaxed break-words",
+                                        msg.role === 'user'
+                                            ? "bg-emerald-500 text-white"
+                                            : msg.role === 'system'
+                                                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 text-[11px] text-center"
+                                                : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
                                     )}>
                                         {msg.text}
                                     </div>
                                     {msg.commandJson && (
-                                        <div className="mt-1 flex flex-col gap-1 w-full min-w-[200px] bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-2">
-                                            <pre className="text-[10px] text-slate-600 dark:text-slate-400 overflow-x-auto">
+                                        <div className="mt-1 flex flex-col gap-1 w-full max-w-[90%] bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded p-2">
+                                            <pre className="text-[10px] text-slate-600 dark:text-slate-400 overflow-x-auto whitespace-pre-wrap">
                                                 {msg.commandJson}
                                             </pre>
                                             <button
@@ -274,7 +374,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex gap-2">
+                        <div className="p-2 border-t border-slate-100 dark:border-slate-800 flex gap-2 shrink-0">
                             <textarea
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
@@ -285,19 +385,19 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                                     }
                                 }}
                                 className={cn(
-                                    "flex-1 h-10 min-h-[40px] max-h-32 bg-slate-50 dark:bg-slate-800/50 rounded-md",
+                                    "flex-1 min-h-[40px] max-h-32 bg-slate-50 dark:bg-slate-800/50 rounded-md",
                                     "border border-slate-200 dark:border-slate-700",
                                     "py-2.5 px-3 text-xs text-slate-700 dark:text-slate-300",
                                     "outline-none resize-none",
                                     "focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30",
                                     "transition-all placeholder:text-slate-400"
                                 )}
-                                placeholder="Type your instruction..."
+                                placeholder="Type instruction… (Enter to send, Shift+Enter for newline)"
                             />
                             <button
                                 onClick={handleSend}
                                 disabled={loading || !input.trim()}
-                                className="h-10 w-10 shrink-0 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:hover:bg-emerald-500 text-white rounded-md flex items-center justify-center transition-colors shadow-sm"
+                                className="h-10 w-10 shrink-0 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:hover:bg-emerald-500 text-white rounded-md flex items-center justify-center transition-colors shadow-sm self-end"
                             >
                                 <Send className="w-4 h-4" />
                             </button>

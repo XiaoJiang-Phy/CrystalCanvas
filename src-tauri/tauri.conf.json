@@ -1,13 +1,13 @@
 {
-    "$schema": "https://raw.githubusercontent.com/nicknisi/dotfiles/refs/heads/main/config/tauri.conf.json",
+    "$schema": "https://schema.tauri.app/config/2",
     "productName": "CrystalCanvas",
     "version": "0.1.0",
     "identifier": "com.crystalcanvas.app",
     "build": {
         "frontendDist": "../dist",
         "devUrl": "http://localhost:5173",
-        "beforeDevCommand": "",
-        "beforeBuildCommand": ""
+        "beforeDevCommand": "pnpm dev",
+        "beforeBuildCommand": "pnpm build"
     },
     "app": {
         "macOSPrivateApi": true,

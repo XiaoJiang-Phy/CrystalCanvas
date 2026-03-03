@@ -36,6 +36,20 @@ pub fn set_camera_projection(
     Ok(())
 }
 
+/// Sets visibility flags for unit cell box and bonds.
+#[tauri::command]
+pub fn set_render_flags(
+    show_cell: bool,
+    show_bonds: bool,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.show_cell = show_cell;
+        renderer.show_bonds = show_bonds;
+    }
+    Ok(())
+}
+
 /// Load a CIF file into the state.
 #[tauri::command]
 pub fn load_cif_file(
@@ -62,6 +76,7 @@ pub fn load_cif_file(
     // 4. Update the renderer
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
+        renderer.update_lines(&state);
 
         // Auto-adjust camera distance based on unit cell size
         let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
@@ -99,6 +114,7 @@ pub fn add_atom(
     );
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
+        renderer.update_lines(&cs);
     }
 
     Ok(())
@@ -124,6 +140,7 @@ pub fn delete_atoms(
     );
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
+        renderer.update_lines(&cs);
     }
 
     Ok(())
@@ -151,6 +168,7 @@ pub fn substitute_atoms(
     );
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
+        renderer.update_lines(&cs);
     }
 
     Ok(())
@@ -185,6 +203,197 @@ pub fn preview_supercell(
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
     cs.generate_supercell(&expansion)
+}
+
+/// Apply a supercell expansion to the current crystal, mutating state and updating the renderer.
+#[tauri::command]
+pub fn apply_supercell(
+    matrix: [[i32; 3]; 3],
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    // Flatten the 3x3 matrix into the [i32; 9] format expected by generate_supercell
+    let expansion: [i32; 9] = [
+        matrix[0][0], matrix[0][1], matrix[0][2],
+        matrix[1][0], matrix[1][1], matrix[1][2],
+        matrix[2][0], matrix[2][1], matrix[2][2],
+    ];
+    log::info!("apply_supercell: {:?}", expansion);
+
+    let new_state = {
+        let cs = crystal_state
+            .try_lock()
+            .map_err(|_| "Failed to lock state")?;
+        cs.generate_supercell(&expansion)?
+    };
+
+    // Replace the crystal state
+    {
+        let mut cs = crystal_state
+            .try_lock()
+            .map_err(|_| "Failed to lock state")?;
+        *cs = new_state;
+    }
+
+    // Update renderer
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+    );
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_atoms(&instances);
+        renderer.update_lines(&cs);
+
+        // Auto-adjust camera distance for the new structure
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = glam::Vec3::ZERO;
+        if !renderer.camera.is_perspective {
+            renderer.camera.set_orthographic(extent * 1.5);
+        }
+    }
+
+    Ok(())
+}
+
+/// Apply a slab cut to the current crystal, mutating state and updating the renderer.
+#[tauri::command]
+pub fn apply_slab(
+    miller: [i32; 3],
+    layers: i32,
+    vacuum_a: f64,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    log::info!(
+        "apply_slab: miller={:?} layers={} vacuum={}",
+        miller,
+        layers,
+        vacuum_a
+    );
+
+    let new_state = {
+        let cs = crystal_state
+            .try_lock()
+            .map_err(|_| "Failed to lock state")?;
+        cs.generate_slab(miller, layers, vacuum_a)?
+    };
+
+    // Replace the crystal state
+    {
+        let mut cs = crystal_state
+            .try_lock()
+            .map_err(|_| "Failed to lock state")?;
+        *cs = new_state;
+    }
+
+    // Update renderer
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock state")?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+    );
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_atoms(&instances);
+        renderer.update_lines(&cs);
+
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        renderer.camera.eye = glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = glam::Vec3::ZERO;
+        if !renderer.camera.is_perspective {
+            renderer.camera.set_orthographic(extent * 1.5);
+        }
+    }
+
+    Ok(())
+}
+
+/// Set camera view along a lattice axis or reset the view.
+#[tauri::command]
+pub fn set_camera_view_axis(
+    axis: String,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<(), String> {
+    log::info!("set_camera_view_axis: {}", axis);
+
+    let cs = crystal_state
+        .try_lock()
+        .map_err(|_| "Failed to lock crystal state")?;
+    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+    let dist = extent * 2.5;
+
+    // Compute lattice vectors for axis alignment
+    let alpha = (cs.cell_alpha as f32).to_radians();
+    let beta = (cs.cell_beta as f32).to_radians();
+    let gamma = (cs.cell_gamma as f32).to_radians();
+    let a = cs.cell_a as f32;
+    let b = cs.cell_b as f32;
+    let c = cs.cell_c as f32;
+
+    let cx = c * beta.cos();
+    let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
+    let cz = (c * c - cx * cx - cy * cy).max(0.0).sqrt();
+
+    let va = glam::Vec3::new(a, 0.0, 0.0);
+    let vb = glam::Vec3::new(b * gamma.cos(), b * gamma.sin(), 0.0);
+    let vc = glam::Vec3::new(cx, cy, cz);
+
+    let mut renderer = renderer_state
+        .try_lock()
+        .map_err(|_| "Failed to lock renderer")?;
+
+    renderer.camera.target = glam::Vec3::ZERO;
+
+    match axis.as_str() {
+        "a" => {
+            let dir = va.normalize();
+            renderer.camera.eye = dir * dist;
+            renderer.camera.up = glam::Vec3::Z;
+        }
+        "b" => {
+            let dir = vb.normalize();
+            renderer.camera.eye = dir * dist;
+            renderer.camera.up = glam::Vec3::Z;
+        }
+        "c" => {
+            let dir = vc.normalize();
+            renderer.camera.eye = dir * dist;
+            renderer.camera.up = glam::Vec3::Y;
+        }
+        "a_star" => {
+            // a* is perpendicular to b-c plane
+            let dir = vb.cross(vc).normalize();
+            renderer.camera.eye = dir * dist;
+            renderer.camera.up = glam::Vec3::Z;
+        }
+        "b_star" => {
+            let dir = vc.cross(va).normalize();
+            renderer.camera.eye = dir * dist;
+            renderer.camera.up = glam::Vec3::Z;
+        }
+        "c_star" => {
+            let dir = va.cross(vb).normalize();
+            renderer.camera.eye = dir * dist;
+            renderer.camera.up = glam::Vec3::Y;
+        }
+        "reset" => {
+            renderer.camera.eye = glam::Vec3::new(0.0, 0.0, dist);
+            renderer.camera.up = glam::Vec3::Y;
+        }
+        _ => {
+            return Err(format!("Unknown axis: {}", axis));
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -351,6 +560,13 @@ pub fn llm_execute_command(
         crate::renderer::instance::build_instance_data(&cart_positions, &atomic_numbers, &elements);
     if let Ok(mut renderer) = renderer_state.try_lock() {
         renderer.update_atoms(&instances);
+        // We technically need `cs` to build lines, but we just dropped it!
+        // We shouldn't drop `cs` if we use it for lines since we just computed state.
+        // Wait, the fastest way is to skip re-locking and just not drop it. Since we already refactored commands, let's lock it again.
+    }
+    let cs = crystal_state.try_lock().map_err(|_| "Failed")?;
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.update_lines(&cs);
     }
 
     Ok(())
@@ -362,4 +578,123 @@ pub fn get_crystal_state(
 ) -> Result<crate::crystal_state::CrystalState, String> {
     let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
     Ok(cs.clone())
+}
+
+/// Rotates the camera orbitally.
+#[tauri::command]
+pub fn rotate_camera(
+    dx: f32,
+    dy: f32,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.camera.rotate_around_target(dx, dy);
+    }
+    Ok(())
+}
+
+/// Zooms the camera based on scroll delta.
+#[tauri::command]
+pub fn zoom_camera(
+    delta: f32,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.camera.zoom_towards_target(delta);
+    }
+    Ok(())
+}
+
+/// Pans the camera.
+#[tauri::command]
+pub fn pan_camera(
+    dx: f32,
+    dy: f32,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        renderer.camera.pan(dx, dy);
+    }
+    Ok(())
+}
+
+/// Resets the camera to default view looking over the crystal.
+#[tauri::command]
+pub fn reset_camera(
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    if let Ok(mut renderer) = renderer_state.try_lock() {
+        if let Ok(cs) = crystal_state.try_lock() {
+            let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+            let dist = extent * 2.5;
+            renderer.camera.target = glam::Vec3::ZERO;
+            renderer.camera.eye = glam::Vec3::new(0.0, 0.0, dist);
+            renderer.camera.orthographic_scale = extent * 1.5;
+        } else {
+            renderer.camera = crate::renderer::camera::Camera::default_for_crystal();
+        }
+    }
+    Ok(())
+}
+
+/// Perform ray-sphere intersection to pick an atom.
+#[tauri::command]
+pub fn pick_atom(
+    x: f32,
+    y: f32,
+    screen_w: f32,
+    screen_h: f32,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<Option<usize>, String> {
+    let (_camera_eye, view_proj) = {
+        let renderer = renderer_state.try_lock().map_err(|_| "Failed to lock renderer")?;
+        let vp = renderer.camera.build_view_projection_matrix();
+        (renderer.camera.eye, vp)
+    };
+
+    let inv_vp = view_proj.inverse();
+
+    let nx = (2.0 * x) / screen_w - 1.0;
+    let ny = 1.0 - (2.0 * y) / screen_h;
+    
+    // Near plane point
+    let p_near = inv_vp * glam::Vec4::new(nx, ny, 0.0, 1.0);
+    let p_near = p_near.truncate() / p_near.w;
+    
+    // Far plane point
+    let p_far = inv_vp * glam::Vec4::new(nx, ny, 1.0, 1.0);
+    let p_far = p_far.truncate() / p_far.w;
+    
+    let ray_dir = (p_far - p_near).normalize();
+    let ray_origin = p_near;
+
+    let cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    
+    let mut closest_idx = None;
+    let mut min_t = f32::MAX;
+
+    // Use a fixed hit radius for now, scale it up so atoms are easy to click
+    let hit_radius_sq = 1.5 * 1.5; 
+
+    for (i, pos) in cs.cart_positions.iter().enumerate() {
+        let center = glam::Vec3::new(pos[0] as f32, pos[1] as f32, pos[2] as f32);
+        let l = center - ray_origin;
+        let tca = l.dot(ray_dir);
+        if tca < 0.0 { continue; } // Behind ray
+
+        let d2 = l.length_squared() - tca * tca;
+        if d2 > hit_radius_sq { continue; } // Ray misses sphere
+
+        let thc = (hit_radius_sq - d2).sqrt();
+        let t = tca - thc;
+
+        if t > 0.0 && t < min_t {
+            min_t = t;
+            closest_idx = Some(i);
+        }
+    }
+
+    Ok(closest_idx)
 }
