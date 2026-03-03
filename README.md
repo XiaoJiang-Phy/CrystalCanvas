@@ -42,34 +42,55 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 ## 🚀 Getting Started
 
-### Build & Run
+CrystalCanvas utilizes a **Zero-Global-Pollution** strategy. All toolchains (Rust, Node) and dependencies are isolated within the project directory.
 
-CrystalCanvas is currently in active development.
+### 1. Prerequisites (macOS)
+- **Xcode Command Line Tools**: `xcode-select --install`
+- **pnpm**: `npm install -g pnpm` (the only global dependency required)
 
-#### Run Rendering Demo (Standalone)
-We have just completed the **M1-M3: Core Infrastructure & Rendering Engine** phases. You can run the standalone GPU-accelerated demo now:
+### 2. Initial Setup
+Clone the repository and initialize the local toolchains:
 
 ```bash
-# 1. Setup local environment (if not already done)
-# source dev_env.sh (if you use our local toolchain setup)
+git clone https://github.com/XiaoJiang-Phy/CrystalCanvas.git
+cd CrystalCanvas
 
-# 2. Run the demo
+# Initialize local Rustup and Cargo home
+mkdir -p .rustup .cargo
+source dev_env.sh
+
+# Install Rust stable locally (if not present)
+rustup toolchain install stable
+
+# Install Node dependencies
+pnpm install
+```
+
+### 3. Build & Run
+
+CrystalCanvas handles C++/Rust/TS full-stack compilation in a unified flow.
+
+#### Activation
+Always source the environment script before starting development to ensure `RUSTUP_HOME` and `CARGO_HOME` point to the project-local folders:
+```bash
+source dev_env.sh
+```
+
+#### Run in Development Mode
+```bash
+# This starts the Vite dev server and the Tauri native window
+pnpm run tauri dev
+```
+
+#### Run Standalone Rendering Demo
+To verify GPU/wgpu compatibility without the full React UI:
+```bash
 cd src-tauri
 RUST_LOG=info cargo run --bin render_demo
 ```
 *Controls: Left-click drag to rotate, scroll to zoom.*
 
-#### Full App App (M4-M8)
-```bash
-# Install dependencies using pnpm
-pnpm install
-
-# Run in development mode
-source dev_env.sh
-pnpm run dev
-```
-
-> **Note**: The C++ kernel (Spglib, Gemmi) is compiled automatically via `build.rs` — no manual CMake step required.
+> **Note**: The C++ kernel (Spglib, Gemmi, Eigen) is compiled automatically via the Rust `build.rs` script using `cxx-build`. No manual CMake interaction is required.
 
 ---
 
@@ -79,6 +100,7 @@ pnpm run dev
 - [x] **M3: High-Performance Rendering (wgpu)** — Impostor spheres, ray-picking, orbital camera.
 - [x] **M4-M6: UI Integration & Geometry Ops** — Hybrid window, slab cleaving, supercells, atomic operations.
 - [x] **M7-M8: DFT/MD Ecology & I/O Pipeline** — Overlap detection (MIC), native exporters (VASP, QE, LAMMPS).
+- [x] **M8.5: Persistent Settings & UI Polish** — Local JSON caching, global rendering customization.
 - [ ] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
 - [ ] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
 - [ ] **M11: Volumetric & Magnetic States** — Real-time Compute Shader isosurfaces (CHGCAR) and non-collinear spin vectors.
