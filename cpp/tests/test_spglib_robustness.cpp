@@ -1,3 +1,4 @@
+// [PROJECT RULE L0] - Do not modify assert tolerance, time values, or thresholds in this file.
 // [Node 3.1] Spglib spacegroup identification robustness test
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0

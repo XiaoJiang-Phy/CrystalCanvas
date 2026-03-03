@@ -94,12 +94,14 @@ bool check_overlap_mic(const double *lattice, const double *positions,
                        double threshold_A);
 
 /// Compute all chemical bonds in a structure using covalent-radius dynamic
-/// thresholding. A bond is detected if: min_bond_length < dist(i,j) < (r_cov_i
-/// + r_cov_j) * threshold_factor
+/// thresholding. Supports Minimum Image Convention (MIC) if lattice is provided.
 ///
-/// @param cart_positions Cartesian positions (n_atoms x 3, flat)
-/// @param cov_radii Covalent radii per atom in Angstroms [n_atoms]
-/// @param n_atoms Number of atoms
+/// @param lattice 3x3 input lattice (row-major [9]). If nullptr, MIC is not
+/// applied.
+/// @param cart_positions Cartesian positions (num_atoms x 3, flat)
+/// @param frac_positions Fractional positions (num_atoms x 3, flat)
+/// @param covalent_radii Covalent radii per atom in Angstroms [num_atoms]
+/// @param num_atoms Number of atoms
 /// @param threshold_factor Scale factor for covalent sum (typically 1.2)
 /// @param min_bond_length Minimum distance to form a bond (Å, avoids
 /// self-bonds)
@@ -108,17 +110,20 @@ bool check_overlap_mic(const double *lattice, const double *positions,
 /// @param out_distances Output: bond distances [max_bonds]
 /// @param max_bonds Maximum number of bonds to store
 /// @return Number of bonds found
-int compute_bonds(const double *cart_positions, const double *cov_radii,
-                  size_t n_atoms, double threshold_factor,
+int compute_bonds(const double *lattice, const double *cart_positions,
+                  const double *frac_positions, const double *covalent_radii,
+                  size_t num_atoms, double threshold_factor,
                   double min_bond_length, int32_t *out_atom_i,
                   int32_t *out_atom_j, double *out_distances, size_t max_bonds);
 
 /// Find all neighbors in the coordination shell of a specific center atom.
-/// Uses the same covalent radius thresholding.
+/// Supports Minimum Image Convention (MIC) if lattice is provided.
 ///
-/// @param cart_positions Cartesian positions (n_atoms x 3, flat)
-/// @param cov_radii Covalent radii per atom in Angstroms [n_atoms]
-/// @param n_atoms Number of atoms
+/// @param lattice 3x3 input lattice (row-major [9])
+/// @param cart_positions Cartesian positions (num_atoms x 3, flat)
+/// @param frac_positions Fractional positions (num_atoms x 3, flat)
+/// @param covalent_radii Covalent radii per atom in Angstroms [num_atoms]
+/// @param num_atoms Number of atoms
 /// @param center_idx Index of the center atom
 /// @param threshold_factor Scale factor for covalent sum (typically 1.2)
 /// @param min_bond_length Minimum distance (Å)
@@ -126,8 +131,9 @@ int compute_bonds(const double *cart_positions, const double *cov_radii,
 /// @param out_distances Distances to neighbors [max_neighbors]
 /// @param max_neighbors Maximum neighbors to store
 /// @return Number of neighbors found
-int find_coordination_shell(const double *cart_positions,
-                            const double *cov_radii, size_t n_atoms,
+int find_coordination_shell(const double *lattice, const double *cart_positions,
+                            const double *frac_positions,
+                            const double *covalent_radii, size_t num_atoms,
                             size_t center_idx, double threshold_factor,
                             double min_bond_length,
                             int32_t *out_neighbor_indices,

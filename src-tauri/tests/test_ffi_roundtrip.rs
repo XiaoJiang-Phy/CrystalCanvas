@@ -1,3 +1,4 @@
+// [PROJECT RULE L0] - Do not modify assert tolerance, time values, or thresholds in this file.
 //! [Node 1.1] FFI round-trip test: Rust ↔ C++ coordinate translation via translate_positions
 //!
 //! Acceptance criteria:

@@ -79,6 +79,8 @@ pub struct CrystalState {
     pub active_phonon_mode: Option<usize>,
     #[serde(skip)]
     pub phonon_phase: f64,
+    /// Number of atoms before boundary mirroring (visual duplicates)
+    pub intrinsic_sites: usize,
 }
 
 impl Default for CrystalState {
@@ -106,6 +108,7 @@ impl Default for CrystalState {
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
+            intrinsic_sites: 0,
         }
     }
 }
@@ -144,11 +147,12 @@ impl CrystalState {
             occupancies: Vec::with_capacity(n),
             atomic_numbers: Vec::with_capacity(n),
             cart_positions: Vec::new(),
-            version: 1,
+            version: 0,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
+            intrinsic_sites: n,
         };
 
         for site in data.sites {
@@ -256,37 +260,17 @@ impl CrystalState {
     }
 
     pub fn detect_spacegroup(&mut self) {
-        if self.num_atoms() == 0 {
+        let n_intrinsic = self.intrinsic_sites;
+        if n_intrinsic == 0 {
             return;
         }
 
         // Prepare lattice in col-major
-        let alpha = self.cell_alpha.to_radians();
-        let beta = self.cell_beta.to_radians();
-        let gamma = self.cell_gamma.to_radians();
-        let a = self.cell_a;
-        let b = self.cell_b;
-        let c = self.cell_c;
+        let lattice_col_major = self.get_lattice_col_major();
 
-        let cx = c * beta.cos();
-        let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
-        let cz = (c * c - cx * cx - cy * cy).max(0.0).sqrt();
-
-        let lattice_col_major = [
-            a,
-            0.0,
-            0.0,
-            b * gamma.cos(),
-            b * gamma.sin(),
-            0.0,
-            cx,
-            cy,
-            cz,
-        ];
-
-        let mut flat_positions = Vec::with_capacity(self.num_atoms() * 3);
-        let mut types = Vec::with_capacity(self.num_atoms());
-        for i in 0..self.num_atoms() {
+        let mut flat_positions = Vec::with_capacity(n_intrinsic * 3);
+        let mut types = Vec::with_capacity(n_intrinsic);
+        for i in 0..n_intrinsic {
             flat_positions.push(self.fract_x[i]);
             flat_positions.push(self.fract_y[i]);
             flat_positions.push(self.fract_z[i]);
@@ -298,8 +282,8 @@ impl CrystalState {
                 lattice_col_major.as_ptr(),
                 flat_positions.as_ptr(),
                 types.as_ptr(),
-                self.num_atoms(),
-                1e-5, // symprec
+                n_intrinsic,
+                1e-4, // symprec - relaxed slightly for better robustness
             )
         };
 
@@ -312,6 +296,32 @@ impl CrystalState {
     /// Number of atom sites.
     pub fn num_atoms(&self) -> usize {
         self.labels.len()
+    }
+
+    /// Get the 3x3 lattice matrix in column-major layout.
+    pub fn get_lattice_col_major(&self) -> [f64; 9] {
+        let alpha = self.cell_alpha.to_radians();
+        let beta = self.cell_beta.to_radians();
+        let gamma = self.cell_gamma.to_radians();
+        let a = self.cell_a;
+        let b = self.cell_b;
+        let c = self.cell_c;
+
+        let cx = c * beta.cos();
+        let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
+        let cz = (c * c - cx * cx - cy * cy).max(0.0).sqrt();
+
+        [
+            a,
+            0.0,
+            0.0,
+            b * gamma.cos(),
+            b * gamma.sin(),
+            0.0,
+            cx,
+            cy,
+            cz,
+        ]
     }
 
     /// Convert fractional coordinates to Cartesian using the unit cell matrix.
@@ -503,6 +513,7 @@ impl CrystalState {
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
+            intrinsic_sites: n_new_usize,
         };
 
         // Create a fast lookup for original atoms by their atomic_number to get label/element
@@ -642,6 +653,7 @@ impl CrystalState {
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
+            intrinsic_sites: n_new_usize,
         };
 
         for i in 0..n_new_usize {
@@ -679,43 +691,22 @@ impl CrystalState {
         atomic_number: u8,
         fract_pos: [f64; 3],
     ) -> Result<(), CollisionError> {
-        // Collect lattice and current positions to pass to FFI
-        let alpha = self.cell_alpha.to_radians();
-        let beta = self.cell_beta.to_radians();
-        let gamma = self.cell_gamma.to_radians();
-        let a = self.cell_a;
-        let b = self.cell_b;
-        let c = self.cell_c;
+        let lattice_col_major = self.get_lattice_col_major();
 
-        let cx = c * beta.cos();
-        let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
-        let cz = (c * c - cx * cx - cy * cy).sqrt();
-
-        // Eigen uses Column-Major! So we pack col 0, col 1, col 2
-        let lattice_col_major = [
-            a,
-            0.0,
-            0.0,
-            b * gamma.cos(),
-            b * gamma.sin(),
-            0.0,
-            cx,
-            cy,
-            cz,
-        ];
-
-        let mut flat_positions = Vec::with_capacity(self.num_atoms() * 3);
-        for i in 0..self.num_atoms() {
-            flat_positions.push(self.fract_x[i]);
-            flat_positions.push(self.fract_y[i]);
-            flat_positions.push(self.fract_z[i]);
+        // Prepare flat positions of intrinsic atoms for MIC overlap check
+        let n_intrinsic = self.intrinsic_sites;
+        let mut flat_intrinsic = Vec::with_capacity(n_intrinsic * 3);
+        for i in 0..n_intrinsic {
+            flat_intrinsic.push(self.fract_x[i]);
+            flat_intrinsic.push(self.fract_y[i]);
+            flat_intrinsic.push(self.fract_z[i]);
         }
 
         let is_overlap = unsafe {
             ffi::check_overlap_mic(
                 lattice_col_major.as_ptr(),
-                flat_positions.as_ptr(),
-                self.num_atoms(),
+                flat_intrinsic.as_ptr(),
+                n_intrinsic,
                 fract_pos.as_ptr(),
                 0.5, // 0.5Å threshold
             )
@@ -733,6 +724,7 @@ impl CrystalState {
         self.fract_z.push(fract_pos[2]);
         self.occupancies.push(1.0);
         self.atomic_numbers.push(atomic_number);
+        self.intrinsic_sites += 1;
         self.version += 1;
         self.fractional_to_cartesian();
 
@@ -785,26 +777,35 @@ impl CrystalState {
     /// Compute bond analysis: find all bonds and per-atom coordination shells.
     /// Requires `cart_positions` to be populated first.
     pub fn compute_bond_analysis(&mut self, threshold_factor: f64) {
-        let n = self.num_atoms();
+        let n = self.intrinsic_sites;
         if n == 0 {
             self.bond_analysis = Some(BondAnalysis::default());
             return;
         }
 
-        // Prepare flat f64 cart positions for C++ kernel
+        // Prepare flat arrays for C++ kernel
+        // We ONLY use intrinsic atoms because MIC handles periodicity.
+        // Mirroring for visual continuity should be ignored by physics.
         let mut flat_cart = Vec::with_capacity(n * 3);
-        for pos in &self.cart_positions {
+        let mut flat_frac = Vec::with_capacity(n * 3);
+        let mut covalent_radii = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let pos = self.cart_positions[i];
             flat_cart.push(pos[0] as f64);
             flat_cart.push(pos[1] as f64);
             flat_cart.push(pos[2] as f64);
+
+            flat_frac.push(self.fract_x[i]);
+            flat_frac.push(self.fract_y[i]);
+            flat_frac.push(self.fract_z[i]);
+            
+            covalent_radii.push(covalent_radius(self.atomic_numbers[i]) as f64);
         }
 
-        // Covalent radii per atom
-        let cov_radii: Vec<f64> = self
-            .atomic_numbers
-            .iter()
-            .map(|&z| covalent_radius(z) as f64)
-            .collect();
+        // Flatten the 3x3 lattice in column-major
+        let lattice_col_major = self.get_lattice_col_major();
+
 
         let min_bond_length = 0.4; // Angstroms
         let max_bonds = n * n; // Upper bound (for safety)
@@ -816,8 +817,10 @@ impl CrystalState {
 
         let bond_count = unsafe {
             ffi::compute_bonds(
+                lattice_col_major.as_ptr(),
                 flat_cart.as_ptr(),
-                cov_radii.as_ptr(),
+                flat_frac.as_ptr(),
+                covalent_radii.as_ptr(),
                 n,
                 threshold_factor,
                 min_bond_length,
@@ -847,8 +850,10 @@ impl CrystalState {
 
             let cn = unsafe {
                 ffi::find_coordination_shell(
+                    lattice_col_major.as_ptr(),
                     flat_cart.as_ptr(),
-                    cov_radii.as_ptr(),
+                    flat_frac.as_ptr(),
+                    covalent_radii.as_ptr(),
                     n,
                     i,
                     threshold_factor,
@@ -1002,6 +1007,7 @@ mod tests {
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
+            intrinsic_sites: 2,
         };
         state.fractional_to_cartesian();
         state

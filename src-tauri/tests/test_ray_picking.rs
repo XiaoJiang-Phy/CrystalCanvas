@@ -1,3 +1,4 @@
+// [PROJECT RULE L0] - Do not modify assert tolerance, time values, or thresholds in this file.
 //! [Node 2.2] Ray-Picking accuracy and performance tests
 //!
 //! Acceptance criteria:

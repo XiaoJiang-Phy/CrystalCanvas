@@ -116,9 +116,11 @@ pub mod ffi {
 
         /// Compute all chemical bonds using covalent-radius dynamic thresholding
         unsafe fn compute_bonds(
+            lattice: *const f64,
             cart_positions: *const f64,
-            cov_radii: *const f64,
-            n_atoms: usize,
+            frac_positions: *const f64,
+            covalent_radii: *const f64,
+            num_atoms: usize,
             threshold_factor: f64,
             min_bond_length: f64,
             out_atom_i: *mut i32,
@@ -129,9 +131,11 @@ pub mod ffi {
 
         /// Find coordination shell neighbors for a specific center atom
         unsafe fn find_coordination_shell(
+            lattice: *const f64,
             cart_positions: *const f64,
-            cov_radii: *const f64,
-            n_atoms: usize,
+            frac_positions: *const f64,
+            covalent_radii: *const f64,
+            num_atoms: usize,
             center_idx: usize,
             threshold_factor: f64,
             min_bond_length: f64,

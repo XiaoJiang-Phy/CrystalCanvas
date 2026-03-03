@@ -1,3 +1,4 @@
+// [PROJECT RULE L0] - Do not modify assert tolerance, time values, or thresholds in this file.
 //! [Node 5.1] LLM command injection protection test (Command Schema Validation)
 //!
 //! Acceptance Criteria:

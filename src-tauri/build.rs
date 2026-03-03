@@ -7,6 +7,11 @@ fn main() {
         std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "10.12");
     }
 
+    println!("cargo:rerun-if-changed=../cpp/src/physics_kernel.cpp");
+    println!("cargo:rerun-if-changed=../cpp/include/physics_kernel.hpp");
+    println!("cargo:rerun-if-changed=../cpp/src/crystal_parser.cpp");
+    println!("cargo:rerun-if-changed=../cpp/include/crystal_parser.hpp");
+
     #[cfg(target_os = "linux")]
     {
         // Placeholder for Ubuntu (Vulkan) / Linux specific linking rules

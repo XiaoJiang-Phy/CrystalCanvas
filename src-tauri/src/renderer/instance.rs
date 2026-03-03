@@ -146,7 +146,7 @@ pub fn covalent_radius(atomic_number: u8) -> f32 {
         2.03, // 19: K
         1.76, // 20: Ca
         1.70, // 21: Sc
-        1.60, // 22: Ti
+        1.36, // 22: Ti
         1.53, // 23: V
         1.39, // 24: Cr
         1.39, // 25: Mn (low spin)

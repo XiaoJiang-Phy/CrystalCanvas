@@ -284,73 +284,87 @@ void build_slab(
     }
 }
 
-bool check_overlap_mic(
-    const double* lattice,
-    const double* positions,
-    size_t n_atoms,
-    const double* new_frac_pos,
-    double threshold_A
-) {
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
-    Eigen::Vector3d f_new(new_frac_pos[0], new_frac_pos[1], new_frac_pos[2]);
-    
-    double thresh_sq = threshold_A * threshold_A;
-    
-    for (size_t i = 0; i < n_atoms; ++i) {
-        Eigen::Vector3d f_old(positions[3*i], positions[3*i+1], positions[3*i+2]);
-        Eigen::Vector3d diff = f_new - f_old;
-        
-        // Minimum Image Convention (MIC)
-        // Shift fractional coordinates to [-0.5, 0.5)
-        diff.x() -= std::round(diff.x());
-        diff.y() -= std::round(diff.y());
-        diff.z() -= std::round(diff.z());
-        
-        // Convert to Cartesian
-        Eigen::Vector3d cart_diff = L * diff;
-        
-        // Check distance squared
-        if (cart_diff.squaredNorm() < thresh_sq) {
+bool check_overlap_mic(const double* lattice, const double* positions,
+                       size_t num_atoms, const double* new_frac_pos,
+                       double threshold_A) {
+    // Map the lattice as Column-Major to follow CrystalCanvas convention
+    Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::ColMajor>> lattice_matrix(lattice);
+    Eigen::Vector3d fractional_new(new_frac_pos[0], new_frac_pos[1], new_frac_pos[2]);
+    double threshold_squared = threshold_A * threshold_A;
+
+    for (size_t i = 0; i < num_atoms; ++i) {
+        Eigen::Vector3d fractional_old(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+        Eigen::Vector3d fractional_difference = fractional_new - fractional_old;
+
+        // Apply Minimum Image Convention (MIC) for overlap check
+        fractional_difference.x() -= std::round(fractional_difference.x());
+        fractional_difference.y() -= std::round(fractional_difference.y());
+        fractional_difference.z() -= std::round(fractional_difference.z());
+
+        if ((lattice_matrix * fractional_difference).squaredNorm() < threshold_squared) {
             return true;
         }
     }
     return false;
 }
 
-int compute_bonds(
-    const double* cart_positions,
-    const double* cov_radii,
-    size_t n_atoms,
-    double threshold_factor,
-    double min_bond_length,
-    int32_t* out_atom_i,
-    int32_t* out_atom_j,
-    double* out_distances,
-    size_t max_bonds
-) {
+int compute_bonds(const double* lattice, const double* cart_positions,
+                  const double* frac_positions, const double* covalent_radii,
+                  size_t num_atoms, double threshold_factor,
+                  double min_bond_length, int32_t* out_atom_i,
+                  int32_t* out_atom_j, double* out_distances,
+                  size_t max_bonds) {
     try {
-        double min_sq = min_bond_length * min_bond_length;
+        double minimum_bond_length_squared = min_bond_length * min_bond_length;
         int bond_count = 0;
 
-        for (size_t i = 0; i < n_atoms; ++i) {
-            Eigen::Vector3d pi(cart_positions[3*i], cart_positions[3*i+1], cart_positions[3*i+2]);
-            double ri = cov_radii[i];
+        // Map the lattice as Column-Major to follow CrystalCanvas convention
+        Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::ColMajor>> lattice_matrix(lattice);
 
-            for (size_t j = i + 1; j < n_atoms; ++j) {
-                Eigen::Vector3d pj(cart_positions[3*j], cart_positions[3*j+1], cart_positions[3*j+2]);
-                double rj = cov_radii[j];
+        for (size_t i = 0; i < num_atoms; ++i) {
+            Eigen::Vector3d fractional_i(frac_positions[3 * i],
+                                         frac_positions[3 * i + 1],
+                                         frac_positions[3 * i + 2]);
+            double radius_i = covalent_radii[i];
 
-                double max_bond = (ri + rj) * threshold_factor;
-                double dist_sq = (pi - pj).squaredNorm();
+            for (size_t j = i; j < num_atoms; ++j) {
+                double radius_j = covalent_radii[j];
+                double max_bond_distance = (radius_i + radius_j) * threshold_factor;
+                double max_bond_distance_squared = max_bond_distance * max_bond_distance;
 
-                if (dist_sq > min_sq && dist_sq < max_bond * max_bond) {
-                    if (static_cast<size_t>(bond_count) >= max_bonds) {
-                        return bond_count; // buffer full
+                Eigen::Vector3d fractional_j(frac_positions[3 * j],
+                                             frac_positions[3 * j + 1],
+                                             frac_positions[3 * j + 2]);
+
+                // Perform 27-image search to correctly find bonds in small unit cells (e.g., Rutile TiO2)
+                for (int nx = -1; nx <= 1; ++nx) {
+                    for (int ny = -1; ny <= 1; ++ny) {
+                        for (int nz = -1; nz <= 1; ++nz) {
+                            if (i == j) {
+                                // For self-pairing, avoid double counting (i, i, shift) and (i, i, -shift)
+                                if (nz < 0) continue;
+                                if (nz == 0 && ny < 0) continue;
+                                if (nz == 0 && ny == 0 && nx <= 0) continue;
+                            }
+
+                            Eigen::Vector3d shift(static_cast<double>(nx),
+                                                  static_cast<double>(ny),
+                                                  static_cast<double>(nz));
+                            Eigen::Vector3d diff = (fractional_j + shift) - fractional_i;
+                            double distance_squared = (lattice_matrix * diff).squaredNorm();
+
+                            if (distance_squared > minimum_bond_length_squared &&
+                                distance_squared < max_bond_distance_squared) {
+                                if (static_cast<size_t>(bond_count) >= max_bonds) {
+                                    return bond_count;
+                                }
+                                out_atom_i[bond_count] = static_cast<int32_t>(i);
+                                out_atom_j[bond_count] = static_cast<int32_t>(j);
+                                out_distances[bond_count] = std::sqrt(distance_squared);
+                                bond_count++;
+                            }
+                        }
                     }
-                    out_atom_i[bond_count] = static_cast<int32_t>(i);
-                    out_atom_j[bond_count] = static_cast<int32_t>(j);
-                    out_distances[bond_count] = std::sqrt(dist_sq);
-                    bond_count++;
                 }
             }
         }
@@ -364,46 +378,61 @@ int compute_bonds(
     }
 }
 
-int find_coordination_shell(
-    const double* cart_positions,
-    const double* cov_radii,
-    size_t n_atoms,
-    size_t center_idx,
-    double threshold_factor,
-    double min_bond_length,
-    int32_t* out_neighbor_indices,
-    double* out_distances,
-    size_t max_neighbors
-) {
+int find_coordination_shell(const double* lattice, const double* cart_positions,
+                            const double* frac_positions,
+                            const double* covalent_radii, size_t num_atoms,
+                            size_t center_idx, double threshold_factor,
+                            double min_bond_length,
+                            int32_t* out_neighbor_indices,
+                            double* out_distances, size_t max_neighbors) {
     try {
-        if (center_idx >= n_atoms) {
+        if (center_idx >= num_atoms) {
             return 0;
         }
 
-        Eigen::Vector3d pc(
-            cart_positions[3*center_idx],
-            cart_positions[3*center_idx+1],
-            cart_positions[3*center_idx+2]
-        );
-        double rc = cov_radii[center_idx];
-        double min_sq = min_bond_length * min_bond_length;
+        // Map the lattice as Column-Major to follow CrystalCanvas convention
+        Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::ColMajor>> lattice_matrix(lattice);
+
+        Eigen::Vector3d fractional_center(frac_positions[3 * center_idx],
+                                          frac_positions[3 * center_idx + 1],
+                                          frac_positions[3 * center_idx + 2]);
+        double radius_center = covalent_radii[center_idx];
+        double minimum_bond_length_squared = min_bond_length * min_bond_length;
         int neighbor_count = 0;
 
-        for (size_t j = 0; j < n_atoms; ++j) {
-            if (j == center_idx) continue;
+        for (size_t j = 0; j < num_atoms; ++j) {
+            double radius_j = covalent_radii[j];
+            double max_bond_distance = (radius_center + radius_j) * threshold_factor;
+            double max_bond_distance_squared = max_bond_distance * max_bond_distance;
 
-            Eigen::Vector3d pj(cart_positions[3*j], cart_positions[3*j+1], cart_positions[3*j+2]);
-            double rj = cov_radii[j];
-            double max_bond = (rc + rj) * threshold_factor;
-            double dist_sq = (pc - pj).squaredNorm();
+            Eigen::Vector3d fractional_j(frac_positions[3 * j],
+                                         frac_positions[3 * j + 1],
+                                         frac_positions[3 * j + 2]);
 
-            if (dist_sq > min_sq && dist_sq < max_bond * max_bond) {
-                if (static_cast<size_t>(neighbor_count) >= max_neighbors) {
-                    return neighbor_count;
+            // Perform 27-image search to accurately identify neighbors in periodic systems
+            for (int nx = -1; nx <= 1; ++nx) {
+                for (int ny = -1; ny <= 1; ++ny) {
+                    for (int nz = -1; nz <= 1; ++nz) {
+                        // Skip the center atom itself in the primary cell
+                        if (j == center_idx && nx == 0 && ny == 0 && nz == 0) continue;
+
+                        Eigen::Vector3d shift(static_cast<double>(nx),
+                                              static_cast<double>(ny),
+                                              static_cast<double>(nz));
+                        Eigen::Vector3d diff = (fractional_j + shift) - fractional_center;
+                        double distance_squared = (lattice_matrix * diff).squaredNorm();
+
+                        if (distance_squared > minimum_bond_length_squared &&
+                            distance_squared < max_bond_distance_squared) {
+                            if (static_cast<size_t>(neighbor_count) >= max_neighbors) {
+                                return neighbor_count;
+                            }
+                            out_neighbor_indices[neighbor_count] = static_cast<int32_t>(j);
+                            out_distances[neighbor_count] = std::sqrt(distance_squared);
+                            neighbor_count++;
+                        }
+                    }
                 }
-                out_neighbor_indices[neighbor_count] = static_cast<int32_t>(j);
-                out_distances[neighbor_count] = std::sqrt(dist_sq);
-                neighbor_count++;
             }
         }
         return neighbor_count;
@@ -415,4 +444,3 @@ int find_coordination_shell(
         return 0;
     }
 }
-

@@ -1,3 +1,4 @@
+// [PROJECT RULE L0] - Do not modify assert tolerance, time values, or thresholds in this file.
 //! [Node 4.1] Invalid physical structure interceptor (Overlap Detection) tests
 //!
 //! Acceptance Criteria:
@@ -38,6 +39,7 @@ fn make_test_state_with_atom_at_origin() -> CrystalState {
         phonon_data: None,
         active_phonon_mode: None,
         phonon_phase: 0.0,
+        intrinsic_sites: 0,
     };
     state.try_add_atom("O", 8, [0.0, 0.0, 0.0]).unwrap();
     state.version = 1; // Reset to 1 for tests tracking version increment
@@ -68,6 +70,7 @@ fn empty_cubic(a: f64) -> CrystalState {
         phonon_data: None,
         active_phonon_mode: None,
         phonon_phase: 0.0,
+        intrinsic_sites: 0,
     }
 }
 
