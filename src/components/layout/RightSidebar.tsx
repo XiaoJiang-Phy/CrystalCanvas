@@ -18,6 +18,7 @@ export const RightSidebar: React.FC<{
     const [activeModeIdx, setActiveModeIdx] = useState<number | null>(null);
     const [isAnimating, setIsAnimating] = useState(false);
     const [amplitude, setAmplitude] = useState(1.0);
+    const [openAccordion, setOpenAccordion] = useState<string | null>("Structural Analysis");
 
     const handle_supercell = () => {
         const matrix = [
@@ -114,7 +115,7 @@ export const RightSidebar: React.FC<{
         <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
 
             {/* Bond Analysis Accordion */}
-            <Accordion title="Structural Analysis" defaultOpen>
+            <Accordion title="Structural Analysis" isOpen={openAccordion === 'Structural Analysis'} onToggle={() => setOpenAccordion(openAccordion === 'Structural Analysis' ? null : 'Structural Analysis')}>
                 <div className="space-y-3">
                     <ActionButton label="Calculate Bonds & Polyhedra" onClick={handle_refresh_bonds} />
 
@@ -157,7 +158,7 @@ export const RightSidebar: React.FC<{
             </Accordion>
 
             {/* Phonon Animation Accordion */}
-            <Accordion title="Phonon Animation" defaultOpen>
+            <Accordion title="Phonon Animation" isOpen={openAccordion === 'Phonon Animation'} onToggle={() => setOpenAccordion(openAccordion === 'Phonon Animation' ? null : 'Phonon Animation')}>
                 <div className="space-y-3">
                     <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handle_load_phonon} />
 
@@ -208,7 +209,7 @@ export const RightSidebar: React.FC<{
             </Accordion>
 
             {/* Supercell Accordion */}
-            <Accordion title="Supercell Construction" defaultOpen={false}>
+            <Accordion title="Supercell Construction" isOpen={openAccordion === 'Supercell'} onToggle={() => setOpenAccordion(openAccordion === 'Supercell' ? null : 'Supercell')}>
                 <div className="space-y-3">
                     <div className="flex gap-2 text-xs">
                         <NumberInput label="Nx" value={sc.nx} onChange={v => setSc(s => ({ ...s, nx: v }))} />
@@ -222,7 +223,7 @@ export const RightSidebar: React.FC<{
             </Accordion>
 
             {/* Cutting Plane Accordion */}
-            <Accordion title="Cutting Plane (hkl)" defaultOpen={false}>
+            <Accordion title="Cutting Plane (hkl)" isOpen={openAccordion === 'Cutting Plane'} onToggle={() => setOpenAccordion(openAccordion === 'Cutting Plane' ? null : 'Cutting Plane')}>
                 <div className="space-y-3">
                     <div className="flex gap-2 text-xs">
                         <NumberInput label="h" value={slab.h} onChange={v => setSlab(s => ({ ...s, h: v }))} />
@@ -252,7 +253,7 @@ export const RightSidebar: React.FC<{
             </Accordion>
 
             {/* Atom Operations Accordion */}
-            <Accordion title="Atom Operations" defaultOpen={false}>
+            <Accordion title="Atom Operations" isOpen={openAccordion === 'Atom Operations'} onToggle={() => setOpenAccordion(openAccordion === 'Atom Operations' ? null : 'Atom Operations')}>
                 <div className="space-y-3">
                     <div className="text-xs space-y-1">
                         <div className="text-slate-500 dark:text-slate-400">
@@ -318,13 +319,11 @@ const DisabledButton = ({ label }: { label: string }) => (
     </button>
 );
 
-const Accordion: React.FC<{ title: string; defaultOpen?: boolean; children: React.ReactNode }> = ({ title, defaultOpen = false, children }) => {
-    const [isOpen, setIsOpen] = useState(defaultOpen);
-
+const Accordion: React.FC<{ title: string; isOpen: boolean; onToggle: () => void; children: React.ReactNode }> = ({ title, isOpen, onToggle, children }) => {
     return (
-        <div className="pointer-events-auto bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/30 dark:border-slate-700/50 rounded-xl shadow-lg shadow-black/5 dark:shadow-black/20 overflow-hidden">
+        <div className="pointer-events-auto shrink-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/30 dark:border-slate-700/50 rounded-xl shadow-lg shadow-black/5 dark:shadow-black/20 overflow-hidden">
             <button
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={onToggle}
                 className={cn(
                     "w-full px-3 py-2.5 flex justify-between items-center bg-transparent hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors",
                     isOpen && "border-b border-slate-100 dark:border-slate-800"
