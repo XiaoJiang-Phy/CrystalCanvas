@@ -7,7 +7,7 @@ use crate::io::export::{export_lammps_data, export_poscar, export_qe_input};
 use crate::llm::command::{CrystalCommand, ExportFormat};
 
 /// Look up atomic number from element symbol for correct rendering.
-fn element_to_atomic_number(symbol: &str) -> u8 {
+pub fn element_to_atomic_number(symbol: &str) -> u8 {
     match symbol {
         "H" => 1,
         "He" => 2,

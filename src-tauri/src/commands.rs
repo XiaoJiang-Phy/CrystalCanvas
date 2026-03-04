@@ -184,7 +184,12 @@ pub fn add_atom(
     let mut cs = crystal_state
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
-    cs.try_add_atom(&element_symbol, atomic_number, fract_pos)
+    let an = if atomic_number == 0 {
+        crate::llm::router::element_to_atomic_number(&element_symbol)
+    } else {
+        atomic_number
+    };
+    cs.try_add_atom(&element_symbol, an, fract_pos)
         .map_err(|_| "Collision detected: atom too close to existing atoms")?;
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
@@ -232,6 +237,81 @@ pub fn delete_atoms(
 }
 
 #[tauri::command]
+pub fn translate_atoms_screen(
+    indices: Vec<usize>,
+    dx: f32,
+    dy: f32,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<(), String> {
+    let (eye, target, up) = {
+        let r = renderer_state.lock().map_err(|_| "Failed to lock renderer")?;
+        (r.camera.eye, r.camera.target, r.camera.up)
+    };
+    
+    // Calculate world space translation vector exactly as camera pan
+    let pan_speed = 0.002 * (eye - target).length();
+    let forward = (target - eye).normalize();
+    let right = forward.cross(up).normalize();
+    let up_dir = right.cross(forward).normalize();
+    let translation = -right * dx * pan_speed + up_dir * dy * pan_speed; // Matches pan calculation
+    
+    // Apply this translation to atoms
+    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
+    
+    // Inverse orthogonalization to map dx, dy, dz back to fractional coordinates
+    let (a, b, c) = (cs.cell_a as f32, cs.cell_b as f32, cs.cell_c as f32);
+    let alpha_rad = cs.cell_alpha.to_radians() as f32;
+    let beta_rad = cs.cell_beta.to_radians() as f32;
+    let gamma_rad = cs.cell_gamma.to_radians() as f32;
+    
+    let cos_alpha = alpha_rad.cos();
+    let cos_beta = beta_rad.cos();
+    let cos_gamma = gamma_rad.cos();
+    let sin_gamma = gamma_rad.sin();
+    
+    let m00 = a;
+    let m01 = b * cos_gamma;
+    let m02 = c * cos_beta;
+    let m11 = b * sin_gamma;
+    let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
+    let m22 = c * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma + 2.0 * cos_alpha * cos_beta * cos_gamma).max(0.0).sqrt()) / sin_gamma;
+    
+    let d_frac_z = translation.z / m22;
+    let d_frac_y = (translation.y - m12 * d_frac_z) / m11;
+    let d_frac_x = (translation.x - m01 * d_frac_y - m02 * d_frac_z) / m00;
+    
+    for &idx in &indices {
+        if idx < cs.num_atoms() {
+            cs.fract_x[idx] += d_frac_x as f64;
+            cs.fract_y[idx] += d_frac_y as f64;
+            cs.fract_z[idx] += d_frac_z as f64;
+            cs.cart_positions[idx][0] += translation.x;
+            cs.cart_positions[idx][1] += translation.y;
+            cs.cart_positions[idx][2] += translation.z;
+        }
+    }
+    cs.version += 1;
+    
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        &settings, &cs.selected_atoms
+    );
+    let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
+    
+    if let Ok(mut renderer) = renderer_state.lock() {
+        renderer.update_atoms(&instances);
+        renderer.update_bonds(&bond_instances);
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
 pub fn substitute_atoms(
     indices: Vec<usize>,
     new_element_symbol: String,
@@ -245,7 +325,11 @@ pub fn substitute_atoms(
     let mut cs = crystal_state
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
-    cs.substitute_atoms(&indices, &new_element_symbol, new_atomic_number);
+    let mut an = new_atomic_number;
+    if an == 0 {
+        an = crate::llm::router::element_to_atomic_number(&new_element_symbol);
+    }
+    cs.substitute_atoms(&indices, &new_element_symbol, an);
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(

@@ -108,7 +108,9 @@ function App() {
                         const x = parseFloat(parts[1]);
                         const y = parseFloat(parts[2]);
                         const z = parseFloat(parts[3]);
-                        safeInvoke('add_atom', { element_symbol: elem, atomic_number: 0, fract_pos: [x, y, z] }).catch(console.error);
+                        safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] })
+                            .then(fetch_crystal_state)
+                            .catch(console.error);
                     } else {
                         alert("Invalid format. Use 'Symbol X Y Z'.");
                     }
@@ -121,7 +123,7 @@ function App() {
                             indices: selectedAtoms,
                             newElementSymbol: newElem.trim(),
                             newAtomicNumber: 0
-                        }).catch(console.error);
+                        }).then(fetch_crystal_state).catch(console.error);
                     }
                 } else {
                     alert("No atom selected. Please select an atom first.");
@@ -216,7 +218,12 @@ function App() {
             const dx = e.clientX - lastMousePos.current.x;
             const dy = e.clientY - lastMousePos.current.y;
             lastMousePos.current = { x: e.clientX, y: e.clientY };
-            if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
+
+            if (e.buttons === 1 && interactionMode === 'move' && selectedAtoms.length > 0) {
+                safeInvoke('translate_atoms_screen', { indices: selectedAtoms, dx, dy })
+                    .then(fetch_crystal_state)
+                    .catch(console.error);
+            } else if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
                 safeInvoke('pan_camera', { dx, dy }).catch(console.error);
             } else if (e.buttons === 1 && interactionMode === 'rotate') {
                 safeInvoke('rotate_camera', { dx: dx * 1.0, dy: dy * 1.0 }).catch(console.error);
@@ -396,7 +403,9 @@ function App() {
                     >
                         <button
                             onClick={() => {
-                                safeInvoke('add_atom', { element_symbol: "C", atomic_number: 6, fract_pos: [0.5, 0.5, 0.5] }).catch(console.error);
+                                safeInvoke('add_atom', { elementSymbol: "C", atomicNumber: 6, fractPos: [0.5, 0.5, 0.5] })
+                                    .then(fetch_crystal_state)
+                                    .catch(console.error);
                                 setContextMenu(null);
                             }}
                             className="text-left px-3 py-2 text-sm hover:bg-emerald-50 dark:hover:bg-slate-700 rounded-md transition-colors text-slate-700 dark:text-slate-300 w-full flex items-center gap-2"

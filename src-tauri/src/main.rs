@@ -601,6 +601,7 @@ fn main() {
             commands::set_camera_projection,
             commands::load_cif_file,
             commands::add_atom,
+            commands::translate_atoms_screen,
             commands::delete_atoms,
             commands::update_selection,
             commands::substitute_atoms,
