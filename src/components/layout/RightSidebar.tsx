@@ -37,7 +37,7 @@ export const RightSidebar: React.FC<{
         safeInvoke('apply_slab', {
             miller: [slab.h, slab.k, slab.l],
             layers: slab.layers,
-            vacuum_a: slab.vacuum
+            vacuumA: slab.vacuum
         }).then(() => console.log("Slab applied")).catch(console.error);
     };
 
@@ -54,8 +54,8 @@ export const RightSidebar: React.FC<{
         if (newElem && newElem.trim().length > 0) {
             safeInvoke('substitute_atoms', {
                 indices: [selectedAtomIdx],
-                new_element_symbol: newElem.trim(),
-                new_atomic_number: 0 // Backend can map symbol to number
+                newElementSymbol: newElem.trim(),
+                newAtomicNumber: 0 // Backend can map symbol to number
             }).catch(console.error);
         }
     };

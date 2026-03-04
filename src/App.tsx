@@ -119,8 +119,8 @@ function App() {
                     if (newElem && newElem.trim().length > 0) {
                         safeInvoke('substitute_atoms', {
                             indices: [selectedAtomIdx],
-                            new_element_symbol: newElem.trim(),
-                            new_atomic_number: 0
+                            newElementSymbol: newElem.trim(),
+                            newAtomicNumber: 0
                         }).catch(console.error);
                     }
                 } else {
@@ -145,8 +145,10 @@ function App() {
                 }
 
                 safeInvoke('set_render_flags', {
-                    show_cell: renderFlagsRef.current.cell,
-                    show_bonds: renderFlagsRef.current.bonds
+                    showCell: renderFlagsRef.current.cell,
+                    showBonds: renderFlagsRef.current.bonds
+                }).then(() => {
+                    console.log('[App] set_render_flags OK:', { showCell: renderFlagsRef.current.cell, showBonds: renderFlagsRef.current.bonds });
                 }).catch(console.error);
             } else if (action === 'show_about') {
                 alert("CrystalCanvas\\nVersion 1.0\\nPowered by Tauri, React, wgpu, and C++.\\nLicense: MIT OR Apache-2.0");
@@ -314,7 +316,7 @@ function App() {
         const next = !renderFlagsRef.current.cell;
         renderFlagsRef.current.cell = next;
         setShowCell(next);
-        safeInvoke('set_render_flags', { show_cell: next, show_bonds: renderFlagsRef.current.bonds }).catch(console.error);
+        safeInvoke('set_render_flags', { showCell: next, showBonds: renderFlagsRef.current.bonds }).catch(console.error);
     };
 
     const handle_set_perspective = (perspective: boolean) => {
@@ -326,7 +328,7 @@ function App() {
         const next = !renderFlagsRef.current.bonds;
         renderFlagsRef.current.bonds = next;
         setShowBonds(next);
-        safeInvoke('set_render_flags', { show_cell: renderFlagsRef.current.cell, show_bonds: next }).catch(console.error);
+        safeInvoke('set_render_flags', { showCell: renderFlagsRef.current.cell, showBonds: next }).catch(console.error);
     };
 
     const toggle_labels = () => {
@@ -352,14 +354,16 @@ function App() {
             // If moved less than 5 pixels, treat as a click
             if (dx < 5 && dy < 5) {
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                const dpr = window.devicePixelRatio || 1;
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
 
                 safeInvoke<number | null>('pick_atom', {
-                    x, y,
-                    screen_w: rect.width,
-                    screen_h: rect.height
-                }).then((idx) => {
+                    x: x * dpr,
+                    y: y * dpr,
+                    screenW: rect.width * dpr,
+                    screenH: rect.height * dpr
+                }).then(idx => {
                     setSelectedAtomIdx(idx ?? null);
                 }).catch(console.error);
             }

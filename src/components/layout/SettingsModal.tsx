@@ -35,7 +35,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, e
     if (!isOpen || !settings) return null;
 
     const handleSave = () => {
-        safeInvoke('update_settings', { new_settings: settings })
+        safeInvoke('update_settings', { newSettings: settings })
             .then(onClose)
             .catch(err => alert("Failed to update settings: " + err));
     };
