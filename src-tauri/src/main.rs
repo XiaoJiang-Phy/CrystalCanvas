@@ -640,8 +640,21 @@ fn main() {
                 let Ok(mut renderer) = renderer_mutex.try_lock() else {
                     return;
                 };
-                if let Err(e) = renderer.render() {
-                    log::warn!("Render error: {:?}", e);
+                match renderer.render() {
+                    Ok(_) => {}
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        // Reconfigure the surface to recover from transient GPU state errors
+                        log::warn!("Surface lost/outdated — reconfiguring");
+                        let size = renderer.gpu.size;
+                        renderer.gpu.surface.configure(&renderer.gpu.device, &renderer.gpu.config);
+                        renderer.resize(size);
+                    }
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        log::error!("GPU out of memory — cannot recover");
+                    }
+                    Err(e) => {
+                        log::warn!("Render error: {:?}", e);
+                    }
                 }
             }
         });

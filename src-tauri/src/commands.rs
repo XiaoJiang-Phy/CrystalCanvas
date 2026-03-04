@@ -121,6 +121,7 @@ pub fn load_cif_file(
 
     // 1 & 2. Load file (delegating to our format importer)
     let state = crate::io::import::load_file(&path)?;
+    log::info!("[load_cif_file] File parsed: {} atoms", state.num_atoms());
 
     // Update crystal state — must block until lock is available
     {
@@ -128,6 +129,7 @@ pub fn load_cif_file(
             .lock()
             .map_err(|e| format!("Failed to lock crystal state: {}", e))?;
         *cs = state.clone();
+        log::info!("[load_cif_file] Crystal state updated");
     }
 
     // 3. Build instance data for the Renderer
@@ -141,6 +143,7 @@ pub fn load_cif_file(
         &state.elements,
         &settings,
     );
+    log::info!("[load_cif_file] Built {} atom instances", instances.len());
 
     // 4. Update the renderer — must block until lock is available
     {
@@ -148,7 +151,9 @@ pub fn load_cif_file(
             .lock()
             .map_err(|e| format!("Failed to lock renderer: {}", e))?;
         renderer.update_atoms(&instances);
+        log::info!("[load_cif_file] Atoms uploaded to GPU, count={}", instances.len());
         renderer.update_lines(&state, &settings);
+        log::info!("[load_cif_file] Lines updated");
 
         // Auto-adjust camera distance based on unit cell size
         let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
