@@ -416,11 +416,10 @@ pub fn build_bond_instances(
             // This prevents ultra-long MIC wrap-around lines taking up the entire screen.
             if dist > 0.5 && dist < max_bond_len {
                 // Heuristic to prevent arbitrary metal-metal bonds in ionic/ceramic views:
-                // If both are typical transition metals, they shouldn't form a bond.
+                // If both are typical transition metals and of the same element, they shouldn't form a bond.
                 let is_metal_i = crate::renderer::instance::is_metal(cs.atomic_numbers[i]);
-                let is_metal_j = crate::renderer::instance::is_metal(cs.atomic_numbers[j]);
-                if is_metal_i && is_metal_j {
-                    continue; // Skip metal-metal bonds
+                if is_metal_i && cs.atomic_numbers[i] == cs.atomic_numbers[j] {
+                    continue; // Skip identical metal-metal bonds like Fe-Fe
                 }
 
                 instances.push(BondInstance {

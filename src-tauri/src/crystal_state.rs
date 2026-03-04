@@ -129,6 +129,55 @@ impl CrystalState {
             data.spacegroup_hm,
             data.spacegroup_number
         );
+
+        // Collect sites, wrapping fractional coordinates into [0, 1)
+        let mut labels: Vec<String> = Vec::with_capacity(n);
+        let mut elements: Vec<String> = Vec::with_capacity(n);
+        let mut fract_x: Vec<f64> = Vec::with_capacity(n);
+        let mut fract_y: Vec<f64> = Vec::with_capacity(n);
+        let mut fract_z: Vec<f64> = Vec::with_capacity(n);
+        let mut occupancies: Vec<f64> = Vec::with_capacity(n);
+        let mut atomic_numbers: Vec<u8> = Vec::with_capacity(n);
+
+        let eps = 1e-4;
+
+        for site in data.sites {
+            let fx = site.fract_x - site.fract_x.floor();
+            let fy = site.fract_y - site.fract_y.floor();
+            let fz = site.fract_z - site.fract_z.floor();
+
+            // Deduplicate: skip if an atom with identical (wrapped) coords already exists
+            let mut duplicate = false;
+            for k in 0..fract_x.len() {
+                if (fract_x[k] - fx).abs() < eps
+                    && (fract_y[k] - fy).abs() < eps
+                    && (fract_z[k] - fz).abs() < eps
+                    && atomic_numbers[k] == site.atomic_number
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if duplicate {
+                continue;
+            }
+
+            labels.push(site.label);
+            elements.push(site.element_symbol);
+            fract_x.push(fx);
+            fract_y.push(fy);
+            fract_z.push(fz);
+            occupancies.push(site.occ);
+            atomic_numbers.push(site.atomic_number);
+        }
+
+        let actual_n = labels.len();
+        log::info!(
+            "[from_ffi] After wrapping & dedup: {} sites (from {} raw)",
+            actual_n,
+            n
+        );
+
         let mut state = CrystalState {
             name: data.name,
             cell_a: data.a,
@@ -139,31 +188,22 @@ impl CrystalState {
             cell_gamma: if data.gamma == 0.0 { 90.0 } else { data.gamma },
             spacegroup_hm: data.spacegroup_hm,
             spacegroup_number: data.spacegroup_number,
-            labels: Vec::with_capacity(n),
-            elements: Vec::with_capacity(n),
-            fract_x: Vec::with_capacity(n),
-            fract_y: Vec::with_capacity(n),
-            fract_z: Vec::with_capacity(n),
-            occupancies: Vec::with_capacity(n),
-            atomic_numbers: Vec::with_capacity(n),
+            labels,
+            elements,
+            fract_x,
+            fract_y,
+            fract_z,
+            occupancies,
+            atomic_numbers,
             cart_positions: Vec::new(),
             version: 0,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
-            intrinsic_sites: n,
+            intrinsic_sites: actual_n,
         };
 
-        for site in data.sites {
-            state.labels.push(site.label);
-            state.elements.push(site.element_symbol);
-            state.fract_x.push(site.fract_x);
-            state.fract_y.push(site.fract_y);
-            state.fract_z.push(site.fract_z);
-            state.occupancies.push(site.occ);
-            state.atomic_numbers.push(site.atomic_number);
-        }
         state.fractional_to_cartesian();
         state.detect_spacegroup();
         state
