@@ -11,6 +11,7 @@ import { RightSidebar } from './components/layout/RightSidebar';
 import { BottomStatusBar } from './components/layout/BottomStatusBar';
 import { LlmAssistant } from './components/layout/LlmAssistant';
 import { SettingsModal } from './components/layout/SettingsModal';
+import { PromptModal } from './components/layout/PromptModal';
 
 function App() {
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -35,8 +36,27 @@ function App() {
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [crystalState, setCrystalState] = useState<CrystalState | null>(null);
     const [selectedAtoms, setSelectedAtoms] = useState<number[]>([]);
+    const selectedAtomsRef = useRef<number[]>([]);
+
+    const updateSelection = (sel: number[] | ((prev: number[]) => number[])) => {
+        setSelectedAtoms(prev => {
+            const next = typeof sel === 'function' ? sel(prev) : sel;
+            selectedAtomsRef.current = next;
+            return next;
+        });
+    };
+
     const [bondCount, setBondCount] = useState<number | undefined>(undefined);
     const [activePhononMode, setActivePhononMode] = useState<PhononModeSummary | null>(null);
+
+    const [promptConfig, setPromptConfig] = useState<{
+        isOpen: boolean;
+        title: string;
+        description?: string;
+        placeholder?: string;
+        initialValue?: string;
+        onSubmit: (value: string) => void;
+    }>({ isOpen: false, title: "", onSubmit: () => { } });
 
     const fetch_crystal_state = async () => {
         try {
@@ -88,9 +108,9 @@ function App() {
                 safeInvoke('set_camera_view_axis', { axis: action.replace('view_axis_', '') })
                     .catch(console.error);
             } else if (action === 'delete_selected') {
-                if (selectedAtoms.length > 0) {
-                    safeInvoke('delete_atoms', { indices: selectedAtoms })
-                        .then(() => setSelectedAtoms([]))
+                if (selectedAtomsRef.current.length > 0) {
+                    safeInvoke('delete_atoms', { indices: selectedAtomsRef.current })
+                        .then(() => updateSelection([]))
                         .catch(console.error);
                 } else {
                     alert("No atom selected. Please select an atom first.");
@@ -100,31 +120,43 @@ function App() {
             } else if (action === 'open_slab_dialog') {
                 alert("Please use the Cutting Plane panel in the Right Sidebar.");
             } else if (action === 'open_add_atom_dialog') {
-                const input = window.prompt("Enter new element and fractional position (e.g., 'C 0.5 0.5 0.5'):");
-                if (input) {
-                    const parts = input.trim().split(/\s+/);
-                    if (parts.length >= 4) {
-                        const elem = parts[0];
-                        const x = parseFloat(parts[1]);
-                        const y = parseFloat(parts[2]);
-                        const z = parseFloat(parts[3]);
-                        safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] })
-                            .then(fetch_crystal_state)
-                            .catch(console.error);
-                    } else {
-                        alert("Invalid format. Use 'Symbol X Y Z'.");
+                setPromptConfig({
+                    isOpen: true,
+                    title: "Add Atom",
+                    description: "Enter new element and fractional position (e.g., 'C 0.5 0.5 0.5'):",
+                    placeholder: "C 0.5 0.5 0.5",
+                    onSubmit: (input) => {
+                        const parts = input.trim().split(/\s+/);
+                        if (parts.length >= 4) {
+                            const elem = parts[0];
+                            const x = parseFloat(parts[1]);
+                            const y = parseFloat(parts[2]);
+                            const z = parseFloat(parts[3]);
+                            safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] })
+                                .then(fetch_crystal_state)
+                                .catch(console.error);
+                        } else {
+                            alert("Invalid format. Use 'Symbol X Y Z'.");
+                        }
                     }
-                }
+                });
             } else if (action === 'open_replace_element_dialog') {
-                if (selectedAtoms.length > 0) {
-                    const newElem = window.prompt("Enter new element symbol (e.g., Fe, O, C):");
-                    if (newElem && newElem.trim().length > 0) {
-                        safeInvoke('substitute_atoms', {
-                            indices: selectedAtoms,
-                            newElementSymbol: newElem.trim(),
-                            newAtomicNumber: 0
-                        }).then(fetch_crystal_state).catch(console.error);
-                    }
+                if (selectedAtomsRef.current.length > 0) {
+                    setPromptConfig({
+                        isOpen: true,
+                        title: "Replace Atom(s)",
+                        description: "Enter new element symbol (e.g., Fe, O, C):",
+                        placeholder: "Element symbol",
+                        onSubmit: (newElem) => {
+                            if (newElem && newElem.trim().length > 0) {
+                                safeInvoke('substitute_atoms', {
+                                    indices: selectedAtomsRef.current,
+                                    newElementSymbol: newElem.trim(),
+                                    newAtomicNumber: 0
+                                }).then(fetch_crystal_state).catch(console.error);
+                            }
+                        }
+                    });
                 } else {
                     alert("No atom selected. Please select an atom first.");
                 }
@@ -249,7 +281,7 @@ function App() {
                         screenH: rect.height * dpr
                     }).then((idx) => {
                         console.log("pick_atom returned:", idx, "at", { x, y });
-                        setSelectedAtoms(prev => {
+                        updateSelection(prev => {
                             let newSel = [...prev];
                             if (idx !== null && idx !== undefined) {
                                 if (e.shiftKey) {
@@ -359,7 +391,7 @@ function App() {
                             crystalState={crystalState}
                             selectedAtoms={selectedAtoms}
                             onSelectionChange={(sel) => {
-                                setSelectedAtoms(sel);
+                                updateSelection(sel);
                                 safeInvoke('update_selection', { indices: sel }).catch(console.error);
                             }}
                         />
@@ -369,7 +401,7 @@ function App() {
                             crystalState={crystalState}
                             selectedAtoms={selectedAtoms}
                             onSelectionChange={(sel) => {
-                                setSelectedAtoms(sel);
+                                updateSelection(sel);
                                 safeInvoke('update_selection', { indices: sel }).catch(console.error);
                             }}
                             onBondCountUpdate={setBondCount}
@@ -403,10 +435,24 @@ function App() {
                     >
                         <button
                             onClick={() => {
-                                safeInvoke('add_atom', { elementSymbol: "C", atomicNumber: 6, fractPos: [0.5, 0.5, 0.5] })
-                                    .then(fetch_crystal_state)
-                                    .catch(console.error);
                                 setContextMenu(null);
+                                setPromptConfig({
+                                    isOpen: true,
+                                    title: "Add Atom",
+                                    description: "What element do you want to add?",
+                                    placeholder: "e.g., C, Fe, O",
+                                    onSubmit: (elem) => {
+                                        if (elem && elem.trim()) {
+                                            safeInvoke('add_atom', {
+                                                elementSymbol: elem.trim(),
+                                                atomicNumber: 0,
+                                                fractPos: [0.5, 0.5, 0.5]
+                                            })
+                                                .then(fetch_crystal_state)
+                                                .catch(console.error);
+                                        }
+                                    }
+                                });
                             }}
                             className="text-left px-3 py-2 text-sm hover:bg-emerald-50 dark:hover:bg-slate-700 rounded-md transition-colors text-slate-700 dark:text-slate-300 w-full flex items-center gap-2"
                         >
@@ -419,6 +465,12 @@ function App() {
                     </div>
                 )}
             </Shell>
+
+            <PromptModal
+                {...promptConfig}
+                onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
+            />
+
             <SettingsModal
                 isOpen={isSettingsOpen}
                 onClose={() => setIsSettingsOpen(false)}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { cn } from '../../utils/cn';
-import { safeInvoke } from '../../utils/tauri-mock';
+import { safeInvoke, safeListen } from '../../utils/tauri-mock';
 import { CrystalState, BondAnalysisResult, PhononModeSummary } from '../../types/crystal';
+import { PromptModal } from './PromptModal';
 
 export const RightSidebar: React.FC<{
     crystalState: CrystalState | null,
@@ -12,6 +13,14 @@ export const RightSidebar: React.FC<{
 }> = ({ crystalState, selectedAtoms = [], onSelectionChange, onBondCountUpdate, onActivePhononModeUpdate }) => {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
     const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
+    const [promptConfig, setPromptConfig] = useState<{
+        isOpen: boolean;
+        title: string;
+        description?: string;
+        placeholder?: string;
+        initialValue?: string;
+        onSubmit: (value: string) => void;
+    }>({ isOpen: false, title: "", onSubmit: () => { } });
 
     const [bondAnalysis, setBondAnalysis] = useState<BondAnalysisResult | null>(null);
     const [phononModes, setPhononModes] = useState<PhononModeSummary[] | null>(null);
@@ -51,14 +60,26 @@ export const RightSidebar: React.FC<{
 
     const handle_replace_atom = () => {
         if (selectedAtoms.length === 0) return;
-        const newElem = window.prompt("Enter new element symbol (e.g., Fe, O, C):");
-        if (newElem && newElem.trim().length > 0) {
-            safeInvoke('substitute_atoms', {
-                indices: selectedAtoms,
-                newElementSymbol: newElem.trim(),
-                newAtomicNumber: 0 // Backend can map symbol to number
-            }).catch(console.error);
-        }
+        setPromptConfig({
+            isOpen: true,
+            title: "Replace Atom(s)",
+            description: "Enter new element symbol (e.g., Fe, O, C):",
+            placeholder: "Element symbol",
+            onSubmit: (newElem) => {
+                if (newElem && newElem.trim().length > 0) {
+                    safeInvoke('substitute_atoms', {
+                        indices: selectedAtoms,
+                        newElementSymbol: newElem.trim(),
+                        newAtomicNumber: 0 // Backend can map symbol to number
+                    })
+                        .then(() => {
+                            // Immediately fetch crystal state after substitute
+                            safeInvoke('get_crystal_state').catch(console.error);
+                        })
+                        .catch(console.error);
+                }
+            }
+        });
     };
 
     const handle_refresh_bonds = () => {
@@ -73,18 +94,25 @@ export const RightSidebar: React.FC<{
     };
 
     const handle_load_phonon = () => {
-        const path = window.prompt("Enter path to .mold or .dat file:");
-        if (path) {
-            safeInvoke<PhononModeSummary[]>('load_phonon', { path })
-                .then(modes => {
-                    if (modes) {
-                        setPhononModes(modes);
-                        setActiveModeIdx(null);
-                        setIsAnimating(false);
-                    }
-                })
-                .catch(console.error);
-        }
+        setPromptConfig({
+            isOpen: true,
+            title: "Load Phonon Data",
+            description: "Enter path to .mold or .dat file:",
+            placeholder: "/path/to/file",
+            onSubmit: (path) => {
+                if (path && path.trim().length > 0) {
+                    safeInvoke<PhononModeSummary[]>('load_phonon', { path: path.trim() })
+                        .then(modes => {
+                            if (modes) {
+                                setPhononModes(modes);
+                                setActiveModeIdx(null);
+                                setIsAnimating(false);
+                            }
+                        })
+                        .catch(console.error);
+                }
+            }
+        });
     };
 
     const handle_select_mode = (idx: number) => {
@@ -288,6 +316,10 @@ export const RightSidebar: React.FC<{
                 </div>
             </Accordion>
 
+            <PromptModal
+                {...promptConfig}
+                onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
+            />
         </div>
     );
 };
