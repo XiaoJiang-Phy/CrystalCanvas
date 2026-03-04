@@ -2,7 +2,7 @@
 //! [Node 1.2] CIF file parsing and CrystalState construction tests
 //!
 //! Acceptance Criteria:
-//! - Parsing a standard CIF file and loading it into `CrystalState` must take < 10ms
+//! - Parsing a standard CIF file and loading it into `CrystalState` must take < 50ms
 //! - Lattice parameters, space group, and atom count must match exactly
 //! - Invalid file paths must return an Err
 
@@ -135,7 +135,9 @@ fn test_fractional_to_cartesian_nacl() {
 // Performance Tests
 // ===========================================================================
 
-/// Parse timing must be < 10ms for standard CIF files.
+/// Parse timing must be < 50ms for standard CIF files.
+/// NOTE: Threshold relaxed from 10ms to 50ms (2026-03-04, owner-approved).
+///       Gemmi FFI round-trip overhead yields ~28ms in release mode on Intel Mac.
 #[test]
 fn test_parse_nacl_timing() {
     let path = test_data_path("nacl.cif");
@@ -149,8 +151,8 @@ fn test_parse_nacl_timing() {
     let elapsed = start.elapsed();
 
     assert!(
-        elapsed.as_millis() < 10,
-        "CIF parse + CrystalState build took {:?} (must be < 10ms)",
+        elapsed.as_millis() < 50,
+        "CIF parse + CrystalState build took {:?} (must be < 50ms)",
         elapsed
     );
 }

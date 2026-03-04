@@ -164,7 +164,6 @@ impl CrystalState {
             state.occupancies.push(site.occ);
             state.atomic_numbers.push(site.atomic_number);
         }
-        state.apply_boundary_mirroring();
         state.fractional_to_cartesian();
         state.detect_spacegroup();
         state

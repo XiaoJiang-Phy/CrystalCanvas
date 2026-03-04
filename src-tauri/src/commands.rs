@@ -55,17 +55,57 @@ pub fn set_camera_projection(
 }
 
 /// Sets visibility flags for unit cell box and bonds.
+/// The render loop in `renderer.render()` checks these booleans each frame,
+/// so toggling them is sufficient — no geometry rebuild needed.
 #[tauri::command]
 pub fn set_render_flags(
     show_cell: bool,
     show_bonds: bool,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
+    log::info!("set_render_flags: cell={}, bonds={}", show_cell, show_bonds);
     let mut renderer = renderer_state
         .lock()
         .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+    
     renderer.show_cell = show_cell;
     renderer.show_bonds = show_bonds;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_lattice_params(
+    a: f64, b: f64, c: f64,
+    alpha: f64, beta: f64, gamma: f64,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<(), String> {
+    log::info!("update_lattice_params: a={}, b={}, c={}, alpha={}, beta={}, gamma={}", a, b, c, alpha, beta, gamma);
+    
+    let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+    cs.cell_a = a;
+    cs.cell_b = b;
+    cs.cell_c = c;
+    cs.cell_alpha = alpha;
+    cs.cell_beta = beta;
+    cs.cell_gamma = gamma;
+    
+    cs.fractional_to_cartesian();
+    cs.detect_spacegroup();
+    
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        &settings,
+    );
+    
+    let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
+    renderer.update_atoms(&instances);
+    renderer.update_lines(&cs, &settings);
+    
     Ok(())
 }
 
@@ -974,35 +1014,32 @@ pub fn update_settings(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
-    *settings.lock().map_err(|e| e.to_string())? = new_settings.clone();
+    log::info!("update_settings called");
     
-    // Save to disk
+    // 1. Update global settings state
+    {
+        let mut s = settings.lock().map_err(|e| e.to_string())?;
+        *s = new_settings.clone();
+    }
+    
+    // 2. Save to disk
     let _ = new_settings.save(&app).map_err(|e| log::warn!("Failed to save settings: {}", e));
 
-    // Rebuild instances using new settings
-    let renderer_lock = renderer_state.lock();
-    let cs_lock = crystal_state.lock();
+    // 3. Rebuild renderer data
+    let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock: {}", e))?;
+    let cs = crystal_state.lock().map_err(|e| format!("State lock: {}", e))?;
 
-    if let (Ok(mut renderer), Ok(cs)) = (renderer_lock, cs_lock) {
-        let instances = crate::renderer::instance::build_instance_data(
-            &cs.cart_positions,
-            &cs.atomic_numbers,
-            &cs.elements,
-            &new_settings,
-        );
-        renderer.update_atoms(&instances);
+    // Update atoms (affects scale and visibility)
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        &new_settings,
+    );
+    renderer.update_atoms(&instances);
 
-        let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &new_settings);
-        renderer.update_bonds(&bond_instances);
-
-        // Re-apply clear color
-        renderer.clear_color = wgpu::Color {
-            r: 15.0 / 255.0, // Hardcoded for now, or could use settings
-            g: 23.0 / 255.0,
-            b: 42.0 / 255.0,
-            a: 1.0,
-        };
-    }
+    // Update lines (affects cell box and bonds)
+    renderer.update_lines(&cs, &new_settings);
 
     Ok(())
 }

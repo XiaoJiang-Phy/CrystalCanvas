@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
     // ── CrystalCanvas (App) Menu ─────────────────────────────────────────
     let about = PredefinedMenuItem::about(app, None::<&str>, None)?;
@@ -155,15 +155,16 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let sep_v2 = PredefinedMenuItem::separator(app)?;
     let v_reset = MenuItem::with_id(app, "menu_reset_view", "Reset View", true, None::<&str>)?;
     let sep_v3 = PredefinedMenuItem::separator(app)?;
-    let v_labels = MenuItem::with_id(app, "menu_toggle_labels", "Show Labels", true, None::<&str>)?;
-    let v_cell = MenuItem::with_id(
+    let v_labels = CheckMenuItem::with_id(app, "menu_toggle_labels", "Show Labels", true, false, None::<&str>)?;
+    let v_cell = CheckMenuItem::with_id(
         app,
         "menu_toggle_cell",
         "Show Unit Cell",
         true,
+        true,
         None::<&str>,
     )?;
-    let v_bonds = MenuItem::with_id(app, "menu_toggle_bonds", "Show Bonds", false, None::<&str>)?; // placeholder
+    let v_bonds = CheckMenuItem::with_id(app, "menu_toggle_bonds", "Show Bonds", true, true, None::<&str>)?;
     let sep_v4 = PredefinedMenuItem::separator(app)?;
     let v_dark = MenuItem::with_id(
         app,
@@ -624,7 +625,8 @@ fn main() {
             commands::get_bond_analysis,
             commands::load_phonon,
             commands::set_phonon_mode,
-            commands::set_phonon_phase
+            commands::set_phonon_phase,
+            commands::update_lattice_params
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

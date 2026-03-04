@@ -23,6 +23,7 @@ function App() {
     const [showBonds, setShowBonds] = useState(true);
     const [showLabels, setShowLabels] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const renderFlagsRef = useRef({ cell: true, bonds: true, labels: false });
     const [atomScale, setAtomScale] = useState(1.0);
     const [interactionMode, setInteractionMode] = useState<'select' | 'move' | 'rotate' | 'measure'>('rotate');
 
@@ -37,7 +38,7 @@ function App() {
     const [bondCount, setBondCount] = useState<number | undefined>(undefined);
     const [activePhononMode, setActivePhononMode] = useState<PhononModeSummary | null>(null);
 
-    const fetchCrystalState = async () => {
+    const fetch_crystal_state = async () => {
         try {
             const state = await safeInvoke<CrystalState>('get_crystal_state');
             if (state) setCrystalState(state);
@@ -47,8 +48,8 @@ function App() {
     };
 
     useEffect(() => {
-        fetchCrystalState();
-        const interval = setInterval(fetchCrystalState, 1000);
+        fetch_crystal_state();
+        const interval = setInterval(fetch_crystal_state, 1000);
         return () => clearInterval(interval);
     }, []);
 
@@ -65,7 +66,7 @@ function App() {
             const path = event.payload.paths[0];
             if (path && path.endsWith('.cif')) {
                 safeInvoke('load_cif_file', { path })
-                    .then(fetchCrystalState)
+                    .then(fetch_crystal_state)
                     .catch(console.error);
             }
         }).then(f => unlistenDrop = f).catch(console.warn);
@@ -107,7 +108,7 @@ function App() {
                         const x = parseFloat(parts[1]);
                         const y = parseFloat(parts[2]);
                         const z = parseFloat(parts[3]);
-                        safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] }).catch(console.error);
+                        safeInvoke('add_atom', { element_symbol: elem, atomic_number: 0, fract_pos: [x, y, z] }).catch(console.error);
                     } else {
                         alert("Invalid format. Use 'Symbol X Y Z'.");
                     }
@@ -118,8 +119,8 @@ function App() {
                     if (newElem && newElem.trim().length > 0) {
                         safeInvoke('substitute_atoms', {
                             indices: [selectedAtomIdx],
-                            newElementSymbol: newElem.trim(),
-                            newAtomicNumber: 0
+                            new_element_symbol: newElem.trim(),
+                            new_atomic_number: 0
                         }).catch(console.error);
                     }
                 } else {
@@ -130,9 +131,23 @@ function App() {
                 alert(`Space Group Analysis\\n\\nHermann-Mauguin: ${sg}`);
             } else if (action.startsWith('toggle_')) {
                 const flag = action.replace('toggle_', '');
-                if (flag === 'cell') { toggleCell(); }
-                else if (flag === 'bonds') { toggleBonds(); }
-                else if (flag === 'labels') { toggleLabels(); }
+                if (flag === 'cell') {
+                    renderFlagsRef.current.cell = !renderFlagsRef.current.cell;
+                    setShowCell(renderFlagsRef.current.cell);
+                }
+                else if (flag === 'bonds') {
+                    renderFlagsRef.current.bonds = !renderFlagsRef.current.bonds;
+                    setShowBonds(renderFlagsRef.current.bonds);
+                }
+                else if (flag === 'labels') {
+                    renderFlagsRef.current.labels = !renderFlagsRef.current.labels;
+                    setShowLabels(renderFlagsRef.current.labels);
+                }
+
+                safeInvoke('set_render_flags', {
+                    show_cell: renderFlagsRef.current.cell,
+                    show_bonds: renderFlagsRef.current.bonds
+                }).catch(console.error);
             } else if (action === 'show_about') {
                 alert("CrystalCanvas\\nVersion 1.0\\nPowered by Tauri, React, wgpu, and C++.\\nLicense: MIT OR Apache-2.0");
             }
@@ -253,12 +268,12 @@ function App() {
         };
     }, [interactionMode]);
 
-    const handleContextMenu = (e: React.MouseEvent) => {
+    const handle_context_menu = (e: React.MouseEvent) => {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY });
     };
 
-    const handlePointerDown = (e: React.PointerEvent) => {
+    const handle_pointer_down = (e: React.PointerEvent) => {
         // Only handle primary (0), middle (1), or secondary (2) buttons
         if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
 
@@ -278,7 +293,7 @@ function App() {
         }
     };
 
-    const handlePointerMove = (e: React.PointerEvent) => {
+    const handle_pointer_move = (e: React.PointerEvent) => {
         if (!isDraggingCamera.current) return;
 
         const dx = e.clientX - lastMousePos.current.x;
@@ -295,32 +310,35 @@ function App() {
         }
     };
 
-    const toggleCell = () => {
-        const next = !showCell;
+    const toggle_cell = () => {
+        const next = !renderFlagsRef.current.cell;
+        renderFlagsRef.current.cell = next;
         setShowCell(next);
-        safeInvoke('set_render_flags', { show_cell: next, show_bonds: showBonds }).catch(console.error);
+        safeInvoke('set_render_flags', { show_cell: next, show_bonds: renderFlagsRef.current.bonds }).catch(console.error);
     };
 
-    const handleSetPerspective = (perspective: boolean) => {
+    const handle_set_perspective = (perspective: boolean) => {
         setIsPerspective(perspective);
         safeInvoke('set_camera_projection', { is_perspective: perspective }).catch(console.error);
     };
 
-    const toggleBonds = () => {
-        const next = !showBonds;
+    const toggle_bonds = () => {
+        const next = !renderFlagsRef.current.bonds;
+        renderFlagsRef.current.bonds = next;
         setShowBonds(next);
-        safeInvoke('set_render_flags', { show_cell: showCell, show_bonds: next }).catch(console.error);
+        safeInvoke('set_render_flags', { show_cell: renderFlagsRef.current.cell, show_bonds: next }).catch(console.error);
     };
 
-    const toggleLabels = () => {
-        const next = !showLabels;
+    const toggle_labels = () => {
+        const next = !renderFlagsRef.current.labels;
+        renderFlagsRef.current.labels = next;
         setShowLabels(next);
         // Implement when text rendering is ready
     };
 
 
 
-    const handlePointerUp = (e: React.PointerEvent) => {
+    const handle_pointer_up = (e: React.PointerEvent) => {
         if (isDraggingCamera.current) {
             isDraggingCamera.current = false;
             (e.target as HTMLElement).releasePointerCapture(e.pointerId);
@@ -348,7 +366,7 @@ function App() {
         }
     };
 
-    const handleWheel = (e: React.WheelEvent) => {
+    const handle_wheel = (e: React.WheelEvent) => {
         // Positive delta Y means scroll down -> zoom out. Negative means zoom in.
         safeInvoke('zoom_camera', { delta: Math.sign(e.deltaY) }).catch(console.error);
     };
@@ -365,7 +383,7 @@ function App() {
                     showAssistant={showAssistant}
                     onToggleAssistant={() => setShowAssistant(prev => !prev)}
                     isPerspective={isPerspective}
-                    onSetPerspective={handleSetPerspective}
+                    onSetPerspective={handle_set_perspective}
                     showLabels={showLabels}
                     onToggleLabels={() => {
                         const next = !showLabels;

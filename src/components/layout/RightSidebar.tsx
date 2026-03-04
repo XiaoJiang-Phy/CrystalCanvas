@@ -19,7 +19,7 @@ export const RightSidebar: React.FC<{
     const [isAnimating, setIsAnimating] = useState(false);
     const [amplitude, setAmplitude] = useState(1.0);
 
-    const handleSupercell = () => {
+    const handle_supercell = () => {
         const matrix = [
             [sc.nx, 0, 0],
             [0, sc.ny, 0],
@@ -28,7 +28,7 @@ export const RightSidebar: React.FC<{
         safeInvoke('apply_supercell', { matrix }).catch(console.error);
     };
 
-    const handleSlabCut = () => {
+    const handle_slab_cut = () => {
         if (slab.h === 0 && slab.k === 0 && slab.l === 0) {
             alert("Invalid Miller indices: returning to default (1, 1, 1).");
             setSlab(s => ({ ...s, h: 1, k: 1, l: 1 }));
@@ -41,14 +41,14 @@ export const RightSidebar: React.FC<{
         }).then(() => console.log("Slab applied")).catch(console.error);
     };
 
-    const handleDeleteAtom = () => {
+    const handle_delete_atom = () => {
         if (selectedAtomIdx === null) return;
         safeInvoke('delete_atoms', { indices: [selectedAtomIdx] }).then(() => {
             if (onSelectionChange) onSelectionChange(null);
         }).catch(console.error);
     };
 
-    const handleReplaceAtom = () => {
+    const handle_replace_atom = () => {
         if (selectedAtomIdx === null) return;
         const newElem = window.prompt("Enter new element symbol (e.g., Fe, O, C):");
         if (newElem && newElem.trim().length > 0) {
@@ -60,7 +60,7 @@ export const RightSidebar: React.FC<{
         }
     };
 
-    const handleRefeshBonds = () => {
+    const handle_refresh_bonds = () => {
         safeInvoke<BondAnalysisResult>('get_bond_analysis', { threshold_factor: 1.2 })
             .then(res => {
                 if (res) {
@@ -71,7 +71,7 @@ export const RightSidebar: React.FC<{
             .catch(console.error);
     };
 
-    const handleLoadPhonon = () => {
+    const handle_load_phonon = () => {
         const path = window.prompt("Enter path to .mold or .dat file:");
         if (path) {
             safeInvoke<PhononModeSummary[]>('load_phonon', { path })
@@ -86,7 +86,7 @@ export const RightSidebar: React.FC<{
         }
     };
 
-    const handleSelectMode = (idx: number) => {
+    const handle_select_mode = (idx: number) => {
         setActiveModeIdx(idx);
         if (phononModes && onActivePhononModeUpdate) {
             const mode = phononModes.find(m => m.index === idx);
@@ -116,7 +116,7 @@ export const RightSidebar: React.FC<{
             {/* Bond Analysis Accordion */}
             <Accordion title="Structural Analysis" defaultOpen>
                 <div className="space-y-3">
-                    <ActionButton label="Calculate Bonds & Polyhedra" onClick={handleRefeshBonds} />
+                    <ActionButton label="Calculate Bonds & Polyhedra" onClick={handle_refresh_bonds} />
 
                     {bondAnalysis && (
                         <div className="text-[11px] text-slate-600 dark:text-slate-300 space-y-2">
@@ -159,7 +159,7 @@ export const RightSidebar: React.FC<{
             {/* Phonon Animation Accordion */}
             <Accordion title="Phonon Animation" defaultOpen>
                 <div className="space-y-3">
-                    <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handleLoadPhonon} />
+                    <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handle_load_phonon} />
 
                     {phononModes && (
                         <>
@@ -168,7 +168,7 @@ export const RightSidebar: React.FC<{
                                 <select
                                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
                                     value={activeModeIdx ?? ""}
-                                    onChange={(e) => handleSelectMode(parseInt(e.target.value))}
+                                    onChange={(e) => handle_select_mode(parseInt(e.target.value))}
                                 >
                                     <option value="" disabled>-- Select Mode --</option>
                                     {phononModes.map((m) => (
@@ -215,7 +215,7 @@ export const RightSidebar: React.FC<{
                         <NumberInput label="Ny" value={sc.ny} onChange={v => setSc(s => ({ ...s, ny: v }))} />
                         <NumberInput label="Nz" value={sc.nz} onChange={v => setSc(s => ({ ...s, nz: v }))} />
                     </div>
-                    <button onClick={handleSupercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98] pointer-events-auto">
+                    <button onClick={handle_supercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98] pointer-events-auto">
                         Execute Supercell
                     </button>
                 </div>
@@ -245,7 +245,7 @@ export const RightSidebar: React.FC<{
                     </div>
 
                     <div className="flex gap-2">
-                        <ActionButton label="Cut" onClick={handleSlabCut} />
+                        <ActionButton label="Cut" onClick={handle_slab_cut} />
                         <ActionButton label="Reset" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                     </div>
                 </div>
@@ -270,8 +270,8 @@ export const RightSidebar: React.FC<{
                     <div className="flex flex-col gap-1.5">
                         {selectedAtomIdx !== null ? (
                             <>
-                                <ActionButton label="Replace Atom" onClick={handleReplaceAtom} />
-                                <button onClick={handleDeleteAtom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98] pointer-events-auto">
+                                <ActionButton label="Replace Atom" onClick={handle_replace_atom} />
+                                <button onClick={handle_delete_atom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98] pointer-events-auto">
                                     Delete Atom
                                 </button>
                                 <DisabledButton label="Add Sub-Atom" />

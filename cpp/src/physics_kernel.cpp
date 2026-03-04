@@ -15,15 +15,19 @@ extern "C" {
 int get_spacegroup(const double *lattice, const double *positions,
                    const int *types, size_t n_atoms, double symprec) {
   try {
-    // Spglib modifies the dataset and expects positions to be mutable if it
-    // needs to standardize. For spg_get_dataset, we just need to pass the raw
-    // arrays. However, spgat_get_dataset requires double lattice[3][3], double
-    // position[][3], int types[].
-
-    // Convert flat 1D lattice (assuming row-major 3x3) to 2D array for spglib
-    double spg_lattice[3][3] = {{lattice[0], lattice[1], lattice[2]},
-                                {lattice[3], lattice[4], lattice[5]},
-                                {lattice[6], lattice[7], lattice[8]}};
+    // IMPORTANT: The input `lattice` is in COLUMN-MAJOR order from Rust/Eigen:
+    //   [a_x, a_y, a_z, b_x, b_y, b_z, c_x, c_y, c_z]
+    //   i.e. columns = lattice vectors (a, b, c)
+    //
+    // Spglib expects lattice[3][3] in ROW-MAJOR where ROWS = lattice vectors:
+    //   lattice[0] = a-vector, lattice[1] = b-vector, lattice[2] = c-vector
+    //
+    // Therefore we must TRANSPOSE the input.
+    double spg_lattice[3][3] = {
+        {lattice[0], lattice[3], lattice[6]},  // a-vector (col 0 -> row 0)
+        {lattice[1], lattice[4], lattice[7]},  // b-vector (col 1 -> row 1)
+        {lattice[2], lattice[5], lattice[8]}   // c-vector (col 2 -> row 2)
+    };
 
     // Convert positions flat array to 2D array
     std::vector<double> pos_vec(positions, positions + n_atoms * 3);
@@ -42,7 +46,11 @@ int get_spacegroup(const double *lattice, const double *positions,
     }
 
     int spacegroup_number = dataset->spacegroup_number;
+    std::string hm_symbol(dataset->international_symbol);
     spg_free_dataset(dataset);
+
+    fprintf(stderr, "[Spglib] Detected spacegroup #%d (%s)\n",
+            spacegroup_number, hm_symbol.c_str());
 
     return spacegroup_number;
 

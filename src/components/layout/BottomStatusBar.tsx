@@ -9,7 +9,7 @@ export const BottomStatusBar: React.FC<{
     bondCount?: number,
     activePhononMode?: PhononModeSummary | null
 }> = ({ crystalState, bondCount, activePhononMode }) => {
-    const numAtoms = crystalState?.labels.length || 0;
+    const numAtoms = crystalState?.intrinsic_sites || 0;
     const sg = crystalState?.spacegroup_hm || 'N/A';
     const vol = crystalState ?
         (crystalState.cell_a * crystalState.cell_b * crystalState.cell_c *

@@ -18,7 +18,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
     selectedAtomIdx,
     onSelectionChange
 }) => {
-    const numAtoms = crystalState ? crystalState.labels.length : 0;
+    const numAtoms = crystalState ? crystalState.intrinsic_sites : 0;
     const vol = crystalState ?
         (crystalState.cell_a * crystalState.cell_b * crystalState.cell_c *
             Math.sqrt(1 - Math.cos(crystalState.cell_alpha * Math.PI / 180) ** 2
@@ -33,32 +33,32 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                     <InfoRow label="Atoms:" value={numAtoms.toString()} />
                     <InfoRow label="Space Group:" value={crystalState?.spacegroup_hm || "N/A"} />
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2">
-                        <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a.toFixed(2) || "0.00"} unit="Å" />
-                        <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha.toFixed(1) || "0.0"} unit="°" />
-                        <UnitCellInput label="b" paramKey="b" value={crystalState?.cell_b.toFixed(2) || "0.00"} unit="Å" />
-                        <UnitCellInput label="β" paramKey="beta" value={crystalState?.cell_beta.toFixed(1) || "0.0"} unit="°" />
-                        <UnitCellInput label="c" paramKey="c" value={crystalState?.cell_c.toFixed(2) || "0.00"} unit="Å" />
-                        <UnitCellInput label="γ" paramKey="gamma" value={crystalState?.cell_gamma.toFixed(1) || "0.0"} unit="°" />
+                        <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a.toFixed(2) || "0.00"} unit="Å" crystalState={crystalState} />
+                        <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha.toFixed(1) || "0.0"} unit="°" crystalState={crystalState} />
+                        <UnitCellInput label="b" paramKey="b" value={crystalState?.cell_b.toFixed(2) || "0.00"} unit="Å" crystalState={crystalState} />
+                        <UnitCellInput label="β" paramKey="beta" value={crystalState?.cell_beta.toFixed(1) || "0.0"} unit="°" crystalState={crystalState} />
+                        <UnitCellInput label="c" paramKey="c" value={crystalState?.cell_c.toFixed(2) || "0.00"} unit="Å" crystalState={crystalState} />
+                        <UnitCellInput label="γ" paramKey="gamma" value={crystalState?.cell_gamma.toFixed(1) || "0.0"} unit="°" crystalState={crystalState} />
                     </div>
                     <InfoRow label="Volume:" value={`${vol} Å³`} className="pt-1.5 font-medium" />
                 </div>
             </Panel>
 
             <Panel title="Atom Management">
-                <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 text-[10px] max-h-[200px] overflow-x-auto overflow-y-auto custom-scrollbar">
+                <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 text-[10px] max-h-[220px] overflow-x-auto overflow-y-auto custom-scrollbar pr-1">
                     <table className="w-full text-left">
                         <thead className="bg-slate-100 dark:bg-slate-800/80 font-medium text-slate-500 dark:text-slate-400">
                             <tr>
-                                <th className="px-2 py-1.5">ID</th>
-                                <th className="px-2 py-1.5">El</th>
-                                <th className="px-2 py-1.5">x</th>
-                                <th className="px-2 py-1.5">y</th>
-                                <th className="px-2 py-1.5">z</th>
+                                <th className="px-2 py-1.5 text-center">ID</th>
+                                <th className="px-2 py-1.5 text-center">El</th>
+                                <th className="px-2 py-1.5 text-right">x</th>
+                                <th className="px-2 py-1.5 text-right">y</th>
+                                <th className="px-2 py-1.5 text-right">z</th>
                                 <th className="px-2 py-1.5 text-center">Color</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                            {crystalState && crystalState.labels.map((_label, i) => (
+                            {crystalState && crystalState.labels.slice(0, crystalState.intrinsic_sites).map((_label, i) => (
                                 <AtomRow
                                     key={i}
                                     id={i}
@@ -104,14 +104,31 @@ const InfoRow = ({ label, value, className }: { label: string; value: string; cl
     </div>
 );
 
-const UnitCellInput = ({ label, paramKey, value, unit }: { label: string; paramKey: string; value: string; unit: string }) => {
+const UnitCellInput = ({ label, paramKey, value, unit, crystalState }: { label: string; paramKey: string; value: string; unit: string; crystalState: CrystalState | null }) => {
     const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        if (!crystalState) return;
         const val = parseFloat(e.target.value);
-        if (!isNaN(val)) {
-            // Note: In a complete implementation, we'd gather all 6 parameters and call update_lattice_params.
-            // For now, emit a log or call a partial safeInvoke.
-            console.log(`Update lattice ${paramKey} -> ${val}`);
-        }
+        if (isNaN(val)) return;
+
+        // Gather current values
+        const params = {
+            a: crystalState.cell_a,
+            b: crystalState.cell_b,
+            c: crystalState.cell_c,
+            alpha: crystalState.cell_alpha,
+            beta: crystalState.cell_beta,
+            gamma: crystalState.cell_gamma,
+        };
+
+        // Override the one that changed
+        if (paramKey === 'a') params.a = val;
+        else if (paramKey === 'b') params.b = val;
+        else if (paramKey === 'c') params.c = val;
+        else if (paramKey === 'alpha') params.alpha = val;
+        else if (paramKey === 'beta') params.beta = val;
+        else if (paramKey === 'gamma') params.gamma = val;
+
+        safeInvoke('update_lattice_params', params).catch(console.error);
     };
     return (
         <div className="flex items-center gap-1.5">
@@ -119,7 +136,7 @@ const UnitCellInput = ({ label, paramKey, value, unit }: { label: string; paramK
             <div className="flex-1 flex items-center bg-slate-100 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
                 <input
                     type="text"
-                    key={value} // Force re-render on value change from outside
+                    key={value}
                     defaultValue={value}
                     onBlur={handleBlur}
                     className="w-full bg-transparent outline-none text-slate-700 dark:text-slate-300 min-w-0 text-xs"
@@ -142,11 +159,11 @@ const AtomRow = ({ id, element, x, y, z, isSelected, onClick }: { id: number; el
                     : "hover:bg-slate-100 dark:hover:bg-slate-800/50"
             )}
         >
-            <td className="px-2 py-1.5 text-slate-500">{id + 1}</td>
-            <td className="px-2 py-1.5 font-medium">{element}</td>
-            <td className="px-2 py-1.5 tabular-nums">{x}</td>
-            <td className="px-2 py-1.5 tabular-nums">{y}</td>
-            <td className="px-2 py-1.5 tabular-nums">{z}</td>
+            <td className="px-2 py-1.5 text-slate-500 text-center font-mono">{id + 1}</td>
+            <td className="px-2 py-1.5 font-medium text-center">{element}</td>
+            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{x}</td>
+            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{y}</td>
+            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{z}</td>
             <td className="px-2 py-1.5">
                 <div
                     className="w-3 h-3 rounded-full shadow-sm mx-auto border border-black/10 dark:border-white/10"

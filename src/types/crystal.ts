@@ -35,6 +35,7 @@ export interface CrystalState {
 
     // State metadata
     version: number; // Incremented on every modification
+    intrinsic_sites: number; // True atom count before boundary mirroring
 }
 
 /**

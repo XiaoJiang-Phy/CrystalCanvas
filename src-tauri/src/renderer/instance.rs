@@ -227,12 +227,19 @@ pub fn covalent_radius(atomic_number: u8) -> f32 {
     COVALENT_RADII[idx]
 }
 
-/// Visual radius for rendering atoms. Uses a compressed non-linear scaling
-/// to ensure both small and large elements are visible (VESTA-like aesthetic).
 pub fn element_radius(atomic_number: u8, scale_factor: f32) -> f32 {
     let r = covalent_radius(atomic_number);
     // Map covalent radii [0.6, 2.0] into a narrower visual range [0.3, 0.45]
     (0.25 + r * 0.1) * scale_factor
+}
+
+/// Helper to identify typical transition metals and post-transition metals.
+/// Used to prevent drawing artificial metal-metal bonds (e.g. Fe-Fe) in metallic/ionic grids.
+pub fn is_metal(z: u8) -> bool {
+    // Basic heuristic: Transition metals, Lanthanides, Actinides, and some post-transition.
+    (z >= 3 && z <= 4) || (z >= 11 && z <= 13) ||
+    (z >= 19 && z <= 31) || (z >= 37 && z <= 50) ||
+    (z >= 55 && z <= 83) || (z >= 87 && z <= 103)
 }
 
 /// Build an array of `AtomInstance` from a `CrystalState`.
@@ -405,7 +412,17 @@ pub fn build_bond_instances(
 
             let max_bond_len = r1 + r2 + settings.bond_tolerance;
 
+            // Only draw visual bonds if they are actually physically proximal in the standard cell.
+            // This prevents ultra-long MIC wrap-around lines taking up the entire screen.
             if dist > 0.5 && dist < max_bond_len {
+                // Heuristic to prevent arbitrary metal-metal bonds in ionic/ceramic views:
+                // If both are typical transition metals, they shouldn't form a bond.
+                let is_metal_i = crate::renderer::instance::is_metal(cs.atomic_numbers[i]);
+                let is_metal_j = crate::renderer::instance::is_metal(cs.atomic_numbers[j]);
+                if is_metal_i && is_metal_j {
+                    continue; // Skip metal-metal bonds
+                }
+
                 instances.push(BondInstance {
                     start: p1.into(),
                     radius: settings.bond_radius,

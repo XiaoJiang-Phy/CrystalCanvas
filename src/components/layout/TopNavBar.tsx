@@ -32,12 +32,14 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
     const { theme, toggleTheme } = useTheme();
 
     return (
-        <div className={cn(
-            "w-full h-12 flex items-center justify-between px-4 shrink-0",
-            "bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl",
-            "border-b border-slate-200/80 dark:border-slate-700/50",
-            "shadow-sm z-50 pointer-events-auto transition-colors duration-300"
-        )}>
+        <div
+            data-tauri-drag-region
+            className={cn(
+                "w-full h-12 flex items-center justify-between px-4 pl-[80px] shrink-0",
+                "bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl",
+                "border-b border-slate-200/80 dark:border-slate-700/50",
+                "shadow-sm z-50 pointer-events-auto transition-colors duration-300"
+            )}>
 
             {/* Left: Brand + Basic Tools */}
             <div className="flex items-center gap-4">
@@ -80,12 +82,12 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     Ortho
                 </button>
                 <div className="w-2" />
-                <ViewButton label="[a]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a' })} />
-                <ViewButton label="[b]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b' })} />
-                <ViewButton label="[c]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c' })} />
-                <ViewButton label="[a*]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a_star' })} />
-                <ViewButton label="[b*]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b_star' })} />
-                <ViewButton label="[c*]" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c_star' })} />
+                <ViewButton label="a" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a' })} />
+                <ViewButton label="b" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b' })} />
+                <ViewButton label="c" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c' })} />
+                <ViewButton label="a*" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a_star' })} />
+                <ViewButton label="b*" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b_star' })} />
+                <ViewButton label="c*" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c_star' })} />
             </div>
 
             {/* Right: Toggles & Actions */}
@@ -152,7 +154,7 @@ const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.Re
 );
 
 const ViewButton = ({ label, onClick }: { label: string, onClick?: () => void }) => (
-    <button onClick={onClick} className="px-1.5 py-1 text-xs font-medium rounded-md hover:bg-slate-200/70 dark:hover:bg-slate-800/70 transition-colors border border-transparent hover:border-slate-300 dark:hover:border-slate-600">
+    <button onClick={onClick} className="w-7 h-6 flex items-center justify-center text-xs font-mono font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors shadow-sm active:scale-[0.96] ml-0.5">
         {label}
     </button>
 );
