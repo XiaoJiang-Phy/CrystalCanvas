@@ -81,6 +81,8 @@ pub struct CrystalState {
     pub phonon_phase: f64,
     /// Number of atoms before boundary mirroring (visual duplicates)
     pub intrinsic_sites: usize,
+    #[serde(skip)]
+    pub selected_atoms: Vec<usize>,
 }
 
 impl Default for CrystalState {
@@ -109,6 +111,7 @@ impl Default for CrystalState {
             active_phonon_mode: None,
             phonon_phase: 0.0,
             intrinsic_sites: 0,
+            selected_atoms: Vec::new(),
         }
     }
 }
@@ -202,6 +205,7 @@ impl CrystalState {
             active_phonon_mode: None,
             phonon_phase: 0.0,
             intrinsic_sites: actual_n,
+            selected_atoms: Vec::new(),
         };
 
         state.fractional_to_cartesian();
@@ -553,6 +557,7 @@ impl CrystalState {
             active_phonon_mode: None,
             phonon_phase: 0.0,
             intrinsic_sites: n_new_usize,
+            selected_atoms: Vec::new(),
         };
 
         // Create a fast lookup for original atoms by their atomic_number to get label/element
@@ -693,6 +698,7 @@ impl CrystalState {
             active_phonon_mode: None,
             phonon_phase: 0.0,
             intrinsic_sites: n_new_usize,
+            selected_atoms: Vec::new(),
         };
 
         for i in 0..n_new_usize {

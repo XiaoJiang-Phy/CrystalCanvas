@@ -339,7 +339,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 &state.cart_positions,
                                 &state.atomic_numbers,
                                 &state.elements,
-                                &settings,
+                                &settings, &state.selected_atoms
                             );
                             // Block until renderer lock is available
                             if let Some(r) = handle
@@ -602,6 +602,7 @@ fn main() {
             commands::load_cif_file,
             commands::add_atom,
             commands::delete_atoms,
+            commands::update_selection,
             commands::substitute_atoms,
             commands::preview_slab,
             commands::preview_supercell,

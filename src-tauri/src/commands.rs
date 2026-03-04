@@ -99,7 +99,7 @@ pub fn update_lattice_params(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings,
+        &settings, &cs.selected_atoms
     );
     
     let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
@@ -141,7 +141,7 @@ pub fn load_cif_file(
         &state.cart_positions,
         &state.atomic_numbers,
         &state.elements,
-        &settings,
+        &settings, &state.selected_atoms
     );
     log::info!("[load_cif_file] Built {} atom instances", instances.len());
 
@@ -192,7 +192,7 @@ pub fn add_atom(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings,
+        &settings, &cs.selected_atoms
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -221,7 +221,7 @@ pub fn delete_atoms(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings,
+        &settings, &cs.selected_atoms
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -252,7 +252,7 @@ pub fn substitute_atoms(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings,
+        &settings, &cs.selected_atoms
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -340,7 +340,7 @@ pub fn apply_supercell(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings,
+        &settings, &cs.selected_atoms
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -402,7 +402,7 @@ pub fn apply_slab(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings,
+        &settings, &cs.selected_atoms
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -673,6 +673,7 @@ pub fn set_phonon_phase(
                 &cs.atomic_numbers,
                 &cs.elements,
                 &settings,
+                &cs.selected_atoms,
             );
             if let Ok(mut renderer) = renderer_state.lock() {
                 renderer.update_atoms(&instances);
@@ -821,20 +822,13 @@ pub fn llm_execute_command(
     // Note: To properly support Undo, we would snapshot here.
     cs.version += 1;
 
-    // 4. Trigger rendering update
-    let cart_positions = cs.cart_positions.clone();
-    let atomic_numbers = cs.atomic_numbers.clone();
-    let elements = cs.elements.clone();
-
-    // Release the lock early so we don't hold it over the renderer update if it's slow
-    drop(cs);
-
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
-        &cart_positions,
-        &atomic_numbers,
-        &elements,
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
         &settings,
+        &cs.selected_atoms,
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -1039,12 +1033,37 @@ pub fn update_settings(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &new_settings,
+        &new_settings, &cs.selected_atoms
     );
     renderer.update_atoms(&instances);
 
     // Update lines (affects cell box and bonds)
     renderer.update_lines(&cs, &new_settings);
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_selection(
+    indices: Vec<usize>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+    cs.selected_atoms = indices;
+    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        &settings,
+        &cs.selected_atoms,
+    );
+    let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
+    if let Ok(mut renderer) = renderer_state.lock() {
+        renderer.update_atoms(&instances);
+        renderer.update_bonds(&bond_instances);
+    }
     Ok(())
 }

@@ -249,6 +249,7 @@ pub fn build_instance_data(
     atomic_numbers: &[u8],
     element_symbols: &[String],
     settings: &crate::settings::AppSettings,
+    selected_atoms: &[usize],
 ) -> Vec<AtomInstance> {
     let n = cart_positions.len();
     let mut instances = Vec::with_capacity(n);
@@ -259,8 +260,19 @@ pub fn build_instance_data(
         }
         instances.push(AtomInstance {
             position: cart_positions[i],
-            radius: element_radius(atomic_numbers[i], settings.atom_scale),
-            color,
+            radius: {
+                let mut r = element_radius(atomic_numbers[i], settings.atom_scale);
+                if selected_atoms.contains(&i) {
+                    r *= 1.2;
+                }
+                r
+            },
+            color: if selected_atoms.contains(&i) {
+                // Highlight: mix with bright cyan
+                [color[0] * 0.4, color[1] * 0.8 + 0.4, color[2] * 0.8 + 0.8, 1.0]
+            } else {
+                color
+            },
         });
     }
     instances
@@ -397,6 +409,7 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
 pub fn build_bond_instances(
     cs: &crate::crystal_state::CrystalState,
     settings: &crate::settings::AppSettings,
+    selected_atoms: &[usize],
 ) -> Vec<BondInstance> {
     let n = cs.cart_positions.len();
     let mut instances = Vec::new();
@@ -427,7 +440,13 @@ pub fn build_bond_instances(
                     radius: settings.bond_radius,
                     end: p2.into(),
                     _pad: 0.0,
-                    color: settings.bond_color,
+                    color: {
+                    if selected_atoms.contains(&i) || selected_atoms.contains(&j) {
+                        [settings.bond_color[0] * 0.5, settings.bond_color[1] * 0.9 + 0.3, settings.bond_color[2] * 0.9 + 0.5, 1.0]
+                    } else {
+                        settings.bond_color
+                    }
+                },
                 });
             }
         }

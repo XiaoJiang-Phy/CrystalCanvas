@@ -234,7 +234,7 @@ impl Renderer {
                     });
         }
 
-        let bond_instances = crate::renderer::instance::build_bond_instances(state, settings);
+        let bond_instances = crate::renderer::instance::build_bond_instances(state, settings, &state.selected_atoms);
         self.update_bonds(&bond_instances);
     }
 

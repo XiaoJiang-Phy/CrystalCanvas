@@ -34,7 +34,7 @@ function App() {
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [crystalState, setCrystalState] = useState<CrystalState | null>(null);
-    const [selectedAtomIdx, setSelectedAtomIdx] = useState<number | null>(null);
+    const [selectedAtoms, setSelectedAtoms] = useState<number[]>([]);
     const [bondCount, setBondCount] = useState<number | undefined>(undefined);
     const [activePhononMode, setActivePhononMode] = useState<PhononModeSummary | null>(null);
 
@@ -88,9 +88,9 @@ function App() {
                 safeInvoke('set_camera_view_axis', { axis: action.replace('view_axis_', '') })
                     .catch(console.error);
             } else if (action === 'delete_selected') {
-                if (selectedAtomIdx !== null) {
-                    safeInvoke('delete_atoms', { indices: [selectedAtomIdx] })
-                        .then(() => setSelectedAtomIdx(null))
+                if (selectedAtoms.length > 0) {
+                    safeInvoke('delete_atoms', { indices: selectedAtoms })
+                        .then(() => setSelectedAtoms([]))
                         .catch(console.error);
                 } else {
                     alert("No atom selected. Please select an atom first.");
@@ -114,11 +114,11 @@ function App() {
                     }
                 }
             } else if (action === 'open_replace_element_dialog') {
-                if (selectedAtomIdx !== null) {
+                if (selectedAtoms.length > 0) {
                     const newElem = window.prompt("Enter new element symbol (e.g., Fe, O, C):");
                     if (newElem && newElem.trim().length > 0) {
                         safeInvoke('substitute_atoms', {
-                            indices: [selectedAtomIdx],
+                            indices: selectedAtoms,
                             newElementSymbol: newElem.trim(),
                             newAtomicNumber: 0
                         }).catch(console.error);
@@ -228,7 +228,7 @@ function App() {
                 isDraggingCamera.current = false;
                 el.releasePointerCapture(e.pointerId);
             }
-            if (e.button === 0) {
+            if (e.button === 0 && interactionMode === 'select') {
                 const ddx = Math.abs(e.clientX - pointerDownPos.current.x);
                 const ddy = Math.abs(e.clientY - pointerDownPos.current.y);
                 if (ddx < 5 && ddy < 5) {
@@ -238,11 +238,30 @@ function App() {
                     const y = (e.clientY - rect.top) * dpr;
                     safeInvoke<number | null>('pick_atom', {
                         x, y,
-                        screen_w: rect.width * dpr,
-                        screen_h: rect.height * dpr
+                        screenW: rect.width * dpr,
+                        screenH: rect.height * dpr
                     }).then((idx) => {
                         console.log("pick_atom returned:", idx, "at", { x, y });
-                        setSelectedAtomIdx(idx ?? null);
+                        setSelectedAtoms(prev => {
+                            let newSel = [...prev];
+                            if (idx !== null && idx !== undefined) {
+                                if (e.shiftKey) {
+                                    if (newSel.includes(idx)) {
+                                        newSel = newSel.filter(i => i !== idx); // Toggle off
+                                    } else {
+                                        newSel.push(idx); // Toggle on
+                                    }
+                                } else {
+                                    newSel = [idx]; // Single selection replaces all
+                                }
+                            } else {
+                                if (!e.shiftKey) {
+                                    newSel = []; // Clicking empty space clears selection unless shift is held
+                                }
+                            }
+                            safeInvoke('update_selection', { indices: newSel }).catch(console.error);
+                            return newSel;
+                        });
                     }).catch((err) => {
                         console.error("pick_atom error:", err);
                     });
@@ -275,43 +294,6 @@ function App() {
         setContextMenu({ x: e.clientX, y: e.clientY });
     };
 
-    const handle_pointer_down = (e: React.PointerEvent) => {
-        // Only handle primary (0), middle (1), or secondary (2) buttons
-        if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
-
-        // Right click opens context menu
-        if (e.button === 2) {
-            setContextMenu({ x: e.clientX, y: e.clientY });
-            return;
-        }
-
-        // Left/Middle click starts camera drag if in correct mode
-        if (interactionMode === 'rotate' || interactionMode === 'move' || e.button === 1) {
-            isDraggingCamera.current = true;
-            lastMousePos.current = { x: e.clientX, y: e.clientY };
-            (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        } else if (interactionMode === 'select') {
-            pointerDownPos.current = { x: e.clientX, y: e.clientY };
-        }
-    };
-
-    const handle_pointer_move = (e: React.PointerEvent) => {
-        if (!isDraggingCamera.current) return;
-
-        const dx = e.clientX - lastMousePos.current.x;
-        const dy = e.clientY - lastMousePos.current.y;
-        lastMousePos.current = { x: e.clientX, y: e.clientY };
-
-        // Middle click = always pan. Left click + move mode = pan.
-        if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
-            safeInvoke('pan_camera', { dx, dy }).catch(console.error); // Invert y for standard screen coords
-        }
-        // Left click + rotate mode = rotate.
-        else if (e.buttons === 1 && interactionMode === 'rotate') {
-            safeInvoke('rotate_camera', { dx: dx * 1.0, dy: dy * 1.0 }).catch(console.error);
-        }
-    };
-
     const toggle_cell = () => {
         const next = !renderFlagsRef.current.cell;
         renderFlagsRef.current.cell = next;
@@ -339,41 +321,6 @@ function App() {
     };
 
 
-
-    const handle_pointer_up = (e: React.PointerEvent) => {
-        if (isDraggingCamera.current) {
-            isDraggingCamera.current = false;
-            (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-            return;
-        }
-
-        if (interactionMode === 'select' && e.button === 0) {
-            const dx = Math.abs(e.clientX - pointerDownPos.current.x);
-            const dy = Math.abs(e.clientY - pointerDownPos.current.y);
-
-            // If moved less than 5 pixels, treat as a click
-            if (dx < 5 && dy < 5) {
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                const dpr = window.devicePixelRatio || 1;
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-
-                safeInvoke<number | null>('pick_atom', {
-                    x: x * dpr,
-                    y: y * dpr,
-                    screenW: rect.width * dpr,
-                    screenH: rect.height * dpr
-                }).then(idx => {
-                    setSelectedAtomIdx(idx ?? null);
-                }).catch(console.error);
-            }
-        }
-    };
-
-    const handle_wheel = (e: React.WheelEvent) => {
-        // Positive delta Y means scroll down -> zoom out. Negative means zoom in.
-        safeInvoke('zoom_camera', { delta: Math.sign(e.deltaY) }).catch(console.error);
-    };
 
     return (
         <div
@@ -403,15 +350,21 @@ function App() {
                     <div className="absolute top-16 left-0 bottom-0 pointer-events-none z-10 p-2 pl-3 pb-4">
                         <LeftSidebar
                             crystalState={crystalState}
-                            selectedAtomIdx={selectedAtomIdx}
-                            onSelectionChange={setSelectedAtomIdx}
+                            selectedAtoms={selectedAtoms}
+                            onSelectionChange={(sel) => {
+                                setSelectedAtoms(sel);
+                                safeInvoke('update_selection', { indices: sel }).catch(console.error);
+                            }}
                         />
                     </div>
                     <div className="absolute top-0 right-0 bottom-0 pointer-events-none z-10 p-2 pr-3 pb-4">
                         <RightSidebar
                             crystalState={crystalState}
-                            selectedAtomIdx={selectedAtomIdx}
-                            onSelectionChange={setSelectedAtomIdx}
+                            selectedAtoms={selectedAtoms}
+                            onSelectionChange={(sel) => {
+                                setSelectedAtoms(sel);
+                                safeInvoke('update_selection', { indices: sel }).catch(console.error);
+                            }}
                             onBondCountUpdate={setBondCount}
                             onActivePhononModeUpdate={setActivePhononMode}
                         />

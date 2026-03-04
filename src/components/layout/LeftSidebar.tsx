@@ -9,13 +9,13 @@ import { safeInvoke } from '../../utils/tauri-mock';
 import { CrystalState } from '../../types/crystal';
 interface LeftSidebarProps {
     crystalState: CrystalState | null;
-    selectedAtomIdx: number | null;
-    onSelectionChange: (idx: number | null) => void;
+    selectedAtoms: number[];
+    onSelectionChange: (indices: number[]) => void;
 }
 
 export const LeftSidebar: React.FC<LeftSidebarProps> = ({
     crystalState,
-    selectedAtomIdx,
+    selectedAtoms,
     onSelectionChange
 }) => {
     const numAtoms = crystalState ? crystalState.intrinsic_sites : 0;
@@ -66,8 +66,18 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                                     x={crystalState.fract_x[i].toFixed(2)}
                                     y={crystalState.fract_y[i].toFixed(2)}
                                     z={crystalState.fract_z[i].toFixed(2)}
-                                    isSelected={selectedAtomIdx === i}
-                                    onClick={() => onSelectionChange(i)}
+                                    isSelected={selectedAtoms.includes(i)}
+                                    onClick={(e) => {
+                                        if (e.shiftKey) {
+                                            if (selectedAtoms.includes(i)) {
+                                                onSelectionChange(selectedAtoms.filter(idx => idx !== i));
+                                            } else {
+                                                onSelectionChange([...selectedAtoms, i]);
+                                            }
+                                        } else {
+                                            onSelectionChange([i]);
+                                        }
+                                    }}
                                 />
                             ))}
                         </tbody>
@@ -147,7 +157,17 @@ const UnitCellInput = ({ label, paramKey, value, unit, crystalState }: { label: 
     );
 };
 
-const AtomRow = ({ id, element, x, y, z, isSelected, onClick }: { id: number; element: string; x: string; y: string; z: string; isSelected?: boolean; onClick?: () => void }) => {
+interface AtomRowProps {
+    id: number;
+    element: string;
+    x: string;
+    y: string;
+    z: string;
+    isSelected: boolean;
+    onClick: (e: React.MouseEvent) => void;
+}
+
+const AtomRow: React.FC<AtomRowProps> = ({ id, element, x, y, z, isSelected, onClick }) => {
     const hexColor = getJmolColor(element);
     return (
         <tr

@@ -5,11 +5,11 @@ import { CrystalState, BondAnalysisResult, PhononModeSummary } from '../../types
 
 export const RightSidebar: React.FC<{
     crystalState: CrystalState | null,
-    selectedAtomIdx?: number | null,
-    onSelectionChange?: (idx: number | null) => void,
+    selectedAtoms?: number[],
+    onSelectionChange?: (indices: number[]) => void,
     onBondCountUpdate?: (count: number) => void,
     onActivePhononModeUpdate?: (mode: PhononModeSummary | null) => void
-}> = ({ crystalState, selectedAtomIdx = null, onSelectionChange, onBondCountUpdate, onActivePhononModeUpdate }) => {
+}> = ({ crystalState, selectedAtoms = [], onSelectionChange, onBondCountUpdate, onActivePhononModeUpdate }) => {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
     const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
 
@@ -43,18 +43,18 @@ export const RightSidebar: React.FC<{
     };
 
     const handle_delete_atom = () => {
-        if (selectedAtomIdx === null) return;
-        safeInvoke('delete_atoms', { indices: [selectedAtomIdx] }).then(() => {
-            if (onSelectionChange) onSelectionChange(null);
+        if (selectedAtoms.length === 0) return;
+        safeInvoke('delete_atoms', { indices: selectedAtoms }).then(() => {
+            if (onSelectionChange) onSelectionChange([]);
         }).catch(console.error);
     };
 
     const handle_replace_atom = () => {
-        if (selectedAtomIdx === null) return;
+        if (selectedAtoms.length === 0) return;
         const newElem = window.prompt("Enter new element symbol (e.g., Fe, O, C):");
         if (newElem && newElem.trim().length > 0) {
             safeInvoke('substitute_atoms', {
-                indices: [selectedAtomIdx],
+                indices: selectedAtoms,
                 newElementSymbol: newElem.trim(),
                 newAtomicNumber: 0 // Backend can map symbol to number
             }).catch(console.error);
@@ -138,17 +138,17 @@ export const RightSidebar: React.FC<{
                             </div>
 
                             {/* Selected Atom Distortion Index */}
-                            {selectedAtomIdx !== null && bondAnalysis.coordination[selectedAtomIdx] && (
+                            {selectedAtoms.length === 1 && bondAnalysis.coordination[selectedAtoms[0]] && (
                                 <div className="mt-2 p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-md border border-emerald-100 dark:border-emerald-800/30">
                                     <div className="font-medium text-emerald-800 dark:text-emerald-300 mb-1">
-                                        Atom #{selectedAtomIdx} ({bondAnalysis.coordination[selectedAtomIdx].element})
+                                        Atom #{selectedAtoms[0]} ({bondAnalysis.coordination[selectedAtoms[0]].element})
                                     </div>
-                                    <div>Coordination: {bondAnalysis.coordination[selectedAtomIdx].coordination_number}</div>
-                                    {bondAnalysis.coordination[selectedAtomIdx].polyhedron_type && (
-                                        <div>Polyhedron: {bondAnalysis.coordination[selectedAtomIdx].polyhedron_type}</div>
+                                    <div>Coordination: {bondAnalysis.coordination[selectedAtoms[0]].coordination_number}</div>
+                                    {bondAnalysis.coordination[selectedAtoms[0]].polyhedron_type && (
+                                        <div>Polyhedron: {bondAnalysis.coordination[selectedAtoms[0]].polyhedron_type}</div>
                                     )}
-                                    {bondAnalysis.distortion_indices[selectedAtomIdx] > 0 && (
-                                        <div>Distortion Δ: {bondAnalysis.distortion_indices[selectedAtomIdx].toFixed(4)}</div>
+                                    {bondAnalysis.distortion_indices[selectedAtoms[0]] > 0 && (
+                                        <div>Distortion Δ: {bondAnalysis.distortion_indices[selectedAtoms[0]].toFixed(4)}</div>
                                     )}
                                 </div>
                             )}
@@ -258,29 +258,29 @@ export const RightSidebar: React.FC<{
                     <div className="text-xs space-y-1">
                         <div className="text-slate-500 dark:text-slate-400">
                             Selected: <span className="text-slate-800 dark:text-slate-200 font-medium">
-                                {selectedAtomIdx !== null ? `Atom #${selectedAtomIdx}` : "None"}
+                                {selectedAtoms.length > 0 ? (selectedAtoms.length === 1 ? `Atom #${selectedAtoms[0]}` : `${selectedAtoms.length} atoms`) : "None"}
                             </span>
                         </div>
                         <div className="text-slate-500 dark:text-slate-400">
                             Element: <span className="text-slate-800 dark:text-slate-200 font-medium">
-                                {selectedAtomIdx !== null && crystalState ? crystalState.elements[selectedAtomIdx] : "-"}
+                                {selectedAtoms.length === 1 && crystalState ? crystalState.elements[selectedAtoms[0]] : (selectedAtoms.length > 1 ? "Mixed" : "-")}
                             </span>
                         </div>
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                        {selectedAtomIdx !== null ? (
+                        {selectedAtoms.length > 0 ? (
                             <>
-                                <ActionButton label="Replace Atom" onClick={handle_replace_atom} />
+                                <ActionButton label="Replace Atom(s)" onClick={handle_replace_atom} />
                                 <button onClick={handle_delete_atom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98] pointer-events-auto">
-                                    Delete Atom
+                                    Delete Atom(s)
                                 </button>
                                 <DisabledButton label="Add Sub-Atom" />
                             </>
                         ) : (
                             <>
-                                <DisabledButton label="Replace Atom" />
-                                <DisabledButton label="Delete Atom" />
+                                <DisabledButton label="Replace Atom(s)" />
+                                <DisabledButton label="Delete Atom(s)" />
                                 <DisabledButton label="Add Sub-Atom" />
                             </>
                         )}
