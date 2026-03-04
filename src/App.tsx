@@ -382,8 +382,6 @@ function App() {
                 <TopNavBar
                     showAssistant={showAssistant}
                     onToggleAssistant={() => setShowAssistant(prev => !prev)}
-                    isPerspective={isPerspective}
-                    onSetPerspective={handle_set_perspective}
                     showLabels={showLabels}
                     onToggleLabels={() => {
                         const next = !showLabels;

@@ -26,7 +26,7 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
         return await invoke<T>(cmd, args);
     } catch (e) {
         console.warn(`[tauri-mock] invoke('${cmd}') failed:`, e);
-        return undefined;
+        throw e;
     }
 }
 

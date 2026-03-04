@@ -11,8 +11,6 @@ import { safeInvoke } from '../../utils/tauri-mock';
 interface TopNavBarProps {
     showAssistant: boolean;
     onToggleAssistant: () => void;
-    isPerspective: boolean;
-    onSetPerspective: (perspective: boolean) => void;
     showLabels: boolean;
     onToggleLabels: () => void;
     interactionMode: 'select' | 'move' | 'rotate' | 'measure';
@@ -24,7 +22,6 @@ import logoUrl from '../../assets/logo.svg';
 
 export const TopNavBar: React.FC<TopNavBarProps> = ({
     showAssistant, onToggleAssistant,
-    isPerspective, onSetPerspective,
     showLabels, onToggleLabels,
     interactionMode, setInteractionMode,
     onOpenSettings
@@ -33,16 +30,21 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
     return (
         <div
-            data-tauri-drag-region
             className={cn(
-                "w-full h-12 flex items-center justify-between px-4 pl-[80px] shrink-0",
+                "w-full h-12 flex items-center justify-between px-4 pl-[80px] shrink-0 relative",
                 "bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl",
                 "border-b border-slate-200/80 dark:border-slate-700/50",
                 "shadow-sm z-50 pointer-events-auto transition-colors duration-300"
             )}>
 
+            {/* Drag region layer: sits behind all buttons so clicking buttons works normally */}
+            <div
+                data-tauri-drag-region
+                className="absolute inset-0 z-0"
+            />
+
             {/* Left: Brand + Basic Tools */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 relative z-10">
                 <div className="flex items-center gap-2 font-semibold text-base tracking-tight text-emerald-600 dark:text-emerald-400">
                     <img src={logoUrl} className="w-5 h-5 object-contain" alt="Logo" />
                     <span>CrystalCanvas</span>
@@ -59,29 +61,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                 </div>
             </div>
 
-            {/* Center: View Perspectives */}
-            <div className="flex items-center gap-1">
-                <button
-                    onClick={() => onSetPerspective(true)}
-                    className={cn(
-                        "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
-                        isPerspective
-                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-                            : "hover:bg-slate-200/70 dark:hover:bg-slate-800/70 border border-transparent hover:border-slate-300 dark:hover:border-slate-600"
-                    )}>
-                    Perspective
-                </button>
-                <button
-                    onClick={() => onSetPerspective(false)}
-                    className={cn(
-                        "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
-                        !isPerspective
-                            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-                            : "hover:bg-slate-200/70 dark:hover:bg-slate-800/70 border border-transparent hover:border-slate-300 dark:hover:border-slate-600"
-                    )}>
-                    Ortho
-                </button>
-                <div className="w-2" />
+            {/* Center: Axis View Buttons */}
+            <div className="flex items-center gap-1 relative z-10">
                 <ViewButton label="a" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a' })} />
                 <ViewButton label="b" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b' })} />
                 <ViewButton label="c" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c' })} />
@@ -91,7 +72,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             </div>
 
             {/* Right: Toggles & Actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 relative z-10">
                 <NavButton label="Reset View" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                 <NavButton label="Symmetry" />
 
