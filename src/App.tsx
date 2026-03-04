@@ -134,7 +134,7 @@ function App() {
                             const z = parseFloat(parts[3]);
                             safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] })
                                 .then(fetch_crystal_state)
-                                .catch(console.error);
+                                .catch(e => alert(e));
                         } else {
                             alert("Invalid format. Use 'Symbol X Y Z'.");
                         }
@@ -153,7 +153,7 @@ function App() {
                                     indices: selectedAtomsRef.current,
                                     newElementSymbol: newElem.trim(),
                                     newAtomicNumber: 0
-                                }).then(fetch_crystal_state).catch(console.error);
+                                }).then(fetch_crystal_state).catch(e => alert(e));
                             }
                         }
                     });
@@ -449,7 +449,7 @@ function App() {
                                                 fractPos: [0.5, 0.5, 0.5]
                                             })
                                                 .then(fetch_crystal_state)
-                                                .catch(console.error);
+                                                .catch(e => alert(e));
                                         }
                                     }
                                 });

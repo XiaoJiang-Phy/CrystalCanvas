@@ -76,7 +76,7 @@ export const RightSidebar: React.FC<{
                             // Immediately fetch crystal state after substitute
                             safeInvoke('get_crystal_state').catch(console.error);
                         })
-                        .catch(console.error);
+                        .catch(e => alert(e));
                 }
             }
         });

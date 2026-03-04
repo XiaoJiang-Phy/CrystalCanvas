@@ -184,12 +184,19 @@ pub fn add_atom(
     let mut cs = crystal_state
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
+        
+    let formatted_symbol = crate::llm::router::format_element_symbol(&element_symbol);
     let an = if atomic_number == 0 {
-        crate::llm::router::element_to_atomic_number(&element_symbol)
+        crate::llm::router::element_to_atomic_number(&formatted_symbol)
     } else {
         atomic_number
     };
-    cs.try_add_atom(&element_symbol, an, fract_pos)
+    
+    if an == 0 {
+        return Err(format!("Invalid element symbol: {}", element_symbol));
+    }
+    
+    cs.try_add_atom(&formatted_symbol, an, fract_pos)
         .map_err(|_| "Collision detected: atom too close to existing atoms")?;
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
@@ -325,11 +332,18 @@ pub fn substitute_atoms(
     let mut cs = crystal_state
         .try_lock()
         .map_err(|_| "Failed to lock state")?;
+        
+    let formatted_symbol = crate::llm::router::format_element_symbol(&new_element_symbol);
     let mut an = new_atomic_number;
     if an == 0 {
-        an = crate::llm::router::element_to_atomic_number(&new_element_symbol);
+        an = crate::llm::router::element_to_atomic_number(&formatted_symbol);
     }
-    cs.substitute_atoms(&indices, &new_element_symbol, an);
+    
+    if an == 0 {
+        return Err(format!("Invalid element symbol: {}", new_element_symbol));
+    }
+    
+    cs.substitute_atoms(&indices, &formatted_symbol, an);
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(

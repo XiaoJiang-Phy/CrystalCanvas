@@ -6,6 +6,21 @@ use crate::crystal_state::CrystalState;
 use crate::io::export::{export_lammps_data, export_poscar, export_qe_input};
 use crate::llm::command::{CrystalCommand, ExportFormat};
 
+/// Standardize an element symbol input (e.g. "fe" -> "Fe", " c " -> "C").
+pub fn format_element_symbol(symbol: &str) -> String {
+    let s = symbol.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap().to_ascii_uppercase();
+    if let Some(second) = chars.next() {
+        format!("{}{}", first, second.to_ascii_lowercase())
+    } else {
+        first.to_string()
+    }
+}
+
 /// Look up atomic number from element symbol for correct rendering.
 pub fn element_to_atomic_number(symbol: &str) -> u8 {
     match symbol {
