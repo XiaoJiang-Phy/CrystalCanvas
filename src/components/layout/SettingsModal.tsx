@@ -34,7 +34,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, e
 
     if (!isOpen || !settings) return null;
 
-    const handleSave = () => {
+    const handleApply = () => {
+        safeInvoke('update_settings', { newSettings: settings })
+            .catch(err => alert("Failed to apply settings: " + err));
+    };
+
+    const handleOk = () => {
         safeInvoke('update_settings', { newSettings: settings })
             .then(onClose)
             .catch(err => alert("Failed to update settings: " + err));
@@ -214,8 +219,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, e
                     </div>
                 </div>
 
-                {/* Footer */}
-                <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50/50 dark:bg-slate-800/50">
+                {/* Footer Actions */}
+                <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
                     <button
                         onClick={onClose}
                         className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
@@ -223,10 +228,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, e
                         Cancel
                     </button>
                     <button
-                        onClick={handleSave}
+                        onClick={handleApply}
+                        className="px-4 py-2 text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 rounded-xl transition-colors"
+                    >
+                        Apply
+                    </button>
+                    <button
+                        onClick={handleOk}
                         className="px-6 py-2 text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
                     >
-                        Apply Changes
+                        OK
                     </button>
                 </div>
             </div>
