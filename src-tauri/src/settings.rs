@@ -34,23 +34,13 @@ impl AppSettings {
         Ok(path)
     }
 
-    pub fn load(app_handle: &tauri::AppHandle) -> Self {
-        if let Ok(path) = Self::get_config_path(app_handle)
-            && let Ok(data) = std::fs::read_to_string(&path)
-            && let Ok(settings) = serde_json::from_str(&data)
-        {
-            return settings;
-        }
+    pub fn load(_app_handle: &tauri::AppHandle) -> Self {
+        // Disabled file loading to enforce default settings on every restart
         Self::default()
     }
 
-    pub fn save(&self, app_handle: &tauri::AppHandle) -> Result<(), String> {
-        let path = Self::get_config_path(app_handle)?;
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let data = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(path, data).map_err(|e| e.to_string())?;
+    pub fn save(&self, _app_handle: &tauri::AppHandle) -> Result<(), String> {
+        // Disabled file saving to prevent persistence
         Ok(())
     }
 }
