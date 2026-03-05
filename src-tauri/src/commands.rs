@@ -258,7 +258,8 @@ pub fn translate_atoms_screen(
     };
     
     // Calculate world space translation vector exactly as camera pan
-    let pan_speed = 0.002 * (eye - target).length();
+    // Reduced from 0.002 to 0.001 to achieve 1:1 screen-to-world drag feeling
+    let pan_speed = 0.001 * (eye - target).length();
     let forward = (target - eye).normalize();
     let right = forward.cross(up).normalize();
     let up_dir = right.cross(forward).normalize();

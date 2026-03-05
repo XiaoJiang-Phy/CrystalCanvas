@@ -158,7 +158,8 @@ impl Camera {
 
     /// Pan the camera in the view plane.
     pub fn pan(&mut self, dx: f32, dy: f32) {
-        let pan_speed = 0.002 * (self.eye - self.target).length();
+        // Reduced from 0.002 to 0.001 to achieve 1:1 screen-to-world drag feeling
+        let pan_speed = 0.001 * (self.eye - self.target).length();
         let forward = (self.target - self.eye).normalize();
         let right = forward.cross(self.up).normalize();
         let up = right.cross(forward).normalize();
