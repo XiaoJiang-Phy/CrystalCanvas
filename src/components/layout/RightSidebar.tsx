@@ -10,8 +10,10 @@ export const RightSidebar: React.FC<{
     selectedAtoms?: number[],
     onSelectionChange?: (indices: number[]) => void,
     onBondCountUpdate?: (count: number) => void,
-    onActivePhononModeUpdate?: (mode: PhononModeSummary | null) => void
-}> = ({ crystalState, selectedAtoms = [], onSelectionChange, onBondCountUpdate, onActivePhononModeUpdate }) => {
+    onActivePhononModeUpdate?: (mode: PhononModeSummary | null) => void,
+    onStructureUpdate?: () => void
+}> = ({ crystalState, selectedAtoms = [], onSelectionChange, onBondCountUpdate, onActivePhononModeUpdate, onStructureUpdate }) => {
+
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
     const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
     const [promptConfig, setPromptConfig] = useState<{
@@ -37,8 +39,11 @@ export const RightSidebar: React.FC<{
             [0, sc.ny, 0],
             [0, 0, sc.nz]
         ];
-        safeInvoke('apply_supercell', { matrix }).catch(console.error);
+        safeInvoke('apply_supercell', { matrix })
+            .then(() => { if (onStructureUpdate) onStructureUpdate(); })
+            .catch(console.error);
     };
+
 
     const handle_slab_cut = () => {
         if (slab.h === 0 && slab.k === 0 && slab.l === 0) {
@@ -50,8 +55,11 @@ export const RightSidebar: React.FC<{
             miller: [slab.h, slab.k, slab.l],
             layers: slab.layers,
             vacuumA: slab.vacuum
-        }).then(() => console.log("Slab applied")).catch(console.error);
+        }).then(() => {
+            if (onStructureUpdate) onStructureUpdate();
+        }).catch(console.error);
     };
+
 
     const handle_delete_atom = () => {
         if (selectedAtoms.length === 0) return;
@@ -129,11 +137,9 @@ export const RightSidebar: React.FC<{
             const mode = phononModes.find(m => m.index === idx);
             onActivePhononModeUpdate(mode || null);
         }
-        safeInvoke('set_phonon_mode', { modeIndex: idx }).then(() => {
-            setBondAnalysis(null);
-            if (onBondCountUpdate) onBondCountUpdate(0);
-        }).catch(console.error);
+        safeInvoke('set_phonon_mode', { modeIndex: idx }).catch(console.error);
     };
+
 
     useEffect(() => {
         if (!isAnimating) return;
@@ -267,6 +273,18 @@ export const RightSidebar: React.FC<{
                     <button onClick={handle_supercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98] pointer-events-auto">
                         Execute Supercell
                     </button>
+                    <button
+                        onClick={() => {
+                            safeInvoke('restore_unitcell')
+                                .then(() => { if (onStructureUpdate) onStructureUpdate(); })
+                                .catch(e => alert(`Restore failed: ${e}`));
+                        }}
+                        className="w-full py-1.5 bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-700/60 text-slate-600 dark:text-slate-300 rounded-md text-xs font-medium transition-colors border border-slate-200 dark:border-slate-700 active:scale-[0.98] pointer-events-auto"
+                    >
+                        Restore Original Cell
+                    </button>
+
+
                 </div>
             </Accordion>
 

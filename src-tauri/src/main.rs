@@ -323,12 +323,22 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                     log::info!("Opening file: {}", path_str);
                     match crate::io::import::load_file(&path_str) {
                         Ok(state) => {
+                            // Update base state for "Restore Unitcell"
+                            if let Some(base_st) = handle.try_state::<commands::BaseCrystalState>() {
+                                if let Ok(mut base) = base_st.0.lock() {
+                                    *base = Some(state.clone());
+                                }
+                            }
+
                             // Block until crystal state lock is available
                             if let Some(cs_mutex) = handle
                                 .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
                             {
                                 match cs_mutex.lock() {
-                                    Ok(mut cs) => *cs = state.clone(),
+                                    Ok(mut cs) => {
+                                        *cs = state.clone();
+                                        cs.version += 1;
+                                    }
                                     Err(e) => log::error!("Failed to lock crystal state: {}", e),
                                 }
                             }
@@ -339,7 +349,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 &state.cart_positions,
                                 &state.atomic_numbers,
                                 &state.elements,
-                                &settings, &state.selected_atoms
+                                &settings,
+                                &state.selected_atoms,
                             );
                             // Block until renderer lock is available
                             if let Some(r) = handle
@@ -360,11 +371,12 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                         if !renderer.camera.is_perspective {
                                             renderer.camera.set_orthographic(extent * 1.5);
                                         }
+                                        renderer.update_camera();
                                     }
                                     Err(e) => log::error!("Failed to lock renderer: {}", e),
                                 }
                             }
-                            log::info!("File loaded: {}", path_str);
+                            log::info!("File loaded and base state saved: {}", path_str);
                         }
                         Err(e) => log::error!("Failed to load file: {}", e),
                     }
@@ -587,6 +599,8 @@ fn main() {
             let loaded_settings = crate::settings::AppSettings::load(app.handle());
             app.manage(std::sync::Mutex::new(loaded_settings));
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
+            app.manage(commands::BaseCrystalState(std::sync::Mutex::new(None)));
+
 
             // --- Menu Construction ---
             let _ = build_menu(app);
@@ -608,6 +622,8 @@ fn main() {
             commands::preview_slab,
             commands::preview_supercell,
             commands::export_file,
+            commands::restore_unitcell,
+
             commands::llm_configure,
             commands::llm_chat,
             commands::llm_execute_command,

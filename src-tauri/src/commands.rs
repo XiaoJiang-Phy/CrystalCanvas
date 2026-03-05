@@ -29,6 +29,18 @@ pub fn set_camera_projection(
 ) -> Result<(), String> {
     log::info!("set_camera_projection: perspective={}", is_perspective);
 
+    // Lock crystal state FIRST to avoid AB/BA deadlock with restore_unitcell
+    let scale = if !is_perspective {
+        if let Ok(cs) = crystal_state.lock() {
+            let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+            if extent > 0.0 { extent * 1.5 } else { 15.0 }
+        } else {
+            15.0
+        }
+    } else {
+        15.0
+    };
+
     let mut renderer = renderer_state
         .lock()
         .map_err(|e| format!("Failed to lock renderer: {}", e))?;
@@ -36,13 +48,9 @@ pub fn set_camera_projection(
     if is_perspective {
         renderer.camera.set_perspective();
     } else {
-        let mut scale = 15.0; // Fallback
-        if let Ok(cs) = crystal_state.lock() {
-            let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-            scale = if extent > 0.0 { extent * 1.5 } else { 15.0 };
-        }
         renderer.camera.set_orthographic(scale);
     }
+
 
     // Sync frontend UI (topbar might already be in sync, but menu and LLM need it)
     #[derive(Clone, serde::Serialize)]
@@ -116,6 +124,7 @@ pub fn load_cif_file(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    base_state: State<'_, BaseCrystalState>,
 ) -> Result<(), String> {
     log::info!("load_cif_file: {}", path);
 
@@ -123,16 +132,24 @@ pub fn load_cif_file(
     let state = crate::io::import::load_file(&path)?;
     log::info!("[load_cif_file] File parsed: {} atoms", state.num_atoms());
 
-    // Update crystal state — must block until lock is available
+    // 4. Update crystal state — must block until lock is available
     {
         let mut cs = crystal_state
             .lock()
             .map_err(|e| format!("Failed to lock crystal state: {}", e))?;
         *cs = state.clone();
+        cs.version += 1;
         log::info!("[load_cif_file] Crystal state updated");
     }
 
-    // 3. Build instance data for the Renderer
+    // 5. Store as base state for "Restore Unitcell" functionality
+    {
+        let mut base = base_state.0.lock().map_err(|e| format!("{}", e))?;
+        *base = Some(state.clone());
+    }
+
+
+    // 6. Build instance data for the Renderer
     let settings = settings_state
         .lock()
         .map_err(|e| format!("Failed to lock settings: {}", e))?;
@@ -144,6 +161,7 @@ pub fn load_cif_file(
         &settings, &state.selected_atoms
     );
     log::info!("[load_cif_file] Built {} atom instances", instances.len());
+
 
     // 4. Update the renderer — must block until lock is available
     {
@@ -934,6 +952,10 @@ pub fn set_phonon_phase(
 
 pub struct LlmState(pub std::sync::Mutex<Option<crate::llm::provider::ProviderConfig>>);
 
+/// Managed state to store the "base" primitive/standard unit cell before supercell/slab expansions.
+pub struct BaseCrystalState(pub std::sync::Mutex<Option<crate::crystal_state::CrystalState>>);
+
+
 fn get_api_key(provider: &str, provided_key: &str) -> String {
     if !provided_key.trim().is_empty() && provided_key != "********" {
         // Save to OS Keychain
@@ -1269,20 +1291,25 @@ pub fn update_settings(
     let _ = new_settings.save(&app).map_err(|e| log::warn!("Failed to save settings: {}", e));
 
     // 3. Rebuild renderer data
-    let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock: {}", e))?;
+    // Lock State FIRST to avoid AB/BA deadlock with commands that lock renderer then state
     let cs = crystal_state.lock().map_err(|e| format!("State lock: {}", e))?;
+    let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock: {}", e))?;
 
     // Update atoms (affects scale and visibility)
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &new_settings, &cs.selected_atoms
+        &new_settings,
+        &cs.selected_atoms,
     );
     renderer.update_atoms(&instances);
 
     // Update lines (affects cell box and bonds)
     renderer.update_lines(&cs, &new_settings);
+    let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &new_settings, &cs.selected_atoms);
+    renderer.update_bonds(&bond_instances);
+
 
     Ok(())
 }
@@ -1309,5 +1336,57 @@ pub fn update_selection(
         renderer.update_atoms(&instances);
         renderer.update_bonds(&bond_instances);
     }
+    Ok(())
+}
+/// Restore the original unit cell from the base state.
+#[tauri::command]
+pub fn restore_unitcell(
+    base_state: State<'_, BaseCrystalState>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<(), String> {
+    log::info!("restore_unitcell triggered");
+
+    let base = base_state.0.lock().map_err(|e| format!("Base state lock failed: {}", e))?;
+    let Some(original) = base.as_ref() else {
+        return Err("No base structure loaded to restore".to_string());
+    };
+
+    let mut cs = crystal_state.lock().map_err(|e| format!("Crystal state lock failed: {}", e))?;
+    *cs = original.clone();
+    cs.version += 1;
+    cs.active_phonon_mode = None;
+    cs.phonon_phase = 0.0;
+
+
+    let settings = settings_state.lock().map_err(|e| format!("Settings lock failed: {}", e))?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        &settings,
+        &cs.selected_atoms,
+    );
+
+    let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock failed: {}", e))?;
+    renderer.update_atoms(&instances);
+    let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
+    renderer.update_bonds(&bond_instances);
+    renderer.update_lines(&cs, &settings);
+
+    // Auto-adjust camera to view the restored cell
+    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+    let center = cs.unit_cell_center();
+    let center_vec = glam::Vec3::from_array(center);
+    renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+    renderer.camera.target = center_vec;
+    if !renderer.camera.is_perspective {
+        renderer.camera.set_orthographic(extent * 1.5);
+    }
+    renderer.update_camera();
+
+
+
     Ok(())
 }

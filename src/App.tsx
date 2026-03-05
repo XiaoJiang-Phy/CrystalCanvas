@@ -83,12 +83,18 @@ function App() {
 
         safeListen<{ paths: string[] }>('tauri://file-drop', (event) => {
             setIsDragging(false);
-            const path = event.payload.paths[0];
-            if (path && path.endsWith('.cif')) {
-                safeInvoke('load_cif_file', { path })
-                    .then(fetch_crystal_state)
-                    .catch(console.error);
+            const path: string | undefined = event.payload.paths[0];
+            if (path) {
+                const ext = path.split('.').pop()?.toLowerCase() || '';
+                if (['cif', 'pdb', 'xyz'].includes(ext)) {
+                    safeInvoke('load_cif_file', { path })
+                        .then(fetch_crystal_state)
+                        .catch(e => alert(`Failed to load structure: ${e}`));
+                }
             }
+
+
+
         }).then(f => unlistenDrop = f).catch(console.warn);
 
         safeListen('tauri://file-drop-hover', () => setIsDragging(true)).then(f => unlistenHover = f).catch(console.warn);
