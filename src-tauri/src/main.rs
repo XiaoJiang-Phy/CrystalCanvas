@@ -1,8 +1,8 @@
 //! CrystalCanvas Tauri application entry point
-
-// Prevents additional console window on Windows in release
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Prevents additional console window on Windows in release
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
@@ -71,6 +71,8 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
         ],
     )?;
     let sep_f3 = PredefinedMenuItem::separator(app)?;
+    let exp_image = MenuItem::with_id(app, "menu_export_image", "Export Image...", true, None::<&str>)?;
+    let sep_f4 = PredefinedMenuItem::separator(app)?;
     let close_win = PredefinedMenuItem::close_window(app, None::<&str>)?;
     let file_menu = Submenu::with_items(
         app,
@@ -83,6 +85,8 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
             &sep_f2,
             &export_sub,
             &sep_f3,
+            &exp_image,
+            &sep_f4,
             &close_win,
         ],
     )?;
@@ -384,6 +388,9 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
         "menu_export_poscar" => handle_export(app_handle, "POSCAR", "poscar"),
         "menu_export_qe" => handle_export(app_handle, "QE", "in"),
         "menu_export_lammps" => handle_export(app_handle, "LAMMPS", "lmp"),
+        "menu_export_image" => {
+            let _ = app_handle.emit("menu-action", "export_image");
+        }
 
         // ── Edit ─────────────────────────────────────────────────────
         "menu_delete_selected" => {
@@ -645,7 +652,8 @@ fn main() {
             commands::load_axsf_phonon,
             commands::set_phonon_mode,
             commands::set_phonon_phase,
-            commands::update_lattice_params
+            commands::update_lattice_params,
+            commands::export_image
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -435,47 +435,43 @@ pub fn apply_supercell(
     ];
     log::info!("apply_supercell: {:?}", expansion);
 
-    let new_state = {
-        let cs = crystal_state
-            .try_lock()
-            .map_err(|_| "Failed to lock state")?;
-        cs.generate_supercell(&expansion)?
-    };
+    // Single lock scope: generate supercell, replace state, then build render data
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|e| format!("Failed to lock crystal state: {}", e))?;
 
-    // Replace the crystal state
-    {
-        let mut cs = crystal_state
-            .try_lock()
-            .map_err(|_| "Failed to lock state")?;
-        *cs = new_state;
-        cs.detect_spacegroup();
-    }
+    let new_state = cs.generate_supercell(&expansion)?;
+    *cs = new_state;
+    cs.detect_spacegroup();
 
-    // Update renderer
-    let cs = crystal_state
-        .try_lock()
-        .map_err(|_| "Failed to lock state")?;
-    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+    let settings = settings_state
+        .lock()
+        .map_err(|e| format!("Settings lock fail: {}", e))?;
+
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings, &cs.selected_atoms
+        &settings,
+        &cs.selected_atoms,
     );
-    if let Ok(mut renderer) = renderer_state.lock() {
-        renderer.update_atoms(&instances);
-        renderer.update_lines(&cs, &settings);
 
-        // Auto-adjust camera distance for the new structure
-        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-        let center = cs.unit_cell_center();
-        let center_vec = glam::Vec3::from_array(center);
-        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        renderer.camera.target = center_vec;
-        if !renderer.camera.is_perspective {
-            renderer.camera.set_orthographic(extent * 1.5);
-        }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Renderer lock fail: {}", e))?;
+    renderer.update_atoms(&instances);
+    renderer.update_lines(&cs, &settings);
+
+    // Auto-adjust camera distance for the new structure
+    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+    let center = cs.unit_cell_center();
+    let center_vec = glam::Vec3::from_array(center);
+    renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+    renderer.camera.target = center_vec;
+    if !renderer.camera.is_perspective {
+        renderer.camera.set_orthographic(extent * 1.5);
     }
+    renderer.update_camera();
 
     Ok(())
 }
@@ -497,46 +493,41 @@ pub fn apply_slab(
         vacuum_a
     );
 
-    let new_state = {
-        let cs = crystal_state
-            .try_lock()
-            .map_err(|_| "Failed to lock state")?;
-        cs.generate_slab(miller, layers, vacuum_a)?
-    };
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|e| format!("Failed to lock crystal state: {}", e))?;
 
-    // Replace the crystal state
-    {
-        let mut cs = crystal_state
-            .try_lock()
-            .map_err(|_| "Failed to lock state")?;
-        *cs = new_state;
-        cs.detect_spacegroup();
-    }
+    let new_state = cs.generate_slab(miller, layers, vacuum_a)?;
+    *cs = new_state;
+    cs.detect_spacegroup();
 
-    // Update renderer
-    let cs = crystal_state
-        .try_lock()
-        .map_err(|_| "Failed to lock state")?;
-    let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+    let settings = settings_state
+        .lock()
+        .map_err(|e| format!("Settings lock fail: {}", e))?;
+
     let instances = crate::renderer::instance::build_instance_data(
         &cs.cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
-        &settings, &cs.selected_atoms
+        &settings,
+        &cs.selected_atoms,
     );
-    if let Ok(mut renderer) = renderer_state.lock() {
-        renderer.update_atoms(&instances);
-        renderer.update_lines(&cs, &settings);
 
-        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-        let center = cs.unit_cell_center();
-        let center_vec = glam::Vec3::from_array(center);
-        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        renderer.camera.target = center_vec;
-        if !renderer.camera.is_perspective {
-            renderer.camera.set_orthographic(extent * 1.5);
-        }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Renderer lock fail: {}", e))?;
+    renderer.update_atoms(&instances);
+    renderer.update_lines(&cs, &settings);
+
+    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+    let center = cs.unit_cell_center();
+    let center_vec = glam::Vec3::from_array(center);
+    renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+    renderer.camera.target = center_vec;
+    if !renderer.camera.is_perspective {
+        renderer.camera.set_orthographic(extent * 1.5);
     }
+    renderer.update_camera();
 
     Ok(())
 }
@@ -1388,5 +1379,70 @@ pub fn restore_unitcell(
 
 
 
+    Ok(())
+}
+
+/// Export the current viewport as a high-resolution image.
+/// Renders off-screen at the specified dimensions and saves to the given path.
+#[tauri::command]
+pub fn export_image(
+    path: String,
+    width: u32,
+    height: u32,
+    bg_mode: String,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    log::info!(
+        "export_image: {}x{}, bg={}, path={}",
+        width,
+        height,
+        bg_mode,
+        path
+    );
+
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+
+    let rgba_data = renderer.render_offscreen(width, height, &bg_mode)?;
+
+    // Determine output format from file extension
+    let path_lower = path.to_lowercase();
+    if path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg") {
+        // JPEG does not support transparency — composite onto white if transparent
+        let rgb_data: Vec<u8> = if bg_mode == "transparent" {
+            rgba_data
+                .chunks_exact(4)
+                .flat_map(|px| {
+                    let a = px[3] as f32 / 255.0;
+                    [
+                        (px[0] as f32 * a + 255.0 * (1.0 - a)) as u8,
+                        (px[1] as f32 * a + 255.0 * (1.0 - a)) as u8,
+                        (px[2] as f32 * a + 255.0 * (1.0 - a)) as u8,
+                    ]
+                })
+                .collect()
+        } else {
+            rgba_data
+                .chunks_exact(4)
+                .flat_map(|px| [px[0], px[1], px[2]])
+                .collect()
+        };
+
+        let img: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> =
+            image::ImageBuffer::from_raw(width, height, rgb_data)
+                .ok_or_else(|| "Failed to create JPEG image buffer".to_string())?;
+        img.save(&path)
+            .map_err(|e| format!("Failed to save JPEG: {}", e))?;
+    } else {
+        // Default: PNG (supports transparency)
+        let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
+            image::ImageBuffer::from_raw(width, height, rgba_data)
+                .ok_or_else(|| "Failed to create PNG image buffer".to_string())?;
+        img.save(&path)
+            .map_err(|e| format!("Failed to save PNG: {}", e))?;
+    }
+
+    log::info!("Image exported successfully to {}", path);
     Ok(())
 }

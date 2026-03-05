@@ -12,6 +12,7 @@ import { BottomStatusBar } from './components/layout/BottomStatusBar';
 import { LlmAssistant } from './components/layout/LlmAssistant';
 import { SettingsModal } from './components/layout/SettingsModal';
 import { PromptModal } from './components/layout/PromptModal';
+import { ExportImageModal } from './components/layout/ExportImageModal';
 
 function App() {
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -24,6 +25,7 @@ function App() {
     const [showBonds, setShowBonds] = useState(true);
     const [showLabels, setShowLabels] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isExportImageOpen, setIsExportImageOpen] = useState(false);
     const renderFlagsRef = useRef({ cell: true, bonds: true, labels: false });
     const [atomScale, setAtomScale] = useState(1.0);
     const [interactionMode, setInteractionMode] = useState<'select' | 'move' | 'rotate' | 'measure'>('rotate');
@@ -119,6 +121,8 @@ function App() {
                 setShowAssistant(prev => !prev);
             } else if (action === 'view_settings') {
                 setIsSettingsOpen(true);
+            } else if (action === 'export_image') {
+                setIsExportImageOpen(true);
             } else if (action.startsWith('view_axis_')) {
                 safeInvoke('set_camera_view_axis', { axis: action.replace('view_axis_', '') })
                     .catch(console.error);
@@ -491,6 +495,13 @@ function App() {
                 isOpen={isSettingsOpen}
                 onClose={() => setIsSettingsOpen(false)}
                 elements={crystalState?.elements ? Array.from(new Set(crystalState.elements)) : []}
+            />
+
+            <ExportImageModal
+                isOpen={isExportImageOpen}
+                onClose={() => setIsExportImageOpen(false)}
+                viewportWidth={viewportRef.current?.clientWidth ?? 1280}
+                viewportHeight={viewportRef.current?.clientHeight ?? 800}
             />
         </div>
     );

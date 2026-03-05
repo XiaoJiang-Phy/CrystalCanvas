@@ -342,4 +342,226 @@ impl Renderer {
 
         Ok(())
     }
+
+    /// Render the current scene to an off-screen texture and return raw RGBA pixel bytes.
+    ///
+    /// # Arguments
+    /// * `width` - Target image width in pixels.
+    /// * `height` - Target image height in pixels.
+    /// * `bg_mode` - Background mode: "transparent", "white", or "default" (current theme).
+    pub fn render_offscreen(
+        &mut self,
+        width: u32,
+        height: u32,
+        bg_mode: &str,
+    ) -> Result<Vec<u8>, String> {
+        let width = width.max(1);
+        let height = height.max(1);
+
+        // Choose background clear color
+        let clear_color = match bg_mode {
+            "transparent" => wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            },
+            "white" => wgpu::Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
+            "black" => wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            _ => self.clear_color, // "default" — use current theme color
+        };
+
+        // Temporarily adjust camera aspect ratio for the off-screen dimensions
+        let original_aspect_w = self.gpu.config.width;
+        let original_aspect_h = self.gpu.config.height;
+        self.camera.set_aspect(width as f32, height as f32);
+        self.camera_uniform.update_from_camera(&self.camera);
+        self.gpu.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+
+        // Use the same format as the surface so existing pipelines are compatible
+        let tex_format = self.gpu.surface_format();
+
+        // Create off-screen color texture
+        let color_texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Offscreen Color Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: tex_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create off-screen depth texture
+        let (_, depth_view) =
+            pipeline::create_depth_texture(&self.gpu.device, width, height);
+
+        // Encode the render pass (identical to on-screen render())
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Offscreen Render Encoder"),
+            });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Offscreen Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // Atoms
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            if self.instance_count > 0 {
+                render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                render_pass.draw(0..6, 0..self.instance_count);
+            }
+
+            // Cell lines
+            if self.show_cell && self.cell_line_count > 0 {
+                render_pass.set_pipeline(&self.line_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                render_pass.draw(0..self.cell_line_count, 0..1);
+            }
+
+            // Bonds
+            if self.show_bonds && self.bond_instance_count > 0 {
+                render_pass.set_pipeline(&self.bond_pipeline);
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
+                render_pass.draw(0..72, 0..self.bond_instance_count);
+            }
+        }
+
+        // Copy texture to a CPU-readable buffer
+        let bytes_per_pixel: u32 = 4;
+        let unpadded_bytes_per_row = bytes_per_pixel * width;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let staging_size = (padded_bytes_per_row * height) as u64;
+
+        let staging_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Offscreen Staging Buffer"),
+            size: staging_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &color_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
+
+        // Map the staging buffer and read the data
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        self.gpu.device.poll(wgpu::Maintain::Wait);
+
+        rx.recv()
+            .map_err(|e| format!("Failed to receive map result: {}", e))?
+            .map_err(|e| format!("Buffer map failed: {:?}", e))?;
+
+        // Strip row padding and convert BGRA -> RGBA
+        let data = buffer_slice.get_mapped_range();
+        let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
+        let is_bgra = matches!(
+            tex_format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+
+        for row in 0..height {
+            let offset = (row * padded_bytes_per_row) as usize;
+            let row_end = offset + (unpadded_bytes_per_row as usize);
+            let row_data = &data[offset..row_end];
+            if is_bgra {
+                // Swap B and R channels: BGRA -> RGBA
+                for pixel in row_data.chunks_exact(4) {
+                    rgba_data.push(pixel[2]); // R
+                    rgba_data.push(pixel[1]); // G
+                    rgba_data.push(pixel[0]); // B
+                    rgba_data.push(pixel[3]); // A
+                }
+            } else {
+                rgba_data.extend_from_slice(row_data);
+            }
+        }
+        drop(data);
+        staging_buffer.unmap();
+
+        // Restore camera aspect ratio
+        self.camera
+            .set_aspect(original_aspect_w as f32, original_aspect_h as f32);
+        self.update_camera();
+
+        log::info!(
+            "Offscreen render complete: {}x{}, {} bytes (bg={})",
+            width,
+            height,
+            rgba_data.len(),
+            bg_mode
+        );
+
+        Ok(rgba_data)
+    }
 }
