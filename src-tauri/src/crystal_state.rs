@@ -332,7 +332,7 @@ impl CrystalState {
 
         if sg > 0 {
             self.spacegroup_number = sg;
-            self.spacegroup_hm = format!("Spglib #{}", sg);
+            self.spacegroup_hm = format!("#{}", sg);
         }
     }
 

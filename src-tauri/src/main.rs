@@ -627,6 +627,7 @@ fn main() {
             commands::get_bond_analysis,
             commands::load_phonon,
             commands::load_phonon_interactive,
+            commands::load_axsf_phonon,
             commands::set_phonon_mode,
             commands::set_phonon_phase,
             commands::update_lattice_params

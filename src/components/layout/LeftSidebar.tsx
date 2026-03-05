@@ -4,7 +4,7 @@
 import React from 'react';
 import { cn } from '../../utils/cn';
 import { getJmolColor } from '../../utils/colors';
-
+import { renderSpacegroupSymbol } from '../../utils/spacegroup';
 import { safeInvoke } from '../../utils/tauri-mock';
 import { CrystalState } from '../../types/crystal';
 interface LeftSidebarProps {
@@ -31,7 +31,12 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
             <Panel title="Structure Info">
                 <div className="space-y-2 text-xs">
                     <InfoRow label="Atoms:" value={numAtoms.toString()} />
-                    <InfoRow label="Space Group:" value={crystalState?.spacegroup_hm || "N/A"} />
+                    <div className="flex justify-between items-center">
+                        <span className="text-slate-500 dark:text-slate-400">Space Group:</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-300">
+                            {crystalState?.spacegroup_number ? renderSpacegroupSymbol(crystalState.spacegroup_number) : 'N/A'}
+                        </span>
+                    </div>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2">
                         <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
                         <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />

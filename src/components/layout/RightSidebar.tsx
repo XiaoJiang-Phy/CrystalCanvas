@@ -99,10 +99,19 @@ export const RightSidebar: React.FC<{
         setIsPhononModalOpen(true);
     };
 
-    const handleSubmitPhonon = async (paths: { scfIn: string, scfOut: string, modes: string }) => {
+    const handleSubmitPhonon = async (paths: { scfIn: string, scfOut: string, modes: string, axsf: string }) => {
         try {
             setIsPhononModalOpen(false);
-            const modesData = await safeInvoke<PhononModeSummary[]>('load_phonon_interactive', paths);
+            let modesData;
+            if (paths.axsf) {
+                modesData = await safeInvoke<PhononModeSummary[]>('load_axsf_phonon', { path: paths.axsf });
+            } else {
+                modesData = await safeInvoke<PhononModeSummary[]>('load_phonon_interactive', {
+                    scf_in: paths.scfIn,
+                    scf_out: paths.scfOut,
+                    modes: paths.modes
+                });
+            }
             if (modesData) {
                 setPhononModes(modesData);
                 setActiveModeIdx(null);

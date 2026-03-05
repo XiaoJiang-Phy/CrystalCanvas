@@ -795,6 +795,53 @@ pub fn load_phonon_interactive(
     Ok(summaries)
 }
 
+/// Load an AXSF file containing both crystal structure and phonon mode data
+#[tauri::command]
+pub fn load_axsf_phonon(
+    path: String,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
+    log::info!("load_axsf_phonon: {}", path);
+    // 1 & 2. Load the crystal structure and phonon data directly from the axsf
+    let (mut new_state, data) = crate::io::axsf_parser::parse_axsf(&path)?;
+    let summaries = data.summaries();
+
+    new_state.phonon_data = Some(data);
+    new_state.active_phonon_mode = None;
+    new_state.phonon_phase = 0.0;
+    
+    // Push new state
+    {
+        let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+        *cs = new_state;
+        
+        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+        let instances = crate::renderer::instance::build_instance_data(
+            &cs.cart_positions,
+            &cs.atomic_numbers,
+            &cs.elements,
+            &settings, &cs.selected_atoms
+        );
+        
+        let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
+        renderer.update_atoms(&instances);
+        renderer.update_lines(&cs, &settings);
+        
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
+        if !renderer.camera.is_perspective {
+            renderer.camera.set_orthographic(extent * 1.5);
+        }
+    }
+
+    Ok(summaries)
+}
+
 /// Select a phonon mode for animation.
 #[tauri::command]
 pub fn set_phonon_mode(
