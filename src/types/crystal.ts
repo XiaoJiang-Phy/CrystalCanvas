@@ -87,4 +87,5 @@ export interface PhononModeSummary {
     index: number;
     frequency_cm1: number;
     is_imaginary: boolean;
+    q_point: [number, number, number];
 }

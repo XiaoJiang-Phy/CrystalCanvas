@@ -33,12 +33,12 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                     <InfoRow label="Atoms:" value={numAtoms.toString()} />
                     <InfoRow label="Space Group:" value={crystalState?.spacegroup_hm || "N/A"} />
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2">
-                        <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a.toFixed(2) || "0.00"} unit="Å" crystalState={crystalState} />
-                        <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha.toFixed(1) || "0.0"} unit="°" crystalState={crystalState} />
-                        <UnitCellInput label="b" paramKey="b" value={crystalState?.cell_b.toFixed(2) || "0.00"} unit="Å" crystalState={crystalState} />
-                        <UnitCellInput label="β" paramKey="beta" value={crystalState?.cell_beta.toFixed(1) || "0.0"} unit="°" crystalState={crystalState} />
-                        <UnitCellInput label="c" paramKey="c" value={crystalState?.cell_c.toFixed(2) || "0.00"} unit="Å" crystalState={crystalState} />
-                        <UnitCellInput label="γ" paramKey="gamma" value={crystalState?.cell_gamma.toFixed(1) || "0.0"} unit="°" crystalState={crystalState} />
+                        <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
+                        <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />
+                        <UnitCellInput label="b" paramKey="b" value={crystalState?.cell_b?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
+                        <UnitCellInput label="β" paramKey="beta" value={crystalState?.cell_beta?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />
+                        <UnitCellInput label="c" paramKey="c" value={crystalState?.cell_c?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
+                        <UnitCellInput label="γ" paramKey="gamma" value={crystalState?.cell_gamma?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />
                     </div>
                     <InfoRow label="Volume:" value={`${vol} Å³`} className="pt-1.5 font-medium" />
                 </div>
@@ -47,14 +47,14 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
             <Panel title="Atom Management">
                 <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 text-[10px] max-h-[220px] overflow-x-auto overflow-y-auto custom-scrollbar pr-1">
                     <table className="w-full text-left">
-                        <thead className="bg-slate-100 dark:bg-slate-800/80 font-medium text-slate-500 dark:text-slate-400">
+                        <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800/80 font-medium text-slate-500 dark:text-slate-400">
                             <tr>
-                                <th className="px-2 py-1.5 text-center">ID</th>
-                                <th className="px-2 py-1.5 text-center">El</th>
-                                <th className="px-2 py-1.5 text-right">x</th>
-                                <th className="px-2 py-1.5 text-right">y</th>
-                                <th className="px-2 py-1.5 text-right">z</th>
-                                <th className="px-2 py-1.5 text-center">Color</th>
+                                <th className="px-2 py-1.5 text-center text-xs">ID</th>
+                                <th className="px-2 py-1.5 text-center text-xs">El</th>
+                                <th className="px-2 py-1.5 text-right text-xs">x</th>
+                                <th className="px-2 py-1.5 text-right text-xs">y</th>
+                                <th className="px-2 py-1.5 text-right text-xs">z</th>
+                                <th className="px-2 py-1.5 text-center text-xs">Color</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">

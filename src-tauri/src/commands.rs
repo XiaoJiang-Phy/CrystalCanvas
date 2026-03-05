@@ -691,17 +691,106 @@ pub fn get_bond_analysis(
 pub fn load_phonon(
     path: String,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
     log::info!("load_phonon: {}", path);
+    // 1. Check if the phonon struct loader provides structural info (Molden/QE output)
     let data = crate::phonon::parse_phonon_file(&path)?;
     let summaries = data.summaries();
 
-    let mut cs = crystal_state
-        .try_lock()
-        .map_err(|_| "Failed to lock state")?;
-    cs.phonon_data = Some(data);
-    cs.active_phonon_mode = None;
-    cs.phonon_phase = 0.0;
+    // 2. We can try to guess or load structural info from phonon data if our state is empty
+    // But dynmat molden/dat doesn't have full cell info, so we just set the phonon data to state
+    {
+        let mut cs = crystal_state
+            .lock()
+            .map_err(|_| "Failed to lock state")?;
+        
+        // Let's ensure the user loaded a structure first.
+        if cs.cart_positions.is_empty() {
+             return Err("Please load a crystal structure (CIF/XYZ/PDB) before loading Phonon data.".to_string());
+        }
+
+        if cs.cart_positions.len() != data.n_atoms {
+             log::warn!("Atom count mismatch: struct={} vs phonon={}", cs.cart_positions.len(), data.n_atoms);
+             // We allow proceeding but this might truncate eigenvectors
+        }
+
+        cs.phonon_data = Some(data);
+        cs.active_phonon_mode = None;
+        cs.phonon_phase = 0.0;
+        
+        // Trigger a reset of renderer instances just in case previous states were playing.
+        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+        let instances = crate::renderer::instance::build_instance_data(
+            &cs.cart_positions,
+            &cs.atomic_numbers,
+            &cs.elements,
+            &settings, &cs.selected_atoms
+        );
+        if let Ok(mut renderer) = renderer_state.lock() {
+            renderer.update_atoms(&instances);
+        }
+    }
+
+    Ok(summaries)
+}
+
+/// Load Phonon Data using explicit QE scf_in, scf_out, and modes files (Interactive Visualizer style)
+#[tauri::command]
+pub fn load_phonon_interactive(
+    _scf_in: String,
+    scf_out: String,
+    modes: String,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
+    log::info!("load_phonon_interactive: out={}, modes={}", scf_out, modes);
+    
+    // 1. Load the crystal structure from scf_out
+    let mut new_state = crate::io::qe_parser::parse_scf_out(&scf_out)?;
+    
+    // 2. Parse phonon data
+    let data = crate::phonon::parse_phonon_file(&modes)?;
+    let summaries = data.summaries();
+
+    if new_state.cart_positions.len() != data.n_atoms {
+         log::warn!("Atom count mismatch: struct={} vs phonon={}", new_state.cart_positions.len(), data.n_atoms);
+    }
+
+    new_state.phonon_data = Some(data);
+    new_state.active_phonon_mode = None;
+    new_state.phonon_phase = 0.0;
+    
+    // Push new state
+    {
+        let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+        *cs = new_state;
+        
+        // Trigger a full renderer update (atoms + unit cell lines + camera)
+        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+        let instances = crate::renderer::instance::build_instance_data(
+            &cs.cart_positions,
+            &cs.atomic_numbers,
+            &cs.elements,
+            &settings, &cs.selected_atoms
+        );
+        
+        let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
+        renderer.update_atoms(&instances);
+        renderer.update_lines(&cs, &settings);
+        
+        // Auto-adjust camera
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
+        if !renderer.camera.is_perspective {
+            renderer.camera.set_orthographic(extent * 1.5);
+        }
+    }
 
     Ok(summaries)
 }
@@ -711,6 +800,7 @@ pub fn load_phonon(
 pub fn set_phonon_mode(
     mode_index: Option<usize>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     let mut cs = crystal_state
         .try_lock()
@@ -726,6 +816,11 @@ pub fn set_phonon_mode(
                 "Mode index {} out of range (0..{})",
                 idx, n_modes
             ));
+        }
+
+        // Hide bonds purely for physics visualization mode
+        if let Ok(mut renderer) = renderer_state.try_lock() {
+            renderer.update_bonds(&[]);
         }
     }
 

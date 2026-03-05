@@ -76,8 +76,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                 <NavButton label="Reset View" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                 <NavButton label="Symmetry" />
 
-                <div className="flex items-center gap-1.5 cursor-pointer" onClick={onToggleLabels}>
-                    <span className="text-xs font-medium select-none">Labels</span>
+                <div className="flex items-center gap-1.5 cursor-pointer" onClick={onToggleLabels} data-tauri-drag-region="false">
+                    <span className="text-xs font-medium select-none" data-tauri-drag-region="false">Labels</span>
                     <ToggleSwitch checked={showLabels} />
                 </div>
 
@@ -86,6 +86,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                 {/* LLM Assistant Toggle */}
                 <button
                     onClick={onToggleAssistant}
+                    data-tauri-drag-region="false"
                     className={cn(
                         "p-1.5 rounded-lg transition-colors",
                         showAssistant
@@ -99,6 +100,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
                 <button
                     onClick={toggleTheme}
+                    data-tauri-drag-region="false"
                     className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
                     title="Toggle Theme"
                 >
@@ -107,6 +109,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
                 <button
                     onClick={onOpenSettings}
+                    data-tauri-drag-region="false"
                     className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
                 >
                     <Settings className="w-3.5 h-3.5" />
@@ -122,6 +125,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.ReactNode, active?: boolean, tooltip?: string, onClick?: () => void }) => (
     <button
         onClick={onClick}
+        data-tauri-drag-region="false"
         className={cn(
             "p-1.5 rounded-md transition-all duration-200",
             active
@@ -135,13 +139,13 @@ const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.Re
 );
 
 const ViewButton = ({ label, onClick }: { label: string, onClick?: () => void }) => (
-    <button onClick={onClick} className="w-7 h-6 flex items-center justify-center text-xs font-mono font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors shadow-sm active:scale-[0.96] ml-0.5">
+    <button onClick={onClick} data-tauri-drag-region="false" className="w-7 h-6 flex items-center justify-center text-xs font-mono font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors shadow-sm active:scale-[0.96] ml-0.5">
         {label}
     </button>
 );
 
 const NavButton = ({ label, onClick }: { label: string, onClick?: () => void }) => (
-    <button onClick={onClick} className="text-xs font-medium hover:text-emerald-500 transition-colors px-2 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800">
+    <button onClick={onClick} data-tauri-drag-region="false" className="text-xs font-medium hover:text-emerald-500 transition-colors px-2 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800">
         {label}
     </button>
 );

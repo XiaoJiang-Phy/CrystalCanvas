@@ -1053,6 +1053,7 @@ mod tests {
             active_phonon_mode: None,
             phonon_phase: 0.0,
             intrinsic_sites: 2,
+            selected_atoms: vec![],
         };
         state.fractional_to_cartesian();
         state

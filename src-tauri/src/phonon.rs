@@ -11,6 +11,8 @@ pub struct PhononMode {
     pub frequency_cm1: f64,
     /// Whether this frequency is imaginary (< 0 in QE convention)
     pub is_imaginary: bool,
+    /// The q-point coordinates for this mode
+    pub q_point: [f64; 3],
     /// Eigenvector per atom: displacement in mass-weighted coordinates
     /// Shape: [n_atoms][3] (normalized)
     pub eigenvectors: Vec<[f64; 3]>,
@@ -22,6 +24,7 @@ pub struct PhononModeSummary {
     pub index: usize,
     pub frequency_cm1: f64,
     pub is_imaginary: bool,
+    pub q_point: [f64; 3],
 }
 
 /// Phonon data container (Gamma-point only for now).
@@ -41,6 +44,7 @@ impl PhononData {
                 index: i,
                 frequency_cm1: m.frequency_cm1,
                 is_imaginary: m.is_imaginary,
+                q_point: m.q_point,
             })
             .collect()
     }
@@ -167,6 +171,7 @@ pub fn parse_molden_phonon(content: &str) -> Result<PhononData, String> {
         .map(|(freq, evecs)| PhononMode {
             frequency_cm1: freq,
             is_imaginary: freq < 0.0,
+            q_point: [0.0, 0.0, 0.0],
             eigenvectors: evecs,
         })
         .collect();
@@ -189,13 +194,27 @@ pub fn parse_molden_phonon(content: &str) -> Result<PhononData, String> {
 pub fn parse_dynmat_dat(content: &str) -> Result<PhononData, String> {
     let mut frequencies: Vec<f64> = Vec::new();
     let mut eigenvectors: Vec<Vec<[f64; 3]>> = Vec::new();
+    let mut q_points: Vec<[f64; 3]> = Vec::new();
     let mut current_vecs: Vec<[f64; 3]> = Vec::new();
+    let mut current_q = [0.0, 0.0, 0.0];
     let mut in_mode = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("freq") {
+        if trimmed.starts_with("q =") {
+            // e.g., "q =       0.0000      0.0000      0.0000"
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 5 && parts[0] == "q" && parts[1] == "=" {
+                if let (Ok(qx), Ok(qy), Ok(qz)) = (
+                    parts[2].parse::<f64>(),
+                    parts[3].parse::<f64>(),
+                    parts[4].parse::<f64>(),
+                ) {
+                    current_q = [qx, qy, qz];
+                }
+            }
+        } else if trimmed.starts_with("freq") {
             // Save previous mode
             if !current_vecs.is_empty() {
                 eigenvectors.push(current_vecs.clone());
@@ -211,6 +230,7 @@ pub fn parse_dynmat_dat(content: &str) -> Result<PhononData, String> {
                     let freq_str = before_cm[eq_pos + 1..].trim();
                     if let Ok(freq) = freq_str.parse::<f64>() {
                         frequencies.push(freq);
+                        q_points.push(current_q);
                     }
                 }
             }
@@ -256,9 +276,11 @@ pub fn parse_dynmat_dat(content: &str) -> Result<PhononData, String> {
     let modes: Vec<PhononMode> = frequencies
         .into_iter()
         .zip(eigenvectors.into_iter())
-        .map(|(freq, evecs)| PhononMode {
+        .zip(q_points.into_iter())
+        .map(|((freq, evecs), q)| PhononMode {
             frequency_cm1: freq,
             is_imaginary: freq < 0.0,
+            q_point: q,
             eigenvectors: evecs,
         })
         .collect();

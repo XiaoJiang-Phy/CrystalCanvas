@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { cn } from '../../utils/cn';
-import { safeInvoke, safeListen } from '../../utils/tauri-mock';
+import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
 import { CrystalState, BondAnalysisResult, PhononModeSummary } from '../../types/crystal';
 import { PromptModal } from './PromptModal';
+import { PhononImportModal } from './PhononImportModal';
 
 export const RightSidebar: React.FC<{
     crystalState: CrystalState | null,
@@ -28,6 +29,7 @@ export const RightSidebar: React.FC<{
     const [isAnimating, setIsAnimating] = useState(false);
     const [amplitude, setAmplitude] = useState(1.0);
     const [openAccordion, setOpenAccordion] = useState<string | null>("Structural Analysis");
+    const [isPhononModalOpen, setIsPhononModalOpen] = useState(false);
 
     const handle_supercell = () => {
         const matrix = [
@@ -83,7 +85,7 @@ export const RightSidebar: React.FC<{
     };
 
     const handle_refresh_bonds = () => {
-        safeInvoke<BondAnalysisResult>('get_bond_analysis', { threshold_factor: 1.2 })
+        safeInvoke<BondAnalysisResult>('get_bond_analysis', { thresholdFactor: 1.2 })
             .then(res => {
                 if (res) {
                     setBondAnalysis(res);
@@ -94,25 +96,22 @@ export const RightSidebar: React.FC<{
     };
 
     const handle_load_phonon = () => {
-        setPromptConfig({
-            isOpen: true,
-            title: "Load Phonon Data",
-            description: "Enter path to .mold or .dat file:",
-            placeholder: "/path/to/file",
-            onSubmit: (path) => {
-                if (path && path.trim().length > 0) {
-                    safeInvoke<PhononModeSummary[]>('load_phonon', { path: path.trim() })
-                        .then(modes => {
-                            if (modes) {
-                                setPhononModes(modes);
-                                setActiveModeIdx(null);
-                                setIsAnimating(false);
-                            }
-                        })
-                        .catch(console.error);
-                }
+        setIsPhononModalOpen(true);
+    };
+
+    const handleSubmitPhonon = async (paths: { scfIn: string, scfOut: string, modes: string }) => {
+        try {
+            setIsPhononModalOpen(false);
+            const modesData = await safeInvoke<PhononModeSummary[]>('load_phonon_interactive', paths);
+            if (modesData) {
+                setPhononModes(modesData);
+                setActiveModeIdx(null);
+                setIsAnimating(false);
             }
-        });
+        } catch (error) {
+            console.error(error);
+            alert(String(error));
+        }
     };
 
     const handle_select_mode = (idx: number) => {
@@ -121,7 +120,10 @@ export const RightSidebar: React.FC<{
             const mode = phononModes.find(m => m.index === idx);
             onActivePhononModeUpdate(mode || null);
         }
-        safeInvoke('set_phonon_mode', { mode_index: idx }).catch(console.error);
+        safeInvoke('set_phonon_mode', { modeIndex: idx }).then(() => {
+            setBondAnalysis(null);
+            if (onBondCountUpdate) onBondCountUpdate(0);
+        }).catch(console.error);
     };
 
     useEffect(() => {
@@ -200,11 +202,20 @@ export const RightSidebar: React.FC<{
                                     onChange={(e) => handle_select_mode(parseInt(e.target.value))}
                                 >
                                     <option value="" disabled>-- Select Mode --</option>
-                                    {phononModes.map((m) => (
-                                        <option key={m.index} value={m.index}>
-                                            Mode {m.index + 1}: {m.frequency_cm1.toFixed(2)} cm⁻¹ {m.is_imaginary ? '(i)' : ''}
-                                        </option>
-                                    ))}
+                                    {Array.from(new Set(phononModes.map(m => m.q_point.join(',')))).map(qStr => {
+                                        const qModes = phononModes.filter(m => m.q_point.join(',') === qStr);
+                                        const [qx, qy, qz] = qStr.split(',').map(Number);
+                                        const isGamma = qx === 0 && qy === 0 && qz === 0;
+                                        return (
+                                            <optgroup key={qStr} label={`q = (${qx.toFixed(3)}, ${qy.toFixed(3)}, ${qz.toFixed(3)})${isGamma ? ' [Γ]' : ''}`}>
+                                                {qModes.map(m => (
+                                                    <option key={m.index} value={m.index}>
+                                                        Mode {m.index + 1}: {m.frequency_cm1.toFixed(2)} cm⁻¹ {m.is_imaginary ? '(i)' : ''}
+                                                    </option>
+                                                ))}
+                                            </optgroup>
+                                        );
+                                    })}
                                 </select>
                             </div>
 
@@ -316,6 +327,13 @@ export const RightSidebar: React.FC<{
                 </div>
             </Accordion>
 
+            {/* Modals */}
+            <PhononImportModal
+                isOpen={isPhononModalOpen}
+                onClose={() => setIsPhononModalOpen(false)}
+                onSubmit={handleSubmitPhonon}
+            />
+
             <PromptModal
                 {...promptConfig}
                 onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
@@ -340,7 +358,7 @@ const NumberInput = ({ label, value, onChange }: { label: string; value: number;
 );
 
 const ActionButton = ({ label, onClick }: { label: string; onClick?: () => void }) => (
-    <button onClick={onClick} className="flex-1 py-1.5 bg-slate-100 dark:bg-slate-800/60 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md text-xs font-medium transition-colors border border-slate-200 dark:border-slate-700 active:scale-[0.98]">
+    <button onClick={onClick} className="flex-1 w-full py-1.5 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-md text-xs font-medium transition-colors border border-emerald-200/50 dark:border-emerald-800/50 active:scale-[0.98] pointer-events-auto">
         {label}
     </button>
 );

@@ -23,7 +23,7 @@ pub fn load_file(path: &str) -> Result<CrystalState, String> {
 }
 
 /// Helper to get atomic numbers for common elements
-fn get_atomic_number(elem: &str) -> u8 {
+pub(crate) fn get_atomic_number(elem: &str) -> u8 {
     let e = elem.trim().to_uppercase();
     match e.as_str() {
         "H" => 1,
