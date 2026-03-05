@@ -315,7 +315,6 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             app_handle
                 .dialog()
                 .file()
-                .add_filter("Crystal Files", &["cif", "pdb", "xyz"])
                 .set_title("Open Structure File")
                 .pick_file(move |file_path| {
                     let Some(path) = file_path else { return };

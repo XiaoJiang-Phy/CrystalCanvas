@@ -46,6 +46,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3.10"
 
 [[bench]]
 name = "bench_ffi"

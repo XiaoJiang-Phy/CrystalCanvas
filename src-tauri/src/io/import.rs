@@ -13,12 +13,36 @@ pub fn load_file(path: &str) -> Result<CrystalState, String> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
+    
+    let filename = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     match ext.as_str() {
         "cif" => CrystalState::from_cif(path),
         "xyz" => load_xyz(path),
         "pdb" => load_pdb(path),
-        _ => Err(format!("Unsupported file extension: {}", ext)),
+        "vasp" => crate::io::poscar_parser::parse_poscar(path),
+        "in" | "pwi" => crate::io::qe_parser::parse_scf_in(path),
+        _ => {
+            // Check literal filenames for cases where extension is missing/different
+            if filename == "poscar" || filename == "contcar" || filename.starts_with("poscar_") {
+                crate::io::poscar_parser::parse_poscar(path)
+            } else if filename.ends_with(".in") || filename.ends_with(".pwi") || filename == "scf" || filename == "input" {
+                crate::io::qe_parser::parse_scf_in(path)
+            } else {
+                // If the file starts with &CONTROL or &SYSTEM, it's likely QE input
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    let first_chunk = content.chars().take(255).collect::<String>().to_lowercase();
+                    if first_chunk.contains("&control") || first_chunk.contains("&system") {
+                        return crate::io::qe_parser::parse_scf_in(path);
+                    }
+                }
+                Err(format!("Unsupported file extension or unknown format: {}", ext))
+            }
+        }
     }
 }
 

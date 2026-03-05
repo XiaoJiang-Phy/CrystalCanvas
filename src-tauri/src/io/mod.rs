@@ -5,3 +5,4 @@ pub mod export;
 pub mod import;
 pub mod qe_parser;
 pub mod axsf_parser;
+pub mod poscar_parser;
