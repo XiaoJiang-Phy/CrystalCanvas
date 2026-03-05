@@ -262,7 +262,10 @@ pub fn translate_atoms_screen(
     let forward = (target - eye).normalize();
     let right = forward.cross(up).normalize();
     let up_dir = right.cross(forward).normalize();
-    let translation = -right * dx * pan_speed + up_dir * dy * pan_speed; // Matches pan calculation
+    // To make an atom follow the mouse, it must move exactly opposite to the camera's translation.
+    // Camera pan: -right * dx + up * dy  (moves camera left/up, so scene appears to move right/down)
+    // Atom drag:  +right * dx - up * dy  (moves atom right/down directly)
+    let translation = right * dx * pan_speed - up_dir * dy * pan_speed;
     
     // Apply this translation to atoms
     let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
