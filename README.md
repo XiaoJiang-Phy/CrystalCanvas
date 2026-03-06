@@ -25,6 +25,20 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 > **⚠️ Slab Cleaving & Cutting Plane:**
 > The "Cutting Plane" tool correctly retains isolated and clean atomic coordinate exports. However, for low-symmetry crystals, it may produce mathematically offset or physically unverified surface terminations in the 3D viewer. This limitation has been hard-fenced from the underlying export formats and will undergo a complete algorithmic rewrite in v0.1.x revisions. Please double check all cleaved topology outputs prior to DFT/MD simulation.
 
+### 🍎 Note for macOS Users (Unverified Developer)
+
+Since this Alpha release is not signed with an Apple Developer Certificate, macOS will prevent it from running with a "Developer cannot be verified" warning.
+
+**To run the app:**
+1. Move `CrystalCanvas.app` to your `/Applications` folder.
+2. **Right-click (or Control-click)** the app icon and select **Open**.
+3. Click **Open** again in the dialog box.
+
+Alternatively, you can run the following command in Terminal to clear the isolation attribute:
+```bash
+sudo xattr -cr /Applications/CrystalCanvas.app
+```
+
 ---
 
 ## 🏗️ Architecture
