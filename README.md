@@ -53,6 +53,8 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 ## 🚀 Getting Started
 
+**New to CrystalCanvas? Check out the [User Manual (v0.1)](docs/UserManual_v0.1.md) for a comprehensive guide on modeling, AI workflows, and DFT exports.**
+
 CrystalCanvas utilizes a **Zero-Global-Pollution** strategy. All toolchains (Rust, Node) and dependencies are isolated within the project directory.
 
 ### 1. Prerequisites (macOS)
@@ -137,7 +139,7 @@ CrystalCanvas/
 │   ├── include/        # Public C-compatible headers (cxx bridge)
 │   ├── src/            # Implementation code (Spglib, Gemmi, Eigen integrations)
 │   └── CMakeLists.txt
-├── docs/               # System documentation (User Manual, Development Notes)
+├── docs/               # System documentation ([User Manual](docs/UserManual_v0.1.md), Development Notes)
 ├── tests/              # End-to-end integration tests & CIF data
 ├── dev_env.sh          # Local toolchain environment activation script
 ├── CHANGELOG.md        # Release history and known issues
