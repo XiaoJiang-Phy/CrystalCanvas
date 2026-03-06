@@ -425,6 +425,42 @@ impl CrystalState {
 
         [x as f32, y as f32, z as f32]
     }
+
+    /// Translates specific atoms by a Cartesian vector (x, y, z), updating their fractional coords.
+    pub fn translate_atoms_cartesian(&mut self, indices: &[usize], translation: glam::Vec3) {
+        let (a, b, c) = (self.cell_a as f32, self.cell_b as f32, self.cell_c as f32);
+        let alpha_rad = self.cell_alpha.to_radians() as f32;
+        let beta_rad = self.cell_beta.to_radians() as f32;
+        let gamma_rad = self.cell_gamma.to_radians() as f32;
+        
+        let cos_alpha = alpha_rad.cos();
+        let cos_beta = beta_rad.cos();
+        let cos_gamma = gamma_rad.cos();
+        let sin_gamma = gamma_rad.sin();
+        
+        let m00 = a;
+        let m01 = b * cos_gamma;
+        let m02 = c * cos_beta;
+        let m11 = b * sin_gamma;
+        let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
+        let m22 = c * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma + 2.0 * cos_alpha * cos_beta * cos_gamma).max(0.0).sqrt()) / sin_gamma;
+        
+        let d_frac_z = translation.z / m22;
+        let d_frac_y = (translation.y - m12 * d_frac_z) / m11;
+        let d_frac_x = (translation.x - m01 * d_frac_y - m02 * d_frac_z) / m00;
+        
+        for &idx in indices {
+            if idx < self.num_atoms() {
+                self.fract_x[idx] += d_frac_x as f64;
+                self.fract_y[idx] += d_frac_y as f64;
+                self.fract_z[idx] += d_frac_z as f64;
+                self.cart_positions[idx][0] += translation.x;
+                self.cart_positions[idx][1] += translation.y;
+                self.cart_positions[idx][2] += translation.z;
+            }
+        }
+        self.version += 1;
+    }
     /// Generate a slab based on Miller indices and layers.
     /// Returns a new CrystalState representing the slab.
     pub fn generate_slab(

@@ -85,6 +85,7 @@ pub fn set_render_flags(
 pub fn update_lattice_params(
     a: f64, b: f64, c: f64,
     alpha: f64, beta: f64, gamma: f64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -114,6 +115,7 @@ pub fn update_lattice_params(
     renderer.update_atoms(&instances);
     renderer.update_lines(&cs, &settings);
     
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -121,6 +123,7 @@ pub fn update_lattice_params(
 #[tauri::command]
 pub fn load_cif_file(
     path: String,
+    app: tauri::AppHandle,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -185,6 +188,7 @@ pub fn load_cif_file(
         }
     }
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -193,6 +197,7 @@ pub fn add_atom(
     element_symbol: String,
     atomic_number: u8,
     fract_pos: [f64; 3],
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -200,7 +205,7 @@ pub fn add_atom(
     log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
 
     let mut cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
         
     let formatted_symbol = crate::llm::router::format_element_symbol(&element_symbol);
@@ -229,12 +234,14 @@ pub fn add_atom(
         renderer.update_lines(&cs, &settings);
     }
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
 #[tauri::command]
 pub fn delete_atoms(
     indices: Vec<usize>,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -242,7 +249,7 @@ pub fn delete_atoms(
     log::info!("delete_atoms: {:?}", indices);
 
     let mut cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
     cs.delete_atoms(&indices);
 
@@ -258,6 +265,7 @@ pub fn delete_atoms(
         renderer.update_lines(&cs, &settings);
     }
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -266,6 +274,7 @@ pub fn translate_atoms_screen(
     indices: Vec<usize>,
     dx: f32,
     dy: f32,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -287,41 +296,8 @@ pub fn translate_atoms_screen(
     let translation = right * dx * pan_speed - up_dir * dy * pan_speed;
     
     // Apply this translation to atoms
-    let mut cs = crystal_state.try_lock().map_err(|_| "Failed to lock state")?;
-    
-    // Inverse orthogonalization to map dx, dy, dz back to fractional coordinates
-    let (a, b, c) = (cs.cell_a as f32, cs.cell_b as f32, cs.cell_c as f32);
-    let alpha_rad = cs.cell_alpha.to_radians() as f32;
-    let beta_rad = cs.cell_beta.to_radians() as f32;
-    let gamma_rad = cs.cell_gamma.to_radians() as f32;
-    
-    let cos_alpha = alpha_rad.cos();
-    let cos_beta = beta_rad.cos();
-    let cos_gamma = gamma_rad.cos();
-    let sin_gamma = gamma_rad.sin();
-    
-    let m00 = a;
-    let m01 = b * cos_gamma;
-    let m02 = c * cos_beta;
-    let m11 = b * sin_gamma;
-    let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
-    let m22 = c * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma + 2.0 * cos_alpha * cos_beta * cos_gamma).max(0.0).sqrt()) / sin_gamma;
-    
-    let d_frac_z = translation.z / m22;
-    let d_frac_y = (translation.y - m12 * d_frac_z) / m11;
-    let d_frac_x = (translation.x - m01 * d_frac_y - m02 * d_frac_z) / m00;
-    
-    for &idx in &indices {
-        if idx < cs.num_atoms() {
-            cs.fract_x[idx] += d_frac_x as f64;
-            cs.fract_y[idx] += d_frac_y as f64;
-            cs.fract_z[idx] += d_frac_z as f64;
-            cs.cart_positions[idx][0] += translation.x;
-            cs.cart_positions[idx][1] += translation.y;
-            cs.cart_positions[idx][2] += translation.z;
-        }
-    }
-    cs.version += 1;
+    let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+    cs.translate_atoms_cartesian(&indices, translation);
     
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
     let instances = crate::renderer::instance::build_instance_data(
@@ -337,6 +313,7 @@ pub fn translate_atoms_screen(
         renderer.update_bonds(&bond_instances);
     }
     
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -345,6 +322,7 @@ pub fn substitute_atoms(
     indices: Vec<usize>,
     new_element_symbol: String,
     new_atomic_number: u8,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -352,7 +330,7 @@ pub fn substitute_atoms(
     log::info!("substitute_atoms: {:?} -> {}", indices, new_element_symbol);
 
     let mut cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
         
     let formatted_symbol = crate::llm::router::format_element_symbol(&new_element_symbol);
@@ -379,6 +357,7 @@ pub fn substitute_atoms(
         renderer.update_lines(&cs, &settings);
     }
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -417,6 +396,7 @@ pub fn preview_supercell(
 #[tauri::command]
 pub fn apply_supercell(
     matrix: [[i32; 3]; 3],
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -473,6 +453,7 @@ pub fn apply_supercell(
     }
     renderer.update_camera();
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -482,6 +463,7 @@ pub fn apply_slab(
     miller: [i32; 3],
     layers: i32,
     vacuum_a: f64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -529,6 +511,7 @@ pub fn apply_slab(
     }
     renderer.update_camera();
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -699,6 +682,7 @@ pub fn get_bond_analysis(
 #[tauri::command]
 pub fn load_phonon(
     path: String,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -742,6 +726,8 @@ pub fn load_phonon(
         }
     }
 
+    app.emit("state_changed", ()).ok();
+
     Ok(summaries)
 }
 
@@ -751,6 +737,7 @@ pub fn load_phonon_interactive(
     scf_in: String,
     #[allow(unused_variables)] scf_out: String,
     modes: String,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -801,6 +788,8 @@ pub fn load_phonon_interactive(
         }
     }
 
+    app.emit("state_changed", ()).ok();
+
     Ok(summaries)
 }
 
@@ -808,6 +797,7 @@ pub fn load_phonon_interactive(
 #[tauri::command]
 pub fn load_axsf_phonon(
     path: String,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -848,6 +838,8 @@ pub fn load_axsf_phonon(
         }
     }
 
+    app.emit("state_changed", ()).ok();
+
     Ok(summaries)
 }
 
@@ -855,11 +847,12 @@ pub fn load_axsf_phonon(
 #[tauri::command]
 pub fn set_phonon_mode(
     mode_index: Option<usize>,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> Result<(), String> {
     let mut cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
 
     if let Some(idx) = mode_index {
@@ -875,13 +868,14 @@ pub fn set_phonon_mode(
         }
 
         // Hide bonds purely for physics visualization mode
-        if let Ok(mut renderer) = renderer_state.try_lock() {
+        if let Ok(mut renderer) = renderer_state.lock() {
             renderer.update_bonds(&[]);
         }
     }
 
     cs.active_phonon_mode = mode_index;
     cs.phonon_phase = 0.0;
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -896,7 +890,7 @@ pub fn set_phonon_phase(
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     let mut cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
 
     cs.phonon_phase = phase;
@@ -1062,6 +1056,7 @@ pub async fn llm_chat(
 #[tauri::command]
 pub fn llm_execute_command(
     command_json: String,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
@@ -1071,7 +1066,7 @@ pub fn llm_execute_command(
         .map_err(|e| format!("Schema validation failed: {}", e))?;
 
     let mut cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
 
     // 2. Layer 2: Physics Sandbox validation
@@ -1098,6 +1093,7 @@ pub fn llm_execute_command(
         renderer.update_lines(&cs, &settings);
     }
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -1106,7 +1102,7 @@ pub fn get_crystal_state(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<crate::crystal_state::CrystalState, String> {
     let cs = crystal_state
-        .try_lock()
+        .lock()
         .map_err(|_| "Failed to lock state")?;
     Ok(cs.clone())
 }
@@ -1308,6 +1304,7 @@ pub fn update_settings(
 #[tauri::command]
 pub fn update_selection(
     indices: Vec<usize>,
+    app: tauri::AppHandle,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
@@ -1327,11 +1324,13 @@ pub fn update_selection(
         renderer.update_atoms(&instances);
         renderer.update_bonds(&bond_instances);
     }
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 /// Restore the original unit cell from the base state.
 #[tauri::command]
 pub fn restore_unitcell(
+    app: tauri::AppHandle,
     base_state: State<'_, BaseCrystalState>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
@@ -1379,6 +1378,7 @@ pub fn restore_unitcell(
 
 
 
+    app.emit("state_changed", ()).ok();
     Ok(())
 }
 

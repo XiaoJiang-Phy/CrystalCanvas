@@ -1,7 +1,7 @@
 // [Overview: Root React application component managing global state and layout interactions.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { safeInvoke, safeListen } from './utils/tauri-mock';
 import { CrystalState, PhononModeSummary } from './types/crystal';
 import { Shell } from './components/layout/Shell';
@@ -13,7 +13,9 @@ import { LlmAssistant } from './components/layout/LlmAssistant';
 import { SettingsModal } from './components/layout/SettingsModal';
 import { PromptModal } from './components/layout/PromptModal';
 import { ExportImageModal } from './components/layout/ExportImageModal';
-
+import { useFileDrop } from './hooks/useFileDrop';
+import { useTauriMenu } from './hooks/useTauriMenu';
+import { useCameraInteraction } from './hooks/useCameraInteraction';
 function App() {
     const viewportRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -40,13 +42,13 @@ function App() {
     const [selectedAtoms, setSelectedAtoms] = useState<number[]>([]);
     const selectedAtomsRef = useRef<number[]>([]);
 
-    const updateSelection = (sel: number[] | ((prev: number[]) => number[])) => {
+    const updateSelection = useCallback((sel: number[] | ((prev: number[]) => number[])) => {
         setSelectedAtoms(prev => {
             const next = typeof sel === 'function' ? sel(prev) : sel;
             selectedAtomsRef.current = next;
             return next;
         });
-    };
+    }, []);
 
     const [bondCount, setBondCount] = useState<number | undefined>(undefined);
     const [activePhononMode, setActivePhononMode] = useState<PhononModeSummary | null>(null);
@@ -60,167 +62,44 @@ function App() {
         onSubmit: (value: string) => void;
     }>({ isOpen: false, title: "", onSubmit: () => { } });
 
-    const fetch_crystal_state = async () => {
+    const fetch_crystal_state = useCallback(async () => {
         try {
             const state = await safeInvoke<CrystalState>('get_crystal_state');
             if (state) setCrystalState(state);
         } catch (e) {
             console.error(e);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetch_crystal_state();
-        const interval = setInterval(fetch_crystal_state, 1000);
-        return () => clearInterval(interval);
+        let unlistenStateChanged = () => { };
+        safeListen('state_changed', () => {
+            fetch_crystal_state();
+        }).then(f => unlistenStateChanged = f).catch(console.warn);
+
+        return () => {
+            unlistenStateChanged();
+        };
     }, []);
 
     // Menu and File drop event listener
-    useEffect(() => {
-        let unlistenDrop = () => { };
-        let unlistenHover = () => { };
-        let unlistenCancel = () => { };
-        let unlistenMenu = () => { };
-        let unlistenProjection = () => { };
+    useFileDrop({ setIsDragging, onFileLoaded: fetch_crystal_state });
 
-        const handleDrop = (path: string | undefined) => {
-            if (path) {
-                console.log('Got drop path:', path);
-                safeInvoke('load_cif_file', { path })
-                    .then(fetch_crystal_state)
-                    .catch(e => alert(`Failed to load structure:\n${e}`));
-            }
-        };
-
-        // Tauri v1 / fallback file drop event
-        safeListen<{ paths: string[] }>('tauri://file-drop', (event) => {
-            setIsDragging(false);
-            handleDrop(event.payload.paths?.[0]);
-        }).then(f => unlistenDrop = f).catch(console.warn);
-
-        // Tauri v2 drag-drop event
-        let unlistenDragDrop = () => { };
-        safeListen<{ paths: string[] }>('tauri://drag-drop', (event) => {
-            setIsDragging(false);
-            handleDrop(event.payload.paths?.[0]);
-        }).then(f => unlistenDragDrop = f).catch(console.warn);
-
-        safeListen('tauri://file-drop-hover', () => setIsDragging(true)).then(f => unlistenHover = f).catch(console.warn);
-        safeListen('tauri://drag-enter', () => setIsDragging(true)).catch(console.warn);
-
-        safeListen('tauri://file-drop-cancelled', () => setIsDragging(false)).then(f => unlistenCancel = f).catch(console.warn);
-        safeListen('tauri://drag-leave', () => setIsDragging(false)).catch(console.warn);
-
-        safeListen<string>('menu-action', (event) => {
-            const action = event.payload;
-            console.log("Menu action received:", action);
-
-            if (action === 'toggle_dark_mode') {
-                document.documentElement.classList.toggle('dark');
-            } else if (action === 'toggle_llm_assistant') {
-                setShowAssistant(prev => !prev);
-            } else if (action === 'view_settings') {
-                setIsSettingsOpen(true);
-            } else if (action === 'export_image') {
-                setIsExportImageOpen(true);
-            } else if (action.startsWith('view_axis_')) {
-                safeInvoke('set_camera_view_axis', { axis: action.replace('view_axis_', '') })
-                    .catch(console.error);
-            } else if (action === 'delete_selected') {
-                if (selectedAtomsRef.current.length > 0) {
-                    safeInvoke('delete_atoms', { indices: selectedAtomsRef.current })
-                        .then(() => updateSelection([]))
-                        .catch(console.error);
-                } else {
-                    alert("No atom selected. Please select an atom first.");
-                }
-            } else if (action === 'open_supercell_dialog') {
-                alert("Please use the Supercell Construction panel in the Right Sidebar.");
-            } else if (action === 'open_slab_dialog') {
-                alert("Please use the Cutting Plane panel in the Right Sidebar.");
-            } else if (action === 'open_add_atom_dialog') {
-                setPromptConfig({
-                    isOpen: true,
-                    title: "Add Atom",
-                    description: "Enter new element and fractional position (e.g., 'C 0.5 0.5 0.5'):",
-                    placeholder: "C 0.5 0.5 0.5",
-                    onSubmit: (input) => {
-                        const parts = input.trim().split(/\s+/);
-                        if (parts.length >= 4) {
-                            const elem = parts[0];
-                            const x = parseFloat(parts[1]);
-                            const y = parseFloat(parts[2]);
-                            const z = parseFloat(parts[3]);
-                            safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] })
-                                .then(fetch_crystal_state)
-                                .catch(e => alert(e));
-                        } else {
-                            alert("Invalid format. Use 'Symbol X Y Z'.");
-                        }
-                    }
-                });
-            } else if (action === 'open_replace_element_dialog') {
-                if (selectedAtomsRef.current.length > 0) {
-                    setPromptConfig({
-                        isOpen: true,
-                        title: "Replace Atom(s)",
-                        description: "Enter new element symbol (e.g., Fe, O, C):",
-                        placeholder: "Element symbol",
-                        onSubmit: (newElem) => {
-                            if (newElem && newElem.trim().length > 0) {
-                                safeInvoke('substitute_atoms', {
-                                    indices: selectedAtomsRef.current,
-                                    newElementSymbol: newElem.trim(),
-                                    newAtomicNumber: 0
-                                }).then(fetch_crystal_state).catch(e => alert(e));
-                            }
-                        }
-                    });
-                } else {
-                    alert("No atom selected. Please select an atom first.");
-                }
-            } else if (action.startsWith('show_spacegroup:')) {
-                const sg = action.split(':')[1];
-                alert(`Space Group Analysis\\n\\nHermann-Mauguin: ${sg}`);
-            } else if (action.startsWith('toggle_')) {
-                const flag = action.replace('toggle_', '');
-                if (flag === 'cell') {
-                    renderFlagsRef.current.cell = !renderFlagsRef.current.cell;
-                    setShowCell(renderFlagsRef.current.cell);
-                }
-                else if (flag === 'bonds') {
-                    renderFlagsRef.current.bonds = !renderFlagsRef.current.bonds;
-                    setShowBonds(renderFlagsRef.current.bonds);
-                }
-                else if (flag === 'labels') {
-                    renderFlagsRef.current.labels = !renderFlagsRef.current.labels;
-                    setShowLabels(renderFlagsRef.current.labels);
-                }
-
-                safeInvoke('set_render_flags', {
-                    showCell: renderFlagsRef.current.cell,
-                    showBonds: renderFlagsRef.current.bonds
-                }).then(() => {
-                    console.log('[App] set_render_flags OK:', { showCell: renderFlagsRef.current.cell, showBonds: renderFlagsRef.current.bonds });
-                }).catch(console.error);
-            } else if (action === 'show_about') {
-                alert("CrystalCanvas\\nVersion 1.0\\nPowered by Tauri, React, wgpu, and C++.\\nLicense: MIT OR Apache-2.0");
-            }
-        }).then(f => unlistenMenu = f).catch(console.warn);
-        // Listen for projection changes explicitly triggered by the Rust backend
-        safeListen<{ is_perspective: boolean }>('view_projection_changed', (event) => {
-            setIsPerspective(event.payload.is_perspective);
-        }).then((f: () => void) => unlistenProjection = f).catch(console.warn);
-
-        return () => {
-            unlistenDrop();
-            unlistenHover();
-            unlistenCancel();
-            unlistenDragDrop();
-            unlistenMenu();
-            unlistenProjection();
-        };
-    }, []);
+    useTauriMenu({
+        setShowAssistant,
+        setIsSettingsOpen,
+        setIsExportImageOpen,
+        selectedAtomsRef,
+        updateSelection,
+        setPromptConfig,
+        onStateChange: fetch_crystal_state,
+        renderFlagsRef,
+        setShowCell,
+        setShowBonds,
+        setShowLabels,
+        setIsPerspective
+    });
 
     // ResizeObserver to update viewport bounds to wgpu backend
     useEffect(() => {
@@ -243,110 +122,14 @@ function App() {
         };
     }, []);
 
-    // Attach pointer and wheel events directly to the viewport div
-    // so that sidebar/topbar clicks don't trigger camera operations
-    useEffect(() => {
-        const el = viewportRef.current;
-        if (!el) return;
-
-        const onPointerDown = (e: PointerEvent) => {
-            if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
-            if (e.button === 2) {
-                setContextMenu({ x: e.clientX, y: e.clientY });
-                return;
-            }
-
-            pointerDownPos.current = { x: e.clientX, y: e.clientY };
-
-            if (interactionMode === 'rotate' || interactionMode === 'move' || e.button === 1) {
-                isDraggingCamera.current = true;
-                lastMousePos.current = { x: e.clientX, y: e.clientY };
-                el.setPointerCapture(e.pointerId);
-            }
-        };
-
-        const onPointerMove = (e: PointerEvent) => {
-            if (!isDraggingCamera.current) return;
-            const dx = e.clientX - lastMousePos.current.x;
-            const dy = e.clientY - lastMousePos.current.y;
-            lastMousePos.current = { x: e.clientX, y: e.clientY };
-
-            if (e.buttons === 1 && interactionMode === 'move' && selectedAtoms.length > 0) {
-                safeInvoke('translate_atoms_screen', { indices: selectedAtoms, dx, dy })
-                    .then(fetch_crystal_state)
-                    .catch(console.error);
-            } else if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
-                safeInvoke('pan_camera', { dx, dy }).catch(console.error);
-            } else if (e.buttons === 1 && interactionMode === 'rotate') {
-                safeInvoke('rotate_camera', { dx: dx * 1.0, dy: dy * 1.0 }).catch(console.error);
-            }
-        };
-
-        const onPointerUp = (e: PointerEvent) => {
-            if (isDraggingCamera.current) {
-                isDraggingCamera.current = false;
-                el.releasePointerCapture(e.pointerId);
-            }
-            if (e.button === 0 && interactionMode === 'select') {
-                const ddx = Math.abs(e.clientX - pointerDownPos.current.x);
-                const ddy = Math.abs(e.clientY - pointerDownPos.current.y);
-                if (ddx < 5 && ddy < 5) {
-                    const rect = el.getBoundingClientRect();
-                    const dpr = window.devicePixelRatio || 1;
-                    const x = (e.clientX - rect.left) * dpr;
-                    const y = (e.clientY - rect.top) * dpr;
-                    safeInvoke<number | null>('pick_atom', {
-                        x, y,
-                        screenW: rect.width * dpr,
-                        screenH: rect.height * dpr
-                    }).then((idx) => {
-                        console.log("pick_atom returned:", idx, "at", { x, y });
-                        updateSelection(prev => {
-                            let newSel = [...prev];
-                            if (idx !== null && idx !== undefined) {
-                                if (e.shiftKey) {
-                                    if (newSel.includes(idx)) {
-                                        newSel = newSel.filter(i => i !== idx); // Toggle off
-                                    } else {
-                                        newSel.push(idx); // Toggle on
-                                    }
-                                } else {
-                                    newSel = [idx]; // Single selection replaces all
-                                }
-                            } else {
-                                if (!e.shiftKey) {
-                                    newSel = []; // Clicking empty space clears selection unless shift is held
-                                }
-                            }
-                            safeInvoke('update_selection', { indices: newSel }).catch(console.error);
-                            return newSel;
-                        });
-                    }).catch((err) => {
-                        console.error("pick_atom error:", err);
-                    });
-                }
-            }
-        };
-
-        const onWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            safeInvoke('zoom_camera', { delta: Math.sign(e.deltaY) }).catch(console.error);
-        };
-
-        el.addEventListener('pointerdown', onPointerDown);
-        el.addEventListener('pointermove', onPointerMove);
-        el.addEventListener('pointerup', onPointerUp);
-        el.addEventListener('pointercancel', onPointerUp);
-        el.addEventListener('wheel', onWheel, { passive: false });
-
-        return () => {
-            el.removeEventListener('pointerdown', onPointerDown);
-            el.removeEventListener('pointermove', onPointerMove);
-            el.removeEventListener('pointerup', onPointerUp);
-            el.removeEventListener('pointercancel', onPointerUp);
-            el.removeEventListener('wheel', onWheel);
-        };
-    }, [interactionMode]);
+    useCameraInteraction({
+        viewportRef,
+        interactionMode,
+        selectedAtoms,
+        updateSelection,
+        setContextMenu,
+        onStateChange: fetch_crystal_state
+    });
 
     const handle_context_menu = (e: React.MouseEvent) => {
         e.preventDefault();
