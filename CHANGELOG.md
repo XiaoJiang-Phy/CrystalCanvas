@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Event-Driven UI**: Deeply decoupled Tauri Command bindings with React custom Hooks for seamless state propagation.
 
 ### Known Issues
-- **⚠️ Slab Cleaving (Cutting Plane) Topologies**: The "Cutting Plane" feature currently functions correctly from a purely coordinate export perspective (underlying data is clean and isolated). However, it occasionally produces mathematically offset or visually incorrect unphysical topologies for low-symmetry crystals. We are aggressively rewriting the internal physics bounding box clipping logic to prepare for `0.1.x` fixes.
+- **⚠️ Platform Support**: Due to rendering engine (`wgpu`) backend compatibility issues, **Windows** and **Ubuntu (Linux)** versions are temporarily broken (Blank/Transparent screen or extreme lag). For this `v0.1.0` alpha, **only macOS is officially supported and available for download**. We plan to fix the Vulkan/DX12 rendering pipelines in a future release.
+- **⚠️ Slab Cleaving (Cutting Plane) Topologies**: The "Cutting Plane" feature currently functions correctly from a purely coordinate export perspective (underlying data is clean and isolated). However, it occasionally produces mathematically offset or visually incorrect unphysical topologies for low-symmetry crystals. We are aggressively rewriting the internal physics logic using rigorous linear algebra and number theory for a future release.
 
 ### Security
 - **Strict Data Pipeline**: Enforced separation between `f64` calculation models and `f32` render projections to avoid floating-point drift accumulation in `.cif` to `.in` workflows.
