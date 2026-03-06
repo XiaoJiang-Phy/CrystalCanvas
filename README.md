@@ -123,21 +123,24 @@ RUST_LOG=info cargo run --bin render_demo
 
 ```text
 CrystalCanvas/
-├── src-tauri/          # Rust backend (Tauri commands, state handling, wgpu layer)
-│   ├── src/          # Rust core logic (State Manager, Command Router)
-│   ├── build.rs        # Unified Rust + C++ build script (cmake crate)
+├── .github/            # GitHub Actions (CI/CD release workflows)
+├── src-tauri/          # Rust backend (Tauri commands, state handling, wgpu orchestration)
+│   ├── shaders/        # WGSL compute/render shader sources
+│   ├── src/            # Rust core logic (State Manager, Command Router)
+│   ├── build.rs        # Unified Rust + C++ build script (cmake/cxx bridge)
 │   └── Cargo.toml
 ├── src/                # React frontend (TypeScript + TailwindCSS components)
-│   ├── components/
+│   ├── components/     # UI Panel components
+│   ├── hooks/          # Custom React hooks (tauri events, file-drop, 3D interaction)
 │   └── types/          # Strict TS IPC mappings (e.g., CrystalState, CrystalCommand)
 ├── cpp/                # C++ physics kernel
 │   ├── include/        # Public C-compatible headers (cxx bridge)
 │   ├── src/            # Implementation code (Spglib, Gemmi, Eigen integrations)
 │   └── CMakeLists.txt
-├── shaders/            # WGSL compute/render shader sources
-├── docs/               # System documentation and knowledge base
+├── docs/               # System documentation (User Manual, Development Notes)
+├── tests/              # End-to-end integration tests & CIF data
 ├── dev_env.sh          # Local toolchain environment activation script
-├── pnpm-lock.yaml      # Strict dependency lockfile
+├── CHANGELOG.md        # Release history and known issues
 └── README.md
 ```
 
@@ -151,7 +154,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 - **Primary dev platform**: macOS (Intel & Apple Silicon)
 - **Environment toolchains** should be installed locally within the project directory when possible (see `.gitignore` for excluded paths).
-- Internal docs (`roadmap.md`, `docs/`) are **not tracked in git** — they are local planning documents.
+- Documentation in `docs/` and `CHANGELOG.md` is tracked for release transparency.
 
 ---
 
