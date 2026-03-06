@@ -246,6 +246,7 @@ fn load_xyz(path: &str) -> Result<CrystalState, String> {
         state.occupancies.push(1.0);
         state.atomic_numbers.push(at_num);
     }
+    state.intrinsic_sites = state.num_atoms();
     state.fractional_to_cartesian();
 
     Ok(state)
@@ -419,6 +420,7 @@ fn load_pdb(path: &str) -> Result<CrystalState, String> {
         state.atomic_numbers.push(at_num);
     }
 
+    state.intrinsic_sites = state.num_atoms();
     state.fractional_to_cartesian();
     Ok(state)
 }

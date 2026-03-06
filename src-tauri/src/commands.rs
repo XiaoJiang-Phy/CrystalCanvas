@@ -748,17 +748,17 @@ pub fn load_phonon(
 /// Load Phonon Data using explicit QE scf_in, scf_out, and modes files (Interactive Visualizer style)
 #[tauri::command]
 pub fn load_phonon_interactive(
-    _scf_in: String,
-    scf_out: String,
+    scf_in: String,
+    #[allow(unused_variables)] scf_out: String,
     modes: String,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
-    log::info!("load_phonon_interactive: out={}, modes={}", scf_out, modes);
+    log::info!("load_phonon_interactive: in={}, modes={}", scf_in, modes);
     
-    // 1. Load the crystal structure from scf_out
-    let mut new_state = crate::io::qe_parser::parse_scf_out(&scf_out)?;
+    // 1. Load the crystal structure from scf_in now (since its parser is fully robust)
+    let mut new_state = crate::io::qe_parser::parse_scf_in(&scf_in)?;
     
     // 2. Parse phonon data
     let data = crate::phonon::parse_phonon_file(&modes)?;
@@ -948,36 +948,42 @@ pub struct BaseCrystalState(pub std::sync::Mutex<Option<crate::crystal_state::Cr
 
 
 fn get_api_key(provider: &str, provided_key: &str) -> String {
-    if !provided_key.trim().is_empty() && provided_key != "********" {
+    let clean_provided = provided_key.trim();
+    if !clean_provided.is_empty() && clean_provided != "********" && clean_provided != "••••••••" {
         // Save to OS Keychain
         if let Ok(entry) = keyring::Entry::new("CrystalCanvas", provider) {
-            let _ = entry.set_password(provided_key); // Ignore errors if keychain is unavailable
+            let _ = entry.set_password(clean_provided); // Ignore errors if keychain is unavailable
         }
-        return provided_key.to_string();
+        return clean_provided.to_string();
     }
 
     // Try to load from keychain
     if let Ok(entry) = keyring::Entry::new("CrystalCanvas", provider)
         && let Ok(pwd) = entry.get_password()
     {
-        return pwd;
+        if !pwd.trim().is_empty() && pwd.trim() != "********" && pwd.trim() != "••••••••" {
+            return pwd.trim().to_string();
+        }
     }
 
     // Fallback to .env for development
     dotenvy::dotenv().ok();
     dotenvy::from_path("../.env").ok();
-
-    let env_key = match provider {
-        "openai" => "OPENAI_API_KEY",
-        "deepseek" => "DEEPSEEK_API_KEY",
-        "claude" => "ANTHROPIC_API_KEY",
-        "gemini" => "GEMINI_API_KEY",
-        _ => "",
+    
+    // Case-insensitive env var search
+    let target_key = if provider == "claude" {
+        "anthropic_api_key".to_string()
+    } else {
+        format!("{}_api_key", provider.to_lowercase())
     };
 
-    std::env::var(env_key)
-        .or_else(|_| std::env::var(format!("{}_API_KEY", provider.to_uppercase())))
-        .unwrap_or_default()
+    for (k, v) in std::env::vars() {
+        if k.to_lowercase() == target_key {
+            return v.trim().to_string();
+        }
+    }
+
+    String::new()
 }
 
 #[tauri::command]
@@ -1089,12 +1095,6 @@ pub fn llm_execute_command(
     );
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
-        // We technically need `cs` to build lines, but we just dropped it!
-        // We shouldn't drop `cs` if we use it for lines since we just computed state.
-        // Wait, the fastest way is to skip re-locking and just not drop it. Since we already refactored commands, let's lock it again.
-    }
-    let cs = crystal_state.lock().map_err(|_| "Failed")?;
-    if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_lines(&cs, &settings);
     }
 

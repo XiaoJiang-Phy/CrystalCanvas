@@ -62,8 +62,8 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         }
 
         try {
-            const hasKey = await safeInvoke<boolean>('check_api_key_status', { provider_type: newProvider });
-            setApiKey(hasKey ? '••••••••' : '');
+            const hasKey = await safeInvoke<boolean>('check_api_key_status', { providerType: newProvider });
+            setApiKey(hasKey ? '********' : '');
         } catch {
             setApiKey('');
         }
@@ -78,7 +78,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
     const saveSettings = async () => {
         try {
-            await safeInvoke('llm_configure', { provider_type: providerType, api_key: apiKey, model });
+            await safeInvoke('llm_configure', { providerType, apiKey, model });
             setShowSettings(false);
             if (messages.length === 0) {
                 setMessages([{
@@ -102,7 +102,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         setLoading(true);
 
         try {
-            const rawResponse = await safeInvoke<string>('llm_chat', { user_message: userMsg.text, selected_indices: null });
+            const rawResponse = await safeInvoke<string>('llm_chat', { userMessage: userMsg.text, selectedIndices: null });
             const response = rawResponse || '';
 
             let cleanResponse = response;
@@ -157,7 +157,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
     const handleExecute = async (json: string) => {
         try {
-            await safeInvoke('llm_execute_command', { command_json: json });
+            await safeInvoke('llm_execute_command', { commandJson: json });
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: 'system',
@@ -264,14 +264,18 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
             {/* Content Area */}
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
                 {showSettings ? (
-                    <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+                    <div className="p-4 flex flex-col gap-4 overflow-y-auto">
                         {/* Provider */}
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Provider</label>
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Provider</label>
                             <select
                                 value={providerType}
                                 onChange={(e) => handleProviderChange(e.target.value)}
-                                className="w-full text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500"
+                                className={cn(
+                                    "w-full text-sm bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg py-2 px-3",
+                                    "text-slate-700 dark:text-slate-200 outline-none",
+                                    "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all cursor-pointer appearance-none"
+                                )}
                             >
                                 <option value="openai">OpenAI Compatible</option>
                                 <option value="deepseek">DeepSeek</option>
@@ -283,47 +287,56 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
                         {/* API Key with show/hide toggle */}
                         {providerType !== 'ollama' && (
-                            <div className="flex flex-col gap-1">
-                                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">API Key</label>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">API Key</label>
                                 <div className="relative flex items-center">
                                     <input
                                         type={showApiKey ? 'text' : 'password'}
                                         value={apiKey}
                                         onChange={(e) => setApiKey(e.target.value)}
-                                        placeholder="Enter API Key (or loaded from Keychain)"
-                                        className="w-full text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1.5 pl-2 pr-9 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono"
+                                        placeholder="Enter API Key"
+                                        className={cn(
+                                            "w-full text-sm bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg py-2 pl-3 pr-9",
+                                            "text-slate-700 dark:text-slate-200 outline-none",
+                                            "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all font-mono"
+                                        )}
                                     />
                                     <button
                                         type="button"
                                         onClick={() => setShowApiKey(v => !v)}
-                                        className="absolute right-2 text-slate-400 hover:text-emerald-500 text-xs transition-colors select-none"
+                                        className="absolute right-3 text-slate-400 hover:text-emerald-500 text-sm transition-colors select-none"
                                         title={showApiKey ? 'Hide key' : 'Show key'}
                                     >
                                         {showApiKey ? '🙈' : '👁'}
                                     </button>
                                 </div>
-                                {apiKey === '••••••••' && (
-                                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
-                                        ✅ Key loaded from Keychain / .env
+                                {apiKey === '********' && (
+                                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+                                        <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                                        Key loaded from Keychain / .env
                                     </p>
                                 )}
                             </div>
                         )}
 
                         {/* Model */}
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Model</label>
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Model</label>
                             <input
                                 type="text"
                                 value={model}
                                 onChange={(e) => setModel(e.target.value)}
-                                className="w-full text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md py-1.5 px-2 text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono"
+                                className={cn(
+                                    "w-full text-sm bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg py-2 px-3",
+                                    "text-slate-700 dark:text-slate-200 outline-none",
+                                    "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all font-mono"
+                                )}
                             />
                         </div>
 
                         <button
                             onClick={saveSettings}
-                            className="mt-2 w-full py-2 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-md text-sm font-medium transition-colors shadow-sm"
+                            className="mt-2 w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-lg text-sm font-semibold transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30"
                         >
                             Save &amp; Start Chat
                         </button>

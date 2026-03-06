@@ -297,6 +297,7 @@ pub fn parse_scf_in(path: &str) -> Result<CrystalState, String> {
         occupancies: vec![1.0; elems.len()],
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
         version: 1,
+        intrinsic_sites: elems.len(),
         ..Default::default()
     };
 

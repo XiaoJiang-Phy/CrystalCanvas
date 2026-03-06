@@ -115,8 +115,8 @@ export const RightSidebar: React.FC<{
                 modesData = await safeInvoke<PhononModeSummary[]>('load_axsf_phonon', { path: paths.axsf });
             } else {
                 modesData = await safeInvoke<PhononModeSummary[]>('load_phonon_interactive', {
-                    scf_in: paths.scfIn,
-                    scf_out: paths.scfOut,
+                    scfIn: paths.scfIn,
+                    scfOut: paths.scfOut,
                     modes: paths.modes
                 });
             }

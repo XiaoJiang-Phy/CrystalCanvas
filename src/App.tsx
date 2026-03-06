@@ -362,7 +362,7 @@ function App() {
 
     const handle_set_perspective = (perspective: boolean) => {
         setIsPerspective(perspective);
-        safeInvoke('set_camera_projection', { is_perspective: perspective }).catch(console.error);
+        safeInvoke('set_camera_projection', { isPerspective: perspective }).catch(console.error);
     };
 
     const toggle_bonds = () => {

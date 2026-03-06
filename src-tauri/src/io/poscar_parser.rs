@@ -70,6 +70,7 @@ pub fn parse_poscar(path: &str) -> Result<CrystalState, String> {
     let mut state = CrystalState {
         name,
         version: 1,
+        intrinsic_sites: counts.iter().sum(),
         ..Default::default()
     };
 
