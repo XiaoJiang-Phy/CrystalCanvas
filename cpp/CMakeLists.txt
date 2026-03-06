@@ -25,12 +25,12 @@ target_include_directories(crystal_kernel
     PRIVATE third_party/spglib/include
 )
 
-target_link_libraries(crystal_kernel PUBLIC symspg)
+target_link_libraries(crystal_kernel PUBLIC Spglib_symspg)
 
 # The CXX bridge will link against crystal_kernel
 
 # Ensure libraries are installed so cmake-rs can find them in the prefix
-install(TARGETS crystal_kernel symspg
+install(TARGETS crystal_kernel
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
