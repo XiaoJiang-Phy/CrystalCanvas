@@ -4,7 +4,9 @@ fn main() {
     // Force macOS deployment target to 10.12 to match Rust's target
     #[cfg(target_os = "macos")]
     {
-        std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "10.12");
+        unsafe {
+            std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "10.12");
+        }
     }
 
     println!("cargo:rerun-if-changed=../cpp/src/physics_kernel.cpp");
