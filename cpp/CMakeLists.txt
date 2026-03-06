@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_definitions(EIGEN_DEFAULT_TO_ROW_MAJOR=0)
 
 # Add Spglib as a subdirectory (statically linked)
+set(SPGLIB_INSTALL ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/spglib)
 
 # Add Eigen (header-only)
@@ -27,3 +28,10 @@ target_include_directories(crystal_kernel
 target_link_libraries(crystal_kernel PUBLIC symspg)
 
 # The CXX bridge will link against crystal_kernel
+
+# Ensure libraries are installed so cmake-rs can find them in the prefix
+install(TARGETS crystal_kernel symspg
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+)

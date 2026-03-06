@@ -37,17 +37,26 @@ fn main() {
         .build();
 
     // Tell cargo where to find the compiled spglib (symspg) and crystal_kernel
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "release".to_string());
+    let config = if profile == "debug" { "Debug" } else { "Release" };
+
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
+    println!("cargo:rustc-link-search=native={}/lib/{}", dst.display(), config);
+    println!("cargo:rustc-link-search=native={}/build", dst.display());
+    println!("cargo:rustc-link-search=native={}/build/{}", dst.display(), config);
     println!(
         "cargo:rustc-link-search=native={}/build/third_party/spglib",
         dst.display()
     );
+    println!(
+        "cargo:rustc-link-search=native={}/build/third_party/spglib/{}",
+        dst.display(),
+        config
+    );
 
-    // In Spglib cmake, it produces symspg.a
+    // In Spglib cmake, it produces symspg.a or symspg.lib
     println!("cargo:rustc-link-lib=static=symspg");
-
-    // In our CMakeLists.txt, we produce crystal_kernel.a
-    println!("cargo:rustc-link-search=native={}/build", dst.display()); // CMake puts it in out/build sometimes
+    // In our CMakeLists.txt, we produce crystal_kernel.a or crystal_kernel.lib
     println!("cargo:rustc-link-lib=static=crystal_kernel");
 
     // Tauri build
