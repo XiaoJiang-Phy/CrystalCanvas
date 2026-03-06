@@ -77,9 +77,9 @@ CrystalCanvas ships with an experimental, highly context-aware Semantic AI built
 The LLM does **not** write code. Instead, it acts as a "Semantic Parameterizer" mapping your fuzzy human language into rigorous C++/Rust tool calls.
 
 **Try asking it:**
-- *"Turn all Oxygen atoms on the top surface into Phosphorus."*
-- *"Expand this primitive cell into a 2x2x2 supercell and give me the new atomic count."*
-- *"I need to export this to LAMMPS format but I want you to replace the center iron atom with cobalt first."*
+- *"Replace all Sodium atoms with Potassium."*
+- *"We want to substitute Fe for Co across the entire structure."*
+- *"Expand this primitive cell into a 2x2x2 supercell."*
 
 When the LLM formulates a command plan, it will present a JSON card. You must explicitly click **Execute** to approve the operation.
 

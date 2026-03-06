@@ -20,6 +20,13 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 ---
 
+## 🛠️ Known Issues (v0.1 Alpha)
+
+> **⚠️ Slab Cleaving & Cutting Plane:**
+> The "Cutting Plane" tool correctly retains isolated and clean atomic coordinate exports. However, for low-symmetry crystals, it may produce mathematically offset or physically unverified surface terminations in the 3D viewer. This limitation has been hard-fenced from the underlying export formats and will undergo a complete algorithmic rewrite in v0.1.x revisions. Please double check all cleaved topology outputs prior to DFT/MD simulation.
+
+---
+
 ## 🏗️ Architecture
 
 ```
@@ -105,8 +112,8 @@ RUST_LOG=info cargo run --bin render_demo
 - [x] **M4-M6: UI Integration & Geometry Ops** — Hybrid window, slab cleaving, supercells, atomic operations.
 - [x] **M7-M8: DFT/MD Ecology & I/O Pipeline** — Overlap detection (MIC), native exporters (VASP, QE, LAMMPS).
 - [x] **M8.5: Persistent Settings & UI Polish** — Local JSON caching, global rendering customization.
-- [ ] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
-- [ ] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
+- [x] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
+- [x] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
 - [ ] **M11: Volumetric & Magnetic States** — Real-time Compute Shader isosurfaces (CHGCAR) and non-collinear spin vectors.
 - [ ] **M12+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
 

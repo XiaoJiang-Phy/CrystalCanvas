@@ -11,7 +11,7 @@ CrystalCanvas is a cross-language project (Rust + C++ + TypeScript). We recommen
 
 - **macOS (Primary)**: Install Xcode Command Line Tools: `xcode-select --install`.
 - **Linux (Ubuntu)**: Install `build-essential`, `cmake`, `libgtk-3-dev`, and `libwebkit2gtk-4.1-dev`.
-- **Rust**: Follow instructions in `.agents/rules.md` to install Rust locally using `.rustup` and `.cargo` folders.
+- **Rust**: Source the `dev_env.sh` script (`source dev_env.sh`) to initialize project-local `.rustup` and `.cargo` directories, then install the stable toolchain: `rustup toolchain install stable`.
 - **Node.js / package manager**: We strictly use **`pnpm`** to manage dependencies and avoid phantom dependency issues. Do not use `npm` or `yarn`.
 
 ### 2. Fork and Clone

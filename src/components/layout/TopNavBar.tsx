@@ -47,7 +47,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             <div className="flex items-center gap-4 relative z-10">
                 <div className="flex items-center gap-2 font-semibold text-base tracking-tight text-emerald-600 dark:text-emerald-400">
                     <img src={logoUrl} className="w-5 h-5 object-contain" alt="Logo" />
-                    <span>CrystalCanvas</span>
+                    <div className="flex items-baseline gap-1.5">
+                        <span>CrystalCanvas</span>
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50 select-none">Alpha</span>
+                    </div>
                 </div>
 
                 <div className="h-5 w-px bg-slate-300 dark:bg-slate-700" />
