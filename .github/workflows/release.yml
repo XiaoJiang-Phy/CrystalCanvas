@@ -55,25 +55,40 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ github.ref_name }}"
-          # Remove 'v' prefix if exists
           VERSION_NUM="${VERSION#v}"
-          # Find the start line for this version (match ## [0.1.0] or ## 0.1.0)
-          START_LINE=$(grep -nE "^## \[?$VERSION_NUM" CHANGELOG.md | cut -d: -f1 | head -1)
-          if [ -n "$START_LINE" ]; then
-            # Find the next version heading or end of file
-            END_LINE=$(tail -n +$((START_LINE + 1)) CHANGELOG.md | grep -nE "^## " | head -1 | cut -d: -f1)
-            if [ -n "$END_LINE" ]; then
-              BODY=$(sed -n "$((START_LINE + 1)),$((START_LINE + END_LINE - 1))p" CHANGELOG.md)
-            else
-              BODY=$(tail -n +$((START_LINE + 1)) CHANGELOG.md)
-            fi
-            # Use multi-line output for GITHUB_OUTPUT
-            echo "body<<EOF" >> $GITHUB_OUTPUT
-            echo "$BODY" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "body=See the CHANGELOG.md for details." >> $GITHUB_OUTPUT
-          fi
+          python3 -c "
+          import sys, re
+          try:
+              version = '${VERSION_NUM}'
+              with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+                  lines = f.readlines()
+              
+              start_idx = -1
+              for i, line in enumerate(lines):
+                  if re.match(rf'^## \[?{re.escape(version)}', line):
+                      start_idx = i
+                      break
+              
+              if start_idx == -1:
+                  print('See CHANGELOG.md for details.')
+                  sys.exit(0)
+              
+              body_lines = []
+              for i in range(start_idx + 1, len(lines)):
+                  if lines[i].startswith('## '):
+                      break
+                  body_lines.append(lines[i])
+              
+              print(''.join(body_lines).strip())
+          except Exception as e:
+              print(f'Error extracting changelog: {e}')
+              print('See CHANGELOG.md for details.')
+          " > changelog_body.txt
+          
+          # Write to GITHUB_OUTPUT using multiline heredoc
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat changelog_body.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: build and release app
         uses: tauri-apps/tauri-action@v0
