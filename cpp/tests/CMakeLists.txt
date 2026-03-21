@@ -133,3 +133,19 @@ target_include_directories(test_slab_builder PRIVATE
 )
 
 add_test(NAME SlabBuilderTest COMMAND test_slab_builder)
+
+# ---------------------------------------------------------------------------
+# [Node S3] Slab Layer Clustering & Termination Tests (Breaker)
+# ---------------------------------------------------------------------------
+add_executable(test_slab_layers
+    test_slab_layers.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_slab_layers PRIVATE GTest::gtest_main Spglib_symspg)
+target_include_directories(test_slab_layers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${EIGEN_INCLUDE_DIR}
+)
+
+add_test(NAME SlabLayersTest COMMAND test_slab_layers)

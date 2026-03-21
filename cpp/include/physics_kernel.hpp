@@ -95,6 +95,33 @@ void build_slab(const double *lattice, const double *positions,
     const int32_t* miller, int n_layers, double vacuum_a,
     double* out_lattice, double* out_positions, int* out_types);
 
+/// Identify distinct atomic layers along the slab normal.
+/// @param positions Fractional positions (n_atoms x 3, flat)
+/// @param n_atoms Number of existing atoms
+/// @param lattice 3x3 input lattice (ColMajor [9])
+/// @param layer_tolerance_a Tolerance for grouping atoms into the same layer (Å)
+/// @param out_layer_centers Pre-allocated array for layer z-coordinates (Å)
+/// @param max_layers Maximum layers to store
+/// @return Number of distinct layers detected
+[[nodiscard]] int cluster_slab_layers(
+    const double* positions, size_t n_atoms,
+    const double* lattice,
+    double layer_tolerance_a,
+    double* out_layer_centers, size_t max_layers);
+
+/// Shift slab termination to expose a different surface layer.
+/// Modifies positions in-place.
+/// @param positions Fractional positions (n_atoms x 3, flat)
+/// @param n_atoms Number of existing atoms
+/// @param lattice 3x3 input lattice (ColMajor [9])
+/// @param target_layer_idx Target layer index to shift to Z=0
+/// @param layer_centers Pre-calculated layer centers
+/// @param n_layers Number of layers
+void shift_slab_termination(
+    double* positions, size_t n_atoms,
+    const double* lattice, int target_layer_idx,
+    const double* layer_centers, int n_layers);
+
 /// Check if a new atom overlaps with existing atoms using Minimum Image
 /// Convention
 /// @param lattice 3x3 input lattice (ColMajor [9])

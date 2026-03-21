@@ -420,6 +420,77 @@ void build_slab(
     return n_unique;
 }
 
+[[nodiscard]] int cluster_slab_layers(
+    const double* positions, size_t n_atoms,
+    const double* lattice,
+    double layer_tolerance_a,
+    double* out_layer_centers, size_t max_layers)
+{
+    if (n_atoms == 0 || max_layers == 0) return 0;
+    
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    double c_len = L.col(2).norm();
+
+    std::vector<double> z_carts(n_atoms);
+    for (size_t i = 0; i < n_atoms; ++i) {
+        z_carts[i] = positions[3*i+2] * c_len;
+    }
+
+    std::sort(z_carts.begin(), z_carts.end());
+
+    int layer_count = 0;
+    double current_sum = z_carts[0];
+    int current_cluster_size = 1;
+
+    for (size_t i = 1; i < n_atoms; ++i) {
+        if (z_carts[i] - z_carts[i-1] > layer_tolerance_a) {
+            if (static_cast<size_t>(layer_count) < max_layers) {
+                out_layer_centers[layer_count] = current_sum / current_cluster_size;
+            }
+            layer_count++;
+            
+            current_sum = z_carts[i];
+            current_cluster_size = 1;
+        } else {
+            current_sum += z_carts[i];
+            current_cluster_size++;
+        }
+    }
+
+    if (static_cast<size_t>(layer_count) < max_layers) {
+        out_layer_centers[layer_count] = current_sum / current_cluster_size;
+    }
+    layer_count++;
+
+    return layer_count;
+}
+
+void shift_slab_termination(
+    double* positions, size_t n_atoms,
+    const double* lattice, int target_layer_idx,
+    const double* layer_centers, int n_layers)
+{
+    if (n_atoms == 0 || target_layer_idx < 0 || target_layer_idx >= n_layers) return;
+
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    double c_len = L.col(2).norm();
+
+    double z_target = layer_centers[target_layer_idx];
+    double delta_f = z_target / c_len;
+
+    for (size_t i = 0; i < n_atoms; ++i) {
+        double fz = positions[3*i+2] - delta_f;
+        fz = fz - std::floor(fz);
+        
+        // Safety against precise 1.0 wrap representation errors
+        if (fz >= 1.0 - 1e-12) {
+            fz = 0.0;
+        }
+        
+        positions[3*i+2] = fz;
+    }
+}
+
 bool check_overlap_mic(const double* lattice, const double* positions,
                        size_t num_atoms, const double* new_frac_pos,
                        double threshold_A) {
