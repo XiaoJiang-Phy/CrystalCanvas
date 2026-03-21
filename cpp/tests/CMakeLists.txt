@@ -117,3 +117,19 @@ target_include_directories(test_slab_surface_basis PRIVATE
 )
 
 add_test(NAME SlabSurfaceBasisTest COMMAND test_slab_surface_basis)
+
+# ---------------------------------------------------------------------------
+# [Node S2] Slab Builder Tests (Breaker)
+# ---------------------------------------------------------------------------
+add_executable(test_slab_builder
+    test_slab_builder.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_slab_builder PRIVATE GTest::gtest_main Spglib_symspg)
+target_include_directories(test_slab_builder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${EIGEN_INCLUDE_DIR}
+)
+
+add_test(NAME SlabBuilderTest COMMAND test_slab_builder)

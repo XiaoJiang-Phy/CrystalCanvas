@@ -9,6 +9,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <numeric>
 
 // Include spglib
 extern "C" {
@@ -320,6 +321,103 @@ void build_slab(
         out_positions[3*i+2] /= scale;
         out_positions[3*i+2] += (vacuum_A / 2.0) / (c_len + vacuum_A);
     }
+}
+
+[[nodiscard]] int get_slab_size_v2(
+    const double* lattice, const int32_t* miller,
+    int n_layers, size_t n_atoms)
+{
+    if (n_layers <= 0) return 0;
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
+    Eigen::Matrix3i exp_mat = P;
+    exp_mat.col(2) *= n_layers;
+    return get_supercell_size(n_atoms, exp_mat.data());
+}
+
+[[nodiscard]] int build_slab_v2(
+    const double* lattice, const double* positions,
+    const int* types, size_t n_atoms,
+    const int32_t* miller, int n_layers, double vacuum_a,
+    double* out_lattice, double* out_positions, int* out_types)
+{
+    vacuum_a = std::max(0.0, vacuum_a);
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
+    Eigen::Matrix3i exp_mat = P;
+    exp_mat.col(2) *= n_layers;
+    
+    build_supercell(lattice, positions, types, n_atoms, exp_mat.data(), out_lattice, out_positions, out_types);
+    
+    Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
+    int total_new_atoms = n_atoms * std::abs(exp_mat.determinant());
+    
+    std::vector<int> indices(total_new_atoms);
+    std::iota(indices.begin(), indices.end(), 0);
+    
+    std::vector<Eigen::Vector3d> cart_pos(total_new_atoms);
+    for (int i = 0; i < total_new_atoms; ++i) {
+        Eigen::Vector3d f(out_positions[3*i], out_positions[3*i+1], out_positions[3*i+2]);
+        cart_pos[i] = L_out * f;
+    }
+
+    std::sort(indices.begin(), indices.end(), [&](int a, int b) {
+        long long ax = std::round(cart_pos[a].x() * 1e4);
+        long long bx = std::round(cart_pos[b].x() * 1e4);
+        if (ax != bx) return ax < bx;
+        long long ay = std::round(cart_pos[a].y() * 1e4);
+        long long by = std::round(cart_pos[b].y() * 1e4);
+        if (ay != by) return ay < by;
+        long long az = std::round(cart_pos[a].z() * 1e4);
+        long long bz = std::round(cart_pos[b].z() * 1e4);
+        return az < bz;
+    });
+
+    std::vector<int> unique_indices;
+    unique_indices.reserve(total_new_atoms);
+    
+    for (int idx : indices) {
+        bool duplicate = false;
+        for (auto it = unique_indices.rbegin(); it != unique_indices.rend(); ++it) {
+            int u_idx = *it;
+            if (cart_pos[idx].x() - cart_pos[u_idx].x() > 1e-3) break;
+            if ((cart_pos[idx] - cart_pos[u_idx]).norm() < 1e-4) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            unique_indices.push_back(idx);
+        }
+    }
+    
+    int n_unique = unique_indices.size();
+    
+    std::vector<double> final_pos(n_unique * 3);
+    std::vector<int> final_types(n_unique);
+    for (int i = 0; i < n_unique; ++i) {
+        int original_idx = unique_indices[i];
+        final_pos[3*i]   = out_positions[3*original_idx];
+        final_pos[3*i+1] = out_positions[3*original_idx+1];
+        final_pos[3*i+2] = out_positions[3*original_idx+2];
+        final_types[i]   = out_types[original_idx];
+    }
+    std::copy(final_pos.begin(), final_pos.end(), out_positions);
+    std::copy(final_types.begin(), final_types.end(), out_types);
+    
+    Eigen::Vector3d c_vec = L_out.col(2);
+    double c_len = c_vec.norm();
+    double c_new = c_len + vacuum_a;
+    
+    double scale = c_new / c_len;
+    L_out.col(2) *= scale;
+    
+    for (int i = 0; i < n_unique; ++i) {
+        out_positions[3*i+2] *= (c_len / c_new);
+        out_positions[3*i+2] += (vacuum_a / 2.0) / c_new;
+    }
+    
+    return n_unique;
 }
 
 bool check_overlap_mic(const double* lattice, const double* positions,

@@ -12,7 +12,7 @@
 
 /// Identify the spacegroup number of a given crystal.
 ///
-/// @param lattice 3x3 matrix packed in row-major [9]
+/// @param lattice 3x3 matrix packed in ColMajor [9]
 /// @param positions Nx3 array of fractional coordinates [n_atoms * 3]
 /// @param types Array of atomic types (integers representing elements)
 /// [n_atoms]
@@ -65,8 +65,14 @@ void build_supercell(const double *lattice, const double *positions,
 int get_slab_size(const double *lattice, const int32_t *miller, int layers,
                   double vacuum_A, size_t n_atoms);
 
+/// Two-step API: first query size, then fill buffers.
+/// get_slab_size_v2 returns an upper-bound atom count.
+[[nodiscard]] int get_slab_size_v2(
+    const double* lattice, const int32_t* miller,
+    int n_layers, size_t n_atoms);
+
 /// Build a slab by cleaving the crystal along a Miller plane.
-/// @param lattice Input 3x3 lattice (row-major [9])
+/// @param lattice Input 3x3 lattice (ColMajor [9])
 /// @param positions Input fractional positions (n_atoms x 3)
 /// @param types Input atomic types (n_atoms)
 /// @param n_atoms Number of original atoms
@@ -81,9 +87,17 @@ void build_slab(const double *lattice, const double *positions,
                 int layers, double vacuum_A, double *out_lattice,
                 double *out_positions, int *out_types);
 
+/// Build slab with deduplication and vacuum injection.
+/// @return Actual number of unique atoms written to out_positions/out_types.
+[[nodiscard]] int build_slab_v2(
+    const double* lattice, const double* positions,
+    const int* types, size_t n_atoms,
+    const int32_t* miller, int n_layers, double vacuum_a,
+    double* out_lattice, double* out_positions, int* out_types);
+
 /// Check if a new atom overlaps with existing atoms using Minimum Image
 /// Convention
-/// @param lattice 3x3 input lattice (row-major [9])
+/// @param lattice 3x3 input lattice (ColMajor [9])
 /// @param positions Input fractional positions of existing atoms (n_atoms x 3)
 /// @param n_atoms Number of existing atoms
 /// @param new_frac_pos Fractional position of the new atom [3]
@@ -96,7 +110,7 @@ bool check_overlap_mic(const double *lattice, const double *positions,
 /// Compute all chemical bonds in a structure using covalent-radius dynamic
 /// thresholding. Supports Minimum Image Convention (MIC) if lattice is provided.
 ///
-/// @param lattice 3x3 input lattice (row-major [9]). If nullptr, MIC is not
+/// @param lattice 3x3 input lattice (ColMajor [9]). If nullptr, MIC is not
 /// applied.
 /// @param cart_positions Cartesian positions (num_atoms x 3, flat)
 /// @param frac_positions Fractional positions (num_atoms x 3, flat)
@@ -119,7 +133,7 @@ int compute_bonds(const double *lattice, const double *cart_positions,
 /// Find all neighbors in the coordination shell of a specific center atom.
 /// Supports Minimum Image Convention (MIC) if lattice is provided.
 ///
-/// @param lattice 3x3 input lattice (row-major [9])
+/// @param lattice 3x3 input lattice (ColMajor [9])
 /// @param cart_positions Cartesian positions (num_atoms x 3, flat)
 /// @param frac_positions Fractional positions (num_atoms x 3, flat)
 /// @param covalent_radii Covalent radii per atom in Angstroms [num_atoms]
