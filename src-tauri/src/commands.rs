@@ -515,6 +515,50 @@ pub fn apply_slab(
     Ok(())
 }
 
+/// Shift slab termination to expose a different surface layer.
+#[tauri::command]
+pub fn shift_termination(
+    target_layer_idx: i32,
+    layer_tolerance_a: Option<f64>,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<i32, String> {
+    let tolerance = layer_tolerance_a.unwrap_or(0.3);
+    log::info!(
+        "shift_termination: layer_idx={} tolerance={}",
+        target_layer_idx, tolerance
+    );
+
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|e| format!("Failed to lock crystal state: {}", e))?;
+
+    let n_layers = cs.shift_termination(target_layer_idx, tolerance)?;
+
+    let settings = settings_state
+        .lock()
+        .map_err(|e| format!("Settings lock fail: {}", e))?;
+
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        &settings,
+        &cs.selected_atoms,
+    );
+
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| format!("Renderer lock fail: {}", e))?;
+    renderer.update_atoms(&instances);
+    renderer.update_lines(&cs, &settings);
+
+    app.emit("state_changed", ()).ok();
+    Ok(n_layers)
+}
+
 /// Set camera view along a lattice axis or reset the view.
 #[tauri::command]
 pub fn set_camera_view_axis(

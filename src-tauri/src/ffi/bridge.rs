@@ -82,7 +82,8 @@ pub mod ffi {
             out_types: *mut i32,
         );
 
-        /// Get slab size
+        /// Get slab size (deprecated — use get_slab_size_v2)
+        #[deprecated(note = "Use get_slab_size_v2 for correct deduplication")]
         unsafe fn get_slab_size(
             lattice: *const f64,
             miller: *const i32,
@@ -91,7 +92,8 @@ pub mod ffi {
             n_atoms: usize,
         ) -> i32;
 
-        /// Build slab
+        /// Build slab (deprecated — use build_slab_v2)
+        #[deprecated(note = "Use build_slab_v2 for correct deduplication")]
         unsafe fn build_slab(
             lattice: *const f64,
             positions: *const f64,
@@ -103,6 +105,48 @@ pub mod ffi {
             out_lattice: *mut f64,
             out_positions: *mut f64,
             out_types: *mut i32,
+        );
+
+        /// Upper-bound atom count for slab v2
+        unsafe fn get_slab_size_v2(
+            lattice: *const f64,
+            miller: *const i32,
+            n_layers: i32,
+            n_atoms: usize,
+        ) -> i32;
+
+        /// Build slab with deduplication and vacuum injection
+        unsafe fn build_slab_v2(
+            lattice: *const f64,
+            positions: *const f64,
+            types: *const i32,
+            n_atoms: usize,
+            miller: *const i32,
+            n_layers: i32,
+            vacuum_a: f64,
+            out_lattice: *mut f64,
+            out_positions: *mut f64,
+            out_types: *mut i32,
+        ) -> i32;
+
+        /// Identify distinct atomic layers along the slab normal
+        unsafe fn cluster_slab_layers(
+            positions: *const f64,
+            n_atoms: usize,
+            lattice: *const f64,
+            layer_tolerance_a: f64,
+            out_layer_centers: *mut f64,
+            max_layers: usize,
+        ) -> i32;
+
+        /// Shift slab termination to expose a different surface layer
+        unsafe fn shift_slab_termination(
+            positions: *mut f64,
+            n_atoms: usize,
+            lattice: *const f64,
+            target_layer_idx: i32,
+            layer_centers: *const f64,
+            n_layers: i32,
         );
 
         /// Check MIC Overlap
