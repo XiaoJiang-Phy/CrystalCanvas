@@ -3,9 +3,13 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 #include "physics_kernel.hpp"
+#include "physics_kernel_internal.hpp"
 #include <iostream>
 #include <exception>
 #include <vector>
+#include <cmath>
+#include <algorithm>
+#include <numeric>
 
 // Include spglib
 extern "C" {
@@ -145,13 +149,13 @@ void build_supercell(
     }
 }
 
-// Helper to compute gcd
+namespace {
+
 int gcd(int a, int b) {
     if (b == 0) return std::abs(a);
     return gcd(b, a % b);
 }
 
-// Find vectors u and v such that h*u + k*v = gcd(h,k) (Extended Euclidean Algorithm)
 void ext_gcd(int h, int k, int& u, int& v, int& g) {
     if (k == 0) {
         u = 1; v = 0; g = std::abs(h);
@@ -164,68 +168,69 @@ void ext_gcd(int h, int k, int& u, int& v, int& g) {
     v = u1 - (h / k) * v1;
 }
 
-// Compute the transformation matrix P from traditional Miller indices
-// that returns a primitive surface cell.
-Eigen::Matrix3i get_surface_transformation(int h, int k, int l) {
+} // namespace
+
+/// Compute surface-oriented transformation matrix P via Diophantine equations.
+/// Properties:  det(P) = 1  (unimodular — no atom duplication or collapse)
+///   P.col(0)·G = P.col(1)·G = 0   (in-plane, G = [h,k,l])
+///   P.col(2)·G = 1                 (single interplanar step)
+/// Ref: Extended Euclidean construction for crystal surface basis.
+[[nodiscard]] Eigen::Matrix3i get_surface_basis(
+    const Eigen::Ref<const Eigen::Matrix3d>& lattice, int h, int k, int l)
+{
+    int g_all = gcd(gcd(std::abs(h), std::abs(k)), std::abs(l));
+    if (g_all > 0) { h /= g_all; k /= g_all; l /= g_all; }
+
+    Eigen::Vector3i v1, v2, v3;
+
+    int y_kl = 0, z_kl = 0, g_kl = 0;
+    ext_gcd(k, l, y_kl, z_kl, g_kl);  // k·y + l·z = g_kl
+
+    if (g_kl == 0) {
+        // k = l = 0  →  surface normal ∥ â₁,  h = ±1 after coprime reduction
+        v1 = {0, 1, 0};
+        v2 = {0, 0, 1};
+        v3 = {(h > 0 ? 1 : -1), 0, 0};
+    } else {
+        int x_hg = 0, p_hg = 0, dummy = 0;
+        ext_gcd(h, g_kl, x_hg, p_hg, dummy);  // h·x + g·p = 1
+
+        v1 = {0, l / g_kl, -k / g_kl};
+        v2 = {-g_kl, h * y_kl, h * z_kl};
+        v3 = {x_hg, p_hg * y_kl, p_hg * z_kl};
+    }
+
+    // 2D Gauss reduction: shorten in-plane vectors v1, v2 using lattice metric
+    for (int iter = 0; iter < 20; ++iter) {
+        Eigen::Vector3d c1 = lattice * v1.cast<double>();
+        Eigen::Vector3d c2 = lattice * v2.cast<double>();
+        if (c2.squaredNorm() < c1.squaredNorm()) { std::swap(v1, v2); std::swap(c1, c2); }
+        int n = static_cast<int>(std::round(c1.dot(c2) / c1.squaredNorm()));
+        if (n == 0) break;
+        v2 -= n * v1;
+    }
+
+    // Reduce v3 inclination: project out in-plane components
+    {
+        Eigen::Vector3d c1 = lattice * v1.cast<double>();
+        Eigen::Vector3d c2 = lattice * v2.cast<double>();
+        Eigen::Vector3d c3 = lattice * v3.cast<double>();
+        int p1 = (c1.squaredNorm() > 1e-12)
+            ? static_cast<int>(std::round(c3.dot(c1) / c1.squaredNorm())) : 0;
+        int p2 = (c2.squaredNorm() > 1e-12)
+            ? static_cast<int>(std::round(c3.dot(c2) / c2.squaredNorm())) : 0;
+        v3 -= p1 * v1 + p2 * v2;
+    }
+
     Eigen::Matrix3i P;
-    P.setZero();
-    
-    // Normalize Miller indices
-    int g1 = gcd(gcd(h, k), l);
-    if (g1 > 0) {
-        h /= g1; k /= g1; l /= g1;
-    }
-    
-    if (h == 0 && k == 0) {
-        // Special case: (0 0 l)
-        P << 1, 0, 0,
-             0, 1, 0,
-             0, 0, 1;
-        return P;
-    }
-    
-    int u, v, g_hk;
-    ext_gcd(h, k, u, v, g_hk);
-    
-    // v1: [-k/g, h/g, 0]
-    P(0, 0) = -k / g_hk;
-    P(1, 0) = h / g_hk;
-    P(2, 0) = 0;
-    
-    // v2: [-l*u, -l*v, g_hk]
-    P(0, 1) = -l * u;
-    P(1, 1) = -l * v;
-    P(2, 1) = g_hk;
-    
-    // v3: we pick a vector out of plane, simple choice [u, v, 0] doesn't always work if l!=0
-    // Try to find a simple v3 such that det(P) = 1
-    // The determinant of the above first two columns and [x, y, z] is:
-    // det = (-k/g)*( (-l*v)*z - g_hk*y ) - (h/g)*( (-l*u)*z - g_hk*x )
-    // We want det = 1 or -1
-    // Easier: complete basis using Smith Normal Form or general integer matrix completion
-    // Given (h,k,l) is primitive, we know there exist p,q,r st h*p+k*q+l*r = 1
-    // Then v3 = [p, q, r] gives a basis where the surface is the ab plane and c points out.
-    
-    // We can just use the extended gcd three variables:
-    // a*h + b*k = g_hk -> a = u, b = v
-    // We also know g_hk and l are coprime since gcd(h,k,l) = 1
-    // So there exist p', q' st p'*g_hk + q'*l = 1
-    int p_prime, q_prime, g2;
-    ext_gcd(g_hk, l, p_prime, q_prime, g2); // g2=1
-    
-    int p = p_prime * u;
-    int q = p_prime * v;
-    int r = q_prime;
-    
-    P(0, 2) = p;
-    P(1, 2) = q;
-    P(2, 2) = r;
-    
+    P.col(0) = v1;
+    P.col(1) = v2;
+    P.col(2) = v3;
+
     if (P.determinant() < 0) {
-        // Ensure right-handedness
         P.col(0) = -P.col(0);
     }
-    
+
     return P;
 }
 
@@ -238,14 +243,11 @@ int get_slab_size(
 ) {
     if (layers <= 0) return 0;
     
-    // 1. Calculate the surface transformation matrix P
-    Eigen::Matrix3i P = get_surface_transformation(miller[0], miller[1], miller[2]);
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
     
-    // 2. The expansion matrix has c-axis multiplied by 'layers'
     Eigen::Matrix3i exp_mat = P;
-    exp_mat(0, 2) *= layers;
-    exp_mat(1, 2) *= layers;
-    exp_mat(2, 2) *= layers;
+    exp_mat.col(2) *= layers;
     
     return get_supercell_size(n_atoms, exp_mat.data());
 }
@@ -262,33 +264,238 @@ void build_slab(
     double* out_positions,
     int* out_types
 ) {
-    // 1. Expansion matrix for the slab
-    Eigen::Matrix3i P = get_surface_transformation(miller[0], miller[1], miller[2]);
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
     Eigen::Matrix3i exp_mat = P;
-    exp_mat(0, 2) *= layers;
-    exp_mat(1, 2) *= layers;
-    exp_mat(2, 2) *= layers;
+    exp_mat.col(2) *= layers;
     
-    // Call build_supercell to generate the block of atoms
     build_supercell(lattice, positions, types, n_atoms, exp_mat.data(), out_lattice, out_positions, out_types);
     
-    // Now, adjust the out_lattice c-axis to include vacuum padding
     Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
     Eigen::Vector3d c_vec = L_out.col(2);
     double c_len = c_vec.norm();
     
-    // New total c_len = c_len + vacuum_A
     double scale = (c_len + vacuum_A) / c_len;
     L_out.col(2) *= scale;
     
-    // Adjust fractional coordinates (since the box got larger, z-coords get scaled down)
-    // Only the z-coordinate component (or we can just do f_new = L_new^-1 * L_old * f_old)
-    // Because c-axis is scaled by 'scale', the fractional z should be divided by 'scale'.
     int total_new_atoms = n_atoms * std::abs(exp_mat.determinant());
     for (int i = 0; i < total_new_atoms; ++i) {
         out_positions[3*i+2] /= scale;
-        // Optional: shift to center the slab in the vacuum
         out_positions[3*i+2] += (vacuum_A / 2.0) / (c_len + vacuum_A);
+    }
+}
+
+[[nodiscard]] int get_slab_size_v2(
+    const double* lattice, const int32_t* miller,
+    int n_layers, size_t n_atoms)
+{
+    if (n_layers <= 0) return 0;
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
+    Eigen::Matrix3i exp_mat = P;
+    exp_mat.col(2) *= n_layers;
+    return get_supercell_size(n_atoms, exp_mat.data());
+}
+
+[[nodiscard]] int build_slab_v2(
+    const double* lattice, const double* positions,
+    const int* types, size_t n_atoms,
+    const int32_t* miller, int n_layers, double vacuum_a,
+    double* out_lattice, double* out_positions, int* out_types)
+{
+    vacuum_a = std::max(0.0, vacuum_a);
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
+    Eigen::Matrix3i exp_mat = P;
+    exp_mat.col(2) *= n_layers;
+    
+    build_supercell(lattice, positions, types, n_atoms, exp_mat.data(), out_lattice, out_positions, out_types);
+    
+    Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
+    int total_new_atoms = n_atoms * std::abs(exp_mat.determinant());
+    
+    std::vector<int> indices(total_new_atoms);
+    std::iota(indices.begin(), indices.end(), 0);
+    
+    std::vector<Eigen::Vector3d> cart_pos(total_new_atoms);
+    for (int i = 0; i < total_new_atoms; ++i) {
+        Eigen::Vector3d f(out_positions[3*i], out_positions[3*i+1], out_positions[3*i+2]);
+        cart_pos[i] = L_out * f;
+    }
+
+    std::sort(indices.begin(), indices.end(), [&](int a, int b) {
+        long long ax = std::round(cart_pos[a].x() * 1e4);
+        long long bx = std::round(cart_pos[b].x() * 1e4);
+        if (ax != bx) return ax < bx;
+        long long ay = std::round(cart_pos[a].y() * 1e4);
+        long long by = std::round(cart_pos[b].y() * 1e4);
+        if (ay != by) return ay < by;
+        long long az = std::round(cart_pos[a].z() * 1e4);
+        long long bz = std::round(cart_pos[b].z() * 1e4);
+        return az < bz;
+    });
+
+    std::vector<int> unique_indices;
+    unique_indices.reserve(total_new_atoms);
+    
+    for (int idx : indices) {
+        bool duplicate = false;
+        for (auto it = unique_indices.rbegin(); it != unique_indices.rend(); ++it) {
+            int u_idx = *it;
+            if (cart_pos[idx].x() - cart_pos[u_idx].x() > 1e-3) break;
+            if ((cart_pos[idx] - cart_pos[u_idx]).norm() < 1e-4) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            unique_indices.push_back(idx);
+        }
+    }
+    
+    int n_unique = unique_indices.size();
+    
+    std::vector<double> final_pos(n_unique * 3);
+    std::vector<int> final_types(n_unique);
+    for (int i = 0; i < n_unique; ++i) {
+        int original_idx = unique_indices[i];
+        final_pos[3*i]   = out_positions[3*original_idx];
+        final_pos[3*i+1] = out_positions[3*original_idx+1];
+        final_pos[3*i+2] = out_positions[3*original_idx+2];
+        final_types[i]   = out_types[original_idx];
+    }
+    std::copy(final_pos.begin(), final_pos.end(), out_positions);
+    std::copy(final_types.begin(), final_types.end(), out_types);
+    
+    // --- Orthogonalize c-axis: force c ⊥ surface (α = β = 90°) ---
+    // Decompose: c_tilted = α·a + β·b + h·n̂
+    // Absorb (α, β) into fractional (x, y); replace c with h·n̂ + vacuum.
+    Eigen::Vector3d a_vec = L_out.col(0);
+    Eigen::Vector3d b_vec = L_out.col(1);
+    Eigen::Vector3d c_vec = L_out.col(2);
+
+    Eigen::Vector3d normal = a_vec.cross(b_vec);
+    double normal_len = normal.norm();
+    Eigen::Vector3d n_hat = normal / normal_len;
+
+    double height = c_vec.dot(n_hat);       // slab thickness along normal
+    if (height < 0.0) { n_hat = -n_hat; height = -height; }
+
+    // Solve Gram system for in-plane decomposition:
+    //   [|a|²   a·b ] [α]   [a·c]
+    //   [a·b   |b|² ] [β] = [b·c]
+    double aa = a_vec.squaredNorm();
+    double ab = a_vec.dot(b_vec);
+    double bb = b_vec.squaredNorm();
+    double ac = a_vec.dot(c_vec);
+    double bc = b_vec.dot(c_vec);
+    double det_G = aa * bb - ab * ab;
+    double alpha = (bb * ac - ab * bc) / det_G;
+    double beta  = (aa * bc - ab * ac) / det_G;
+
+    double c_new_len = height + vacuum_a;
+
+    for (int i = 0; i < n_unique; ++i) {
+        double fx = out_positions[3*i+0];
+        double fy = out_positions[3*i+1];
+        double fz = out_positions[3*i+2];
+
+        // Absorb c-tilt into (x, y), wrap to [0, 1)
+        double nx = fx + alpha * fz;
+        double ny = fy + beta  * fz;
+        nx -= std::floor(nx);
+        ny -= std::floor(ny);
+
+        // Scale z for vacuum and center slab in the middle
+        double nz = fz * height / c_new_len + vacuum_a / (2.0 * c_new_len);
+
+        out_positions[3*i+0] = nx;
+        out_positions[3*i+1] = ny;
+        out_positions[3*i+2] = nz;
+    }
+
+    // Set c perpendicular to surface
+    L_out.col(2) = n_hat * c_new_len;
+
+    // QR standardize to PDB convention (a‖X, b in XY, c along Z)
+    Eigen::HouseholderQR<Eigen::Matrix3d> qr(L_out);
+    Eigen::Matrix3d R = qr.matrixQR().triangularView<Eigen::Upper>();
+    for (int i = 0; i < 3; ++i) {
+        if (R(i, i) < 0.0) R.row(i) *= -1.0;
+    }
+    L_out = R;
+    
+    return n_unique;
+}
+
+[[nodiscard]] int cluster_slab_layers(
+    const double* positions, size_t n_atoms,
+    const double* lattice,
+    double layer_tolerance_a,
+    double* out_layer_centers, size_t max_layers)
+{
+    if (n_atoms == 0 || max_layers == 0) return 0;
+    
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    double c_len = L.col(2).norm();
+
+    std::vector<double> z_carts(n_atoms);
+    for (size_t i = 0; i < n_atoms; ++i) {
+        z_carts[i] = positions[3*i+2] * c_len;
+    }
+
+    std::sort(z_carts.begin(), z_carts.end());
+
+    int layer_count = 0;
+    double current_sum = z_carts[0];
+    int current_cluster_size = 1;
+
+    for (size_t i = 1; i < n_atoms; ++i) {
+        if (z_carts[i] - z_carts[i-1] > layer_tolerance_a) {
+            if (static_cast<size_t>(layer_count) < max_layers) {
+                out_layer_centers[layer_count] = current_sum / current_cluster_size;
+            }
+            layer_count++;
+            
+            current_sum = z_carts[i];
+            current_cluster_size = 1;
+        } else {
+            current_sum += z_carts[i];
+            current_cluster_size++;
+        }
+    }
+
+    if (static_cast<size_t>(layer_count) < max_layers) {
+        out_layer_centers[layer_count] = current_sum / current_cluster_size;
+    }
+    layer_count++;
+
+    return layer_count;
+}
+
+void shift_slab_termination(
+    double* positions, size_t n_atoms,
+    const double* lattice, int target_layer_idx,
+    const double* layer_centers, int n_layers)
+{
+    if (n_atoms == 0 || target_layer_idx < 0 || target_layer_idx >= n_layers) return;
+
+    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    double c_len = L.col(2).norm();
+
+    double z_target = layer_centers[target_layer_idx];
+    double delta_f = z_target / c_len;
+
+    for (size_t i = 0; i < n_atoms; ++i) {
+        double fz = positions[3*i+2] - delta_f;
+        fz = fz - std::floor(fz);
+        
+        // Safety against precise 1.0 wrap representation errors
+        if (fz >= 1.0 - 1e-12) {
+            fz = 0.0;
+        }
+        
+        positions[3*i+2] = fz;
     }
 }
 

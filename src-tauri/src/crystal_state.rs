@@ -469,69 +469,51 @@ impl CrystalState {
         layers: i32,
         vacuum_a: f64,
     ) -> Result<Self, String> {
-        let n_atoms = self.num_atoms();
+        let n_atoms = self.intrinsic_sites;
         if n_atoms == 0 {
             return Err("Cannot generate slab from empty crystal".to_string());
         }
 
-        // We will construct the true 3x3 lattice in column-major properly
-        // PDB convention: a along x, b in xy plane, c in xyz
-        let alpha = self.cell_alpha.to_radians();
-        let beta = self.cell_beta.to_radians();
-        let gamma = self.cell_gamma.to_radians();
-        let a = self.cell_a;
-        let b = self.cell_b;
-        let c = self.cell_c;
+        if self.spacegroup_number == 1 {
+            return Err(
+                "Slab generation requires a conventional unit cell with symmetry \
+                 (spacegroup ≠ P1). Miller indices (hkl) are defined relative to \
+                 conventional axes. Please load or convert to a conventional cell first."
+                .to_string()
+            );
+        }
 
-        let cx = c * beta.cos();
-        let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / gamma.sin();
-        let cz = (c * c - cx * cx - cy * cy).sqrt();
+        let lattice_col_major = self.get_lattice_col_major();
 
-        // Eigen uses Column-Major! So we pack col 0, col 1, col 2
-        let lattice_col_major = [
-            a,
-            0.0,
-            0.0,
-            b * gamma.cos(),
-            b * gamma.sin(),
-            0.0,
-            cx,
-            cy,
-            cz,
-        ];
-
-        // Prepare flat positions
         let mut flat_positions = Vec::with_capacity(n_atoms * 3);
         let mut types = Vec::with_capacity(n_atoms);
         for i in 0..n_atoms {
             flat_positions.push(self.fract_x[i]);
             flat_positions.push(self.fract_y[i]);
             flat_positions.push(self.fract_z[i]);
-            // Temporarily use atomic_number cast to i32 as "type"
             types.push(self.atomic_numbers[i] as i32);
         }
 
-        let n_new = unsafe {
-            ffi::get_slab_size(
+        let n_upper = unsafe {
+            ffi::get_slab_size_v2(
                 lattice_col_major.as_ptr(),
                 miller.as_ptr(),
                 layers,
-                vacuum_a,
                 n_atoms,
             )
         };
 
-        if n_new <= 0 {
+        if n_upper <= 0 {
             return Err("Invalid slab size calculation".to_string());
         }
 
-        let n_new_usize = n_new as usize;
+        let n_upper_usize = n_upper as usize;
         let mut out_lattice = vec![0.0f64; 9];
-        let mut out_positions = vec![0.0f64; n_new_usize * 3];
-        let mut out_types = vec![0i32; n_new_usize];
+        let mut out_positions = vec![0.0f64; n_upper_usize * 3];
+        let mut out_types = vec![0i32; n_upper_usize];
 
-        unsafe {
-            ffi::build_slab(
+        let n_actual = unsafe {
+            ffi::build_slab_v2(
                 lattice_col_major.as_ptr(),
                 flat_positions.as_ptr(),
                 types.as_ptr(),
@@ -542,22 +524,23 @@ impl CrystalState {
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
                 out_types.as_mut_ptr(),
-            );
-        }
+            )
+        };
 
-        // Reconstruct new lattice parameters from the 3x3 out_lattice
-        // out_lattice is Column-Major:
-        // [vx_x, vx_y, vx_z, vy_x, vy_y, vy_z, vz_x, vz_y, vz_z]
+        if n_actual <= 0 {
+            return Err("build_slab_v2 returned 0 atoms".to_string());
+        }
+        let n_actual_usize = n_actual as usize;
+
+        // Reconstruct lattice parameters from ColMajor 3x3
         let vx = [out_lattice[0], out_lattice[1], out_lattice[2]];
         let vy = [out_lattice[3], out_lattice[4], out_lattice[5]];
         let vz = [out_lattice[6], out_lattice[7], out_lattice[8]];
 
-        // length
         let new_a = (vx[0] * vx[0] + vx[1] * vx[1] + vx[2] * vx[2]).sqrt();
         let new_b = (vy[0] * vy[0] + vy[1] * vy[1] + vy[2] * vy[2]).sqrt();
         let new_c = (vz[0] * vz[0] + vz[1] * vz[1] + vz[2] * vz[2]).sqrt();
 
-        // angles (dot products)
         let dot_ab = vx[0] * vy[0] + vx[1] * vy[1] + vx[2] * vy[2];
         let dot_bc = vy[0] * vz[0] + vy[1] * vz[1] + vy[2] * vz[2];
         let dot_ca = vz[0] * vx[0] + vz[1] * vx[1] + vz[2] * vx[2];
@@ -566,10 +549,10 @@ impl CrystalState {
         let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
         let new_beta = (dot_ca / (new_c * new_a)).acos().to_degrees();
 
+
         let mut new_state = CrystalState {
             name: format!(
-                "{}_slab_{}_{}_{}",
-                self.name, miller[0], miller[1], miller[2]
+                "{}_slab_{}_{}_{}", self.name, miller[0], miller[1], miller[2]
             ),
             cell_a: new_a,
             cell_b: new_b,
@@ -577,34 +560,27 @@ impl CrystalState {
             cell_alpha: new_alpha,
             cell_beta: new_beta,
             cell_gamma: new_gamma,
-            spacegroup_hm: "P1".to_string(), // slabs typically break symmetry
+            spacegroup_hm: "P1".to_string(),
             spacegroup_number: 1,
-            labels: Vec::with_capacity(n_new_usize),
-            elements: Vec::with_capacity(n_new_usize),
-            fract_x: Vec::with_capacity(n_new_usize),
-            fract_y: Vec::with_capacity(n_new_usize),
-            fract_z: Vec::with_capacity(n_new_usize),
-            occupancies: vec![1.0; n_new_usize],
-            atomic_numbers: Vec::with_capacity(n_new_usize),
+            labels: Vec::with_capacity(n_actual_usize),
+            elements: Vec::with_capacity(n_actual_usize),
+            fract_x: Vec::with_capacity(n_actual_usize),
+            fract_y: Vec::with_capacity(n_actual_usize),
+            fract_z: Vec::with_capacity(n_actual_usize),
+            occupancies: vec![1.0; n_actual_usize],
+            atomic_numbers: Vec::with_capacity(n_actual_usize),
             cart_positions: Vec::new(),
             version: 1,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
             phonon_phase: 0.0,
-            intrinsic_sites: n_new_usize,
+            intrinsic_sites: n_actual_usize,
             selected_atoms: Vec::new(),
         };
 
-        // Create a fast lookup for original atoms by their atomic_number to get label/element
-        // (assuming homonuclear atoms or simple mapping for now)
-        // A robust way is to map the original `types.push` index back to the atom.
-        // build_supercell essentially preserves the atom type integer.
-        // We'll just search the original structure.
-        for i in 0..n_new_usize {
+        for i in 0..n_actual_usize {
             let t = out_types[i] as u8;
-
-            // Find an original atom that matches this element
             let mut label = format!("Element{}", t);
             let mut elem = "Unknown".to_string();
 
@@ -624,11 +600,74 @@ impl CrystalState {
             new_state.atomic_numbers.push(t);
         }
 
-        new_state.apply_boundary_mirroring();
         new_state.fractional_to_cartesian();
         new_state.detect_spacegroup();
 
         Ok(new_state)
+    }
+
+    /// Shift slab termination to expose a different surface layer.
+    /// Returns the number of detected layers for UI feedback.
+    pub fn shift_termination(
+        &mut self,
+        target_layer_idx: i32,
+        layer_tolerance_a: f64,
+    ) -> Result<i32, String> {
+        let n_atoms = self.intrinsic_sites;
+        if n_atoms == 0 {
+            return Err("Cannot shift termination of empty crystal".to_string());
+        }
+
+        let lattice_col_major = self.get_lattice_col_major();
+
+        let mut flat_positions = Vec::with_capacity(n_atoms * 3);
+        for i in 0..n_atoms {
+            flat_positions.push(self.fract_x[i]);
+            flat_positions.push(self.fract_y[i]);
+            flat_positions.push(self.fract_z[i]);
+        }
+
+        let max_layers: usize = 128;
+        let mut layer_centers = vec![0.0f64; max_layers];
+
+        let n_layers = unsafe {
+            ffi::cluster_slab_layers(
+                flat_positions.as_ptr(),
+                n_atoms,
+                lattice_col_major.as_ptr(),
+                layer_tolerance_a,
+                layer_centers.as_mut_ptr(),
+                max_layers,
+            )
+        };
+
+        if target_layer_idx < 0 || target_layer_idx >= n_layers {
+            return Err(format!(
+                "Layer index {} out of range [0, {})", target_layer_idx, n_layers
+            ));
+        }
+
+        unsafe {
+            ffi::shift_slab_termination(
+                flat_positions.as_mut_ptr(),
+                n_atoms,
+                lattice_col_major.as_ptr(),
+                target_layer_idx,
+                layer_centers.as_ptr(),
+                n_layers,
+            );
+        }
+
+        for i in 0..n_atoms {
+            self.fract_x[i] = flat_positions[3 * i];
+            self.fract_y[i] = flat_positions[3 * i + 1];
+            self.fract_z[i] = flat_positions[3 * i + 2];
+        }
+
+        self.fractional_to_cartesian();
+        self.version += 1;
+
+        Ok(n_layers)
     }
 
     /// Generate a supercell based on a 3x3 expansion matrix (ColMajor).
@@ -718,7 +757,7 @@ impl CrystalState {
             cell_alpha: new_alpha,
             cell_beta: new_beta,
             cell_gamma: new_gamma,
-            spacegroup_hm: "P1".to_string(), // Keep simple, symmetry usually broken
+            spacegroup_hm: "P1".to_string(),
             spacegroup_number: 1,
             labels: Vec::with_capacity(n_new_usize),
             elements: Vec::with_capacity(n_new_usize),

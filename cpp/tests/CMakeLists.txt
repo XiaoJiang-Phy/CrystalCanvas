@@ -102,3 +102,50 @@ target_include_directories(test_slab_eigen PRIVATE
 
 add_test(NAME SlabTest COMMAND test_slab_eigen)
 
+# ---------------------------------------------------------------------------
+# [Node S1] Slab Surface Basis Tests (Breaker)
+# ---------------------------------------------------------------------------
+add_executable(test_slab_surface_basis 
+    test_slab_surface_basis.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_slab_surface_basis PRIVATE GTest::gtest_main Spglib_symspg)
+target_include_directories(test_slab_surface_basis PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${EIGEN_INCLUDE_DIR}
+)
+
+add_test(NAME SlabSurfaceBasisTest COMMAND test_slab_surface_basis)
+
+# ---------------------------------------------------------------------------
+# [Node S2] Slab Builder Tests (Breaker)
+# ---------------------------------------------------------------------------
+add_executable(test_slab_builder
+    test_slab_builder.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_slab_builder PRIVATE GTest::gtest_main Spglib_symspg)
+target_include_directories(test_slab_builder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${EIGEN_INCLUDE_DIR}
+)
+
+add_test(NAME SlabBuilderTest COMMAND test_slab_builder)
+
+# ---------------------------------------------------------------------------
+# [Node S3] Slab Layer Clustering & Termination Tests (Breaker)
+# ---------------------------------------------------------------------------
+add_executable(test_slab_layers
+    test_slab_layers.cpp
+    ../src/physics_kernel.cpp
+)
+target_link_libraries(test_slab_layers PRIVATE GTest::gtest_main Spglib_symspg)
+target_include_directories(test_slab_layers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${EIGEN_INCLUDE_DIR}
+)
+
+add_test(NAME SlabLayersTest COMMAND test_slab_layers)

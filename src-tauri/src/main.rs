@@ -653,7 +653,8 @@ fn main() {
             commands::set_phonon_mode,
             commands::set_phonon_phase,
             commands::update_lattice_params,
-            commands::export_image
+            commands::export_image,
+            commands::shift_termination
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
