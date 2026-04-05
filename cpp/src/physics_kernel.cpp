@@ -170,95 +170,57 @@ void ext_gcd(int h, int k, int& u, int& v, int& g) {
 
 } // namespace
 
-/// Compute the surface-oriented transformation matrix P.
-/// col 0, 1 = in-plane (shortest lattice vectors with G . v = 0)
-/// col 2 = out-of-plane (via Extended Euclidean, inclination-optimised)
-[[nodiscard]] Eigen::Matrix3i get_surface_basis(const Eigen::Ref<const Eigen::Matrix3d>& lattice, int h, int k, int l) {
-    int g_all = gcd(gcd(h, k), l);
-    if (g_all > 0) {
-        h /= g_all;
-        k /= g_all;
-        l /= g_all;
+/// Compute surface-oriented transformation matrix P via Diophantine equations.
+/// Properties:  det(P) = 1  (unimodular — no atom duplication or collapse)
+///   P.col(0)·G = P.col(1)·G = 0   (in-plane, G = [h,k,l])
+///   P.col(2)·G = 1                 (single interplanar step)
+/// Ref: Extended Euclidean construction for crystal surface basis.
+[[nodiscard]] Eigen::Matrix3i get_surface_basis(
+    const Eigen::Ref<const Eigen::Matrix3d>& lattice, int h, int k, int l)
+{
+    int g_all = gcd(gcd(std::abs(h), std::abs(k)), std::abs(l));
+    if (g_all > 0) { h /= g_all; k /= g_all; l /= g_all; }
+
+    Eigen::Vector3i v1, v2, v3;
+
+    int y_kl = 0, z_kl = 0, g_kl = 0;
+    ext_gcd(k, l, y_kl, z_kl, g_kl);  // k·y + l·z = g_kl
+
+    if (g_kl == 0) {
+        // k = l = 0  →  surface normal ∥ â₁,  h = ±1 after coprime reduction
+        v1 = {0, 1, 0};
+        v2 = {0, 0, 1};
+        v3 = {(h > 0 ? 1 : -1), 0, 0};
+    } else {
+        int x_hg = 0, p_hg = 0, dummy = 0;
+        ext_gcd(h, g_kl, x_hg, p_hg, dummy);  // h·x + g·p = 1
+
+        v1 = {0, l / g_kl, -k / g_kl};
+        v2 = {-g_kl, h * y_kl, h * z_kl};
+        v3 = {x_hg, p_hg * y_kl, p_hg * z_kl};
     }
 
-    if (h == 0 && k == 0) {
-        return Eigen::Matrix3i::Identity();
+    // 2D Gauss reduction: shorten in-plane vectors v1, v2 using lattice metric
+    for (int iter = 0; iter < 20; ++iter) {
+        Eigen::Vector3d c1 = lattice * v1.cast<double>();
+        Eigen::Vector3d c2 = lattice * v2.cast<double>();
+        if (c2.squaredNorm() < c1.squaredNorm()) { std::swap(v1, v2); std::swap(c1, c2); }
+        int n = static_cast<int>(std::round(c1.dot(c2) / c1.squaredNorm()));
+        if (n == 0) break;
+        v2 -= n * v1;
     }
 
-    int N = std::abs(h) + std::abs(k) + std::abs(l) + 1;
-    struct UVW {
-        Eigen::Vector3i vec;
-        double norm;
-    };
-    std::vector<UVW> in_plane;
-    in_plane.reserve(4 * N * N);
-
-    for (int u = -N; u <= N; ++u) {
-        for (int v = -N; v <= N; ++v) {
-            for (int w = -N; w <= N; ++w) {
-                if (u == 0 && v == 0 && w == 0) continue;
-                if (h * u + k * v + l * w == 0) {
-                    Eigen::Vector3i vec(u, v, w);
-                    double norm = (lattice * vec.cast<double>()).norm();
-                    in_plane.push_back({vec, norm});
-                }
-            }
-        }
+    // Reduce v3 inclination: project out in-plane components
+    {
+        Eigen::Vector3d c1 = lattice * v1.cast<double>();
+        Eigen::Vector3d c2 = lattice * v2.cast<double>();
+        Eigen::Vector3d c3 = lattice * v3.cast<double>();
+        int p1 = (c1.squaredNorm() > 1e-12)
+            ? static_cast<int>(std::round(c3.dot(c1) / c1.squaredNorm())) : 0;
+        int p2 = (c2.squaredNorm() > 1e-12)
+            ? static_cast<int>(std::round(c3.dot(c2) / c2.squaredNorm())) : 0;
+        v3 -= p1 * v1 + p2 * v2;
     }
-
-    if (in_plane.empty()) {
-        return Eigen::Matrix3i::Identity();
-    }
-
-    std::sort(in_plane.begin(), in_plane.end(), [](const UVW& a, const UVW& b) {
-        if (std::abs(a.norm - b.norm) > 1e-12) return a.norm < b.norm;
-        int l1_a = std::abs(a.vec[0]) + std::abs(a.vec[1]) + std::abs(a.vec[2]);
-        int l1_b = std::abs(b.vec[0]) + std::abs(b.vec[1]) + std::abs(b.vec[2]);
-        return l1_a < l1_b;
-    });
-
-    Eigen::Vector3i v1 = in_plane.front().vec;
-    Eigen::Vector3i v2 = Eigen::Vector3i::Zero();
-
-    bool found_v2 = false;
-    for (const auto& item : in_plane) {
-        Eigen::Vector3i c = v1.cross(item.vec);
-        if (c.cast<double>().norm() > 1e-8) {
-            v2 = item.vec;
-            found_v2 = true;
-            break;
-        }
-    }
-
-    if (!found_v2) {
-        return Eigen::Matrix3i::Identity();
-    }
-
-    int u_hk, v_hk, g_hk;
-    ext_gcd(h, k, u_hk, v_hk, g_hk);
-
-    int u_gl, v_gl, g_gl;
-    ext_gcd(g_hk, l, u_gl, v_gl, g_gl);
-
-    int p = u_hk * u_gl;
-    int q = v_hk * u_gl;
-    int r = v_gl;
-
-    Eigen::Vector3i v3(p, q, r);
-
-    Eigen::Vector3d c1 = lattice * v1.cast<double>();
-    Eigen::Vector3d c2 = lattice * v2.cast<double>();
-    Eigen::Vector3d c3 = lattice * v3.cast<double>();
-
-    int p1 = 0, p2 = 0;
-    if (c1.squaredNorm() > 1e-12) {
-        p1 = static_cast<int>(std::round(c3.dot(c1) / c1.squaredNorm()));
-    }
-    if (c2.squaredNorm() > 1e-12) {
-        p2 = static_cast<int>(std::round(c3.dot(c2) / c2.squaredNorm()));
-    }
-
-    v3 -= p1 * v1 + p2 * v2;
 
     Eigen::Matrix3i P;
     P.col(0) = v1;
@@ -405,17 +367,63 @@ void build_slab(
     std::copy(final_pos.begin(), final_pos.end(), out_positions);
     std::copy(final_types.begin(), final_types.end(), out_types);
     
+    // --- Orthogonalize c-axis: force c ⊥ surface (α = β = 90°) ---
+    // Decompose: c_tilted = α·a + β·b + h·n̂
+    // Absorb (α, β) into fractional (x, y); replace c with h·n̂ + vacuum.
+    Eigen::Vector3d a_vec = L_out.col(0);
+    Eigen::Vector3d b_vec = L_out.col(1);
     Eigen::Vector3d c_vec = L_out.col(2);
-    double c_len = c_vec.norm();
-    double c_new = c_len + vacuum_a;
-    
-    double scale = c_new / c_len;
-    L_out.col(2) *= scale;
-    
+
+    Eigen::Vector3d normal = a_vec.cross(b_vec);
+    double normal_len = normal.norm();
+    Eigen::Vector3d n_hat = normal / normal_len;
+
+    double height = c_vec.dot(n_hat);       // slab thickness along normal
+    if (height < 0.0) { n_hat = -n_hat; height = -height; }
+
+    // Solve Gram system for in-plane decomposition:
+    //   [|a|²   a·b ] [α]   [a·c]
+    //   [a·b   |b|² ] [β] = [b·c]
+    double aa = a_vec.squaredNorm();
+    double ab = a_vec.dot(b_vec);
+    double bb = b_vec.squaredNorm();
+    double ac = a_vec.dot(c_vec);
+    double bc = b_vec.dot(c_vec);
+    double det_G = aa * bb - ab * ab;
+    double alpha = (bb * ac - ab * bc) / det_G;
+    double beta  = (aa * bc - ab * ac) / det_G;
+
+    double c_new_len = height + vacuum_a;
+
     for (int i = 0; i < n_unique; ++i) {
-        out_positions[3*i+2] *= (c_len / c_new);
-        out_positions[3*i+2] += (vacuum_a / 2.0) / c_new;
+        double fx = out_positions[3*i+0];
+        double fy = out_positions[3*i+1];
+        double fz = out_positions[3*i+2];
+
+        // Absorb c-tilt into (x, y), wrap to [0, 1)
+        double nx = fx + alpha * fz;
+        double ny = fy + beta  * fz;
+        nx -= std::floor(nx);
+        ny -= std::floor(ny);
+
+        // Scale z for vacuum and center slab in the middle
+        double nz = fz * height / c_new_len + vacuum_a / (2.0 * c_new_len);
+
+        out_positions[3*i+0] = nx;
+        out_positions[3*i+1] = ny;
+        out_positions[3*i+2] = nz;
     }
+
+    // Set c perpendicular to surface
+    L_out.col(2) = n_hat * c_new_len;
+
+    // QR standardize to PDB convention (a‖X, b in XY, c along Z)
+    Eigen::HouseholderQR<Eigen::Matrix3d> qr(L_out);
+    Eigen::Matrix3d R = qr.matrixQR().triangularView<Eigen::Upper>();
+    for (int i = 0; i < 3; ++i) {
+        if (R(i, i) < 0.0) R.row(i) *= -1.0;
+    }
+    L_out = R;
     
     return n_unique;
 }

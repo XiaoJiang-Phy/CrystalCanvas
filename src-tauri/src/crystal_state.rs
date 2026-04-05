@@ -474,6 +474,15 @@ impl CrystalState {
             return Err("Cannot generate slab from empty crystal".to_string());
         }
 
+        if self.spacegroup_number == 1 {
+            return Err(
+                "Slab generation requires a conventional unit cell with symmetry \
+                 (spacegroup ≠ P1). Miller indices (hkl) are defined relative to \
+                 conventional axes. Please load or convert to a conventional cell first."
+                .to_string()
+            );
+        }
+
         let lattice_col_major = self.get_lattice_col_major();
 
         let mut flat_positions = Vec::with_capacity(n_atoms * 3);
@@ -540,6 +549,7 @@ impl CrystalState {
         let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
         let new_beta = (dot_ca / (new_c * new_a)).acos().to_degrees();
 
+
         let mut new_state = CrystalState {
             name: format!(
                 "{}_slab_{}_{}_{}", self.name, miller[0], miller[1], miller[2]
@@ -590,7 +600,6 @@ impl CrystalState {
             new_state.atomic_numbers.push(t);
         }
 
-        // Slab v2 fills the cell correctly — skip apply_boundary_mirroring
         new_state.fractional_to_cartesian();
         new_state.detect_spacegroup();
 
@@ -748,7 +757,7 @@ impl CrystalState {
             cell_alpha: new_alpha,
             cell_beta: new_beta,
             cell_gamma: new_gamma,
-            spacegroup_hm: "P1".to_string(), // Keep simple, symmetry usually broken
+            spacegroup_hm: "P1".to_string(),
             spacegroup_number: 1,
             labels: Vec::with_capacity(n_new_usize),
             elements: Vec::with_capacity(n_new_usize),

@@ -5,8 +5,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Ensure ColMajor is the default for Eigen to match Rust/Physics conventions
-add_compile_definitions(EIGEN_DEFAULT_TO_ROW_MAJOR=0)
+# Eigen defaults to ColMajor when EIGEN_DEFAULT_TO_ROW_MAJOR is *not* defined.
+# IMPORTANT: Do NOT define EIGEN_DEFAULT_TO_ROW_MAJOR=0 — Eigen uses #ifdef
+# (existence check), so defining it to any value including 0 enables RowMajor!
 
 # Add Spglib as a subdirectory (statically linked)
 set(SPGLIB_SHARED_LIBS OFF CACHE BOOL "" FORCE)

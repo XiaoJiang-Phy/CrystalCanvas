@@ -15,50 +15,41 @@ use crystal_canvas::crystal_state::CrystalState;
 // Helpers
 // ===========================================================================
 
-/// FCC Al primitive cell: a_prim = a_conv / sqrt(2) ≈ 2.863 Å, angles = 60°
+/// FCC Al conventional cell: a = 4.05 Å, Fm-3m (#225), 4 atoms
 fn make_fcc_al_state() -> CrystalState {
-    // a_conv = 4.05 Å → a_prim = 4.05 / sqrt(2) ≈ 2.863 Å
-    let a0 = 2.863_f64;
+    let a0 = 4.05_f64;
     CrystalState {
-        name: "Al_fcc_primitive".to_string(),
-        cell_a: a0,
-        cell_b: a0,
-        cell_c: a0,
-        cell_alpha: 60.0,
-        cell_beta: 60.0,
-        cell_gamma: 60.0,
-        spacegroup_hm: "P1".to_string(),
-        spacegroup_number: 1,
-        labels: vec!["Al1".to_string()],
-        elements: vec!["Al".to_string()],
-        fract_x: vec![0.0],
-        fract_y: vec![0.0],
-        fract_z: vec![0.0],
-        occupancies: vec![1.0],
-        atomic_numbers: vec![13],
-        cart_positions: vec![[0.0_f32; 3]],
+        name: "Al_fcc_conv".to_string(),
+        cell_a: a0, cell_b: a0, cell_c: a0,
+        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
+        spacegroup_hm: "Fm-3m".to_string(),
+        spacegroup_number: 225,
+        labels: vec!["Al1".into(), "Al2".into(), "Al3".into(), "Al4".into()],
+        elements: vec!["Al".into(), "Al".into(), "Al".into(), "Al".into()],
+        fract_x: vec![0.0, 0.5, 0.5, 0.0],
+        fract_y: vec![0.0, 0.5, 0.0, 0.5],
+        fract_z: vec![0.0, 0.0, 0.5, 0.5],
+        occupancies: vec![1.0; 4],
+        atomic_numbers: vec![13; 4],
+        cart_positions: vec![[0.0; 3]; 4],
         version: 1,
         bond_analysis: None,
         phonon_data: None,
         active_phonon_mode: None,
         phonon_phase: 0.0,
-        intrinsic_sites: 1,
+        intrinsic_sites: 4,
         selected_atoms: vec![],
     }
 }
 
-/// Simple cubic with 1 atom
+/// Simple cubic with 1 atom, Pm-3m (#221)
 fn make_sc_state(a: f64) -> CrystalState {
     CrystalState {
         name: "SC".to_string(),
-        cell_a: a,
-        cell_b: a,
-        cell_c: a,
-        cell_alpha: 90.0,
-        cell_beta: 90.0,
-        cell_gamma: 90.0,
-        spacegroup_hm: "P1".to_string(),
-        spacegroup_number: 1,
+        cell_a: a, cell_b: a, cell_c: a,
+        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
+        spacegroup_hm: "Pm-3m".to_string(),
+        spacegroup_number: 221,
         labels: vec!["X1".to_string()],
         elements: vec!["X".to_string()],
         fract_x: vec![0.0],
@@ -275,5 +266,120 @@ fn test_shift_termination_refreshes_cart_positions() {
     assert!(
         any_changed,
         "shift_termination must update Cartesian positions"
+    );
+}
+
+/// NaCl conventional cell (Fm-3m, 8 atoms)
+fn make_nacl_state() -> CrystalState {
+    let a = 5.64;
+    CrystalState {
+        name: "NaCl".to_string(),
+        cell_a: a, cell_b: a, cell_c: a,
+        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
+        spacegroup_hm: "Fm-3m".to_string(),
+        spacegroup_number: 225,
+        labels: vec![
+            "Na1".into(), "Na2".into(), "Na3".into(), "Na4".into(),
+            "Cl1".into(), "Cl2".into(), "Cl3".into(), "Cl4".into(),
+        ],
+        elements: vec![
+            "Na".into(), "Na".into(), "Na".into(), "Na".into(),
+            "Cl".into(), "Cl".into(), "Cl".into(), "Cl".into(),
+        ],
+        fract_x: vec![0.0, 0.5, 0.5, 0.0,  0.5, 0.0, 0.0, 0.5],
+        fract_y: vec![0.0, 0.5, 0.0, 0.5,  0.5, 0.0, 0.5, 0.0],
+        fract_z: vec![0.0, 0.0, 0.5, 0.5,  0.5, 0.5, 0.0, 0.0],
+        occupancies: vec![1.0; 8],
+        atomic_numbers: vec![11, 11, 11, 11, 17, 17, 17, 17],
+        cart_positions: vec![[0.0; 3]; 8],
+        version: 1,
+        bond_analysis: None,
+        phonon_data: None,
+        active_phonon_mode: None,
+        phonon_phase: 0.0,
+        intrinsic_sites: 8,
+        selected_atoms: vec![],
+    }
+}
+
+/// KILLER TEST: NaCl (110) 3-layer slab must have atoms at DISTINCT z-coords.
+/// This is the exact failure mode: all atoms collapse to the same fract_z.
+#[test]
+fn test_nacl_110_slab_has_distinct_z_layers() {
+    let state = make_nacl_state();
+    let slab = state.generate_slab([1, 1, 0], 3, 10.0)
+        .expect("NaCl (110) 3L slab generation must succeed");
+
+    eprintln!("[TEST] NaCl (110) 3L: {} atoms", slab.num_atoms());
+    eprintln!("[TEST] cell: a={:.3} b={:.3} c={:.3} α={:.1} β={:.1} γ={:.1}",
+        slab.cell_a, slab.cell_b, slab.cell_c,
+        slab.cell_alpha, slab.cell_beta, slab.cell_gamma);
+
+    // Print first 10 atoms' fractional coords
+    for i in 0..slab.num_atoms().min(10) {
+        eprintln!("[TEST]   atom {} frac=({:.6}, {:.6}, {:.6})",
+            i, slab.fract_x[i], slab.fract_y[i], slab.fract_z[i]);
+    }
+
+    // Collect unique z values (tolerance 0.01)
+    let mut unique_z: Vec<f64> = Vec::new();
+    for &fz in &slab.fract_z {
+        if unique_z.iter().all(|&uz| (uz - fz).abs() > 0.01) {
+            unique_z.push(fz);
+        }
+    }
+    unique_z.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    eprintln!("[TEST] distinct fract_z values: {:?}", unique_z);
+
+    // With 3 layers, we MUST have at least 3 distinct z-values
+    assert!(
+        unique_z.len() >= 3,
+        "NaCl (110) 3-layer slab must have ≥3 distinct fract_z values, \
+         but found only {}: {:?}. This is the z-collapse bug!",
+        unique_z.len(), unique_z
+    );
+}
+
+/// KILLER TEST 2: User workflow — supercell 2×2×1 THEN cut (110).
+/// This is the exact path that fails in the GUI.
+#[test]
+fn test_nacl_supercell_then_110_slab() {
+    let state = make_nacl_state();
+
+    // Step 1: 2x2x1 supercell
+    let sc = state.generate_supercell(&[2, 0, 0, 0, 2, 0, 0, 0, 1])
+        .expect("2x2x1 supercell must succeed");
+    eprintln!("[TEST] Supercell: {} atoms, a={:.3} b={:.3} c={:.3}",
+        sc.num_atoms(), sc.cell_a, sc.cell_b, sc.cell_c);
+
+    // Step 2: Cut (110) from the supercell
+    let slab = sc.generate_slab([1, 1, 0], 3, 10.0)
+        .expect("(110) slab from supercell must succeed");
+
+    eprintln!("[TEST] Slab from SC: {} atoms", slab.num_atoms());
+    eprintln!("[TEST] cell: a={:.3} b={:.3} c={:.3} α={:.1} β={:.1} γ={:.1}",
+        slab.cell_a, slab.cell_b, slab.cell_c,
+        slab.cell_alpha, slab.cell_beta, slab.cell_gamma);
+
+    for i in 0..slab.num_atoms().min(10) {
+        eprintln!("[TEST]   atom {} frac=({:.6}, {:.6}, {:.6})",
+            i, slab.fract_x[i], slab.fract_y[i], slab.fract_z[i]);
+    }
+
+    let mut unique_z: Vec<f64> = Vec::new();
+    for &fz in &slab.fract_z {
+        if unique_z.iter().all(|&uz| (uz - fz).abs() > 0.01) {
+            unique_z.push(fz);
+        }
+    }
+    unique_z.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    eprintln!("[TEST] distinct fract_z: {:?}", unique_z);
+
+    assert!(
+        unique_z.len() >= 3,
+        "NaCl supercell→(110) 3L slab must have ≥3 distinct fract_z, \
+         but found only {}: {:?}",
+        unique_z.len(), unique_z
     );
 }
