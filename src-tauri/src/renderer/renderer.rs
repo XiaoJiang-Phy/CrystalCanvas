@@ -11,6 +11,13 @@ use super::gpu_context::GpuContext;
 use super::instance::AtomInstance;
 use super::pipeline;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeRenderMode {
+    Isosurface,
+    Volume,
+    Both,
+}
+
 /// Main rendering engine for CrystalCanvas.
 /// Manages the full render pipeline lifecycle: initialization, buffer updates, frame rendering.
 pub struct Renderer {
@@ -27,9 +34,11 @@ pub struct Renderer {
     instance_buffer: wgpu::Buffer,
     instance_count: u32,
 
-    // Depth buffer
-    _depth_texture: wgpu::Texture,
-    depth_view: wgpu::TextureView,
+    // Depth buffers (dual-pass architecture)
+    opaque_depth_texture: wgpu::Texture,
+    opaque_depth_view: wgpu::TextureView,
+    transparent_depth_texture: wgpu::Texture,
+    transparent_depth_view: wgpu::TextureView,
 
     // Lines rendering (Unit cell box)
     line_pipeline: wgpu::RenderPipeline,
@@ -43,6 +52,16 @@ pub struct Renderer {
 
     pub show_cell: bool,
     pub show_bonds: bool,
+
+    // Volumetric rendering
+    pub isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    pub show_isosurface: bool,
+    pub volume_raycast_pipeline: Option<crate::renderer::volume_raycast::VolumeRaycastPipeline>,
+    pub show_volume: bool,
+    pub volume_render_mode: VolumeRenderMode,
+    pub active_colormap_mode: u32,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
+    pub isosurface_dispatch_size: [u32; 3],
 
     // Background clear color (for dark/light mode toggles)
     pub clear_color: wgpu::Color,
@@ -113,9 +132,11 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
-        // Depth texture
-        let (_depth_texture, depth_view) =
+        // Depth textures (dual-pass architecture)
+        let (opaque_depth_texture, opaque_depth_view) =
             pipeline::create_depth_texture(&gpu.device, gpu.config.width, gpu.config.height);
+        let (transparent_depth_texture, transparent_depth_view) =
+            pipeline::create_transparent_depth_texture(&gpu.device, gpu.config.width, gpu.config.height);
 
         // default dark mode color: #0f172a
         let default_clear = wgpu::Color {
@@ -160,8 +181,10 @@ impl Renderer {
             render_pipeline,
             instance_buffer,
             instance_count: 0,
-            _depth_texture,
-            depth_view,
+            opaque_depth_texture,
+            opaque_depth_view,
+            transparent_depth_texture,
+            transparent_depth_view,
             line_pipeline,
             cell_line_buffer,
             cell_line_count: 0,
@@ -170,27 +193,43 @@ impl Renderer {
             bond_instance_count: 0,
             show_cell: true,
             show_bonds: true,
+            isosurface_pipeline: None,
+            show_isosurface: false,
+            volume_raycast_pipeline: None,
+            show_volume: false,
+            volume_render_mode: VolumeRenderMode::Isosurface,
+            active_colormap_mode: 0,
+            camera_bind_group_layout,
+            isosurface_dispatch_size: [0; 3],
             clear_color: default_clear,
         }
     }
 
-    /// Handle window resize: reconfigure surface and rebuild depth texture.
+    /// Handle window resize: reconfigure surface and rebuild depth textures.
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.gpu.resize(new_size);
             self.camera
                 .set_aspect(new_size.width as f32, new_size.height as f32);
 
-            // Rebuild depth texture to match new size
-            let (depth_texture, depth_view) =
+            // Rebuild both depth textures
+            let (opaque_depth_texture, opaque_depth_view) =
                 pipeline::create_depth_texture(&self.gpu.device, new_size.width, new_size.height);
-            self._depth_texture = depth_texture;
-            self.depth_view = depth_view;
+            let (transparent_depth_texture, transparent_depth_view) =
+                pipeline::create_transparent_depth_texture(&self.gpu.device, new_size.width, new_size.height);
+            self.opaque_depth_texture = opaque_depth_texture;
+            self.opaque_depth_view = opaque_depth_view;
+            self.transparent_depth_texture = transparent_depth_texture;
+            self.transparent_depth_view = transparent_depth_view;
+
+            // Notify volume pipeline to rebind depth texture
+            if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
+                vol_pipe.update_depth_view(&self.gpu.device, &self.opaque_depth_view);
+            }
         }
     }
 
-    /// Upload new atom instance data to the GPU (Phase A: full rebuild).
-    /// Per TDD §2.3: for ≤1K atoms (~32 KB), full rebuild is <0.1ms.
+    /// Upload new atom instance data to the GPU (full rebuild).
     pub fn update_atoms(&mut self, instances: &[AtomInstance]) {
         self.instance_count = instances.len() as u32;
 
@@ -263,6 +302,15 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
+            let forward = (self.camera.target - self.camera.eye).normalize();
+            vol_pipe.update_camera(
+                &self.gpu.queue,
+                self.camera.eye,
+                self.camera.is_perspective,
+                forward,
+            );
+        }
     }
 
     /// Render one frame. Returns Err if the surface texture cannot be acquired.
@@ -284,9 +332,10 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
+        // ═══ Pass 1: Opaque objects — write depth ═════════════════════════
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Impostor Sphere Render Pass"),
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Opaque Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -296,7 +345,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
+                    view: &self.opaque_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -307,32 +356,94 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-
-            // Only set vertex buffers and draw if we have instances
-            // This prevents panics on .slice(..) or drawing out of bounds
+            // Atoms (impostor spheres — opaque, write depth via frag_depth)
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
             if self.instance_count > 0 {
-                render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-                // 6 vertices per impostor quad (two triangles), instance_count instances
-                render_pass.draw(0..6, 0..self.instance_count);
+                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                pass.draw(0..6, 0..self.instance_count);
             }
 
-            // Draw lines
-            // Reuse the camera bind group but switch to the Line pipeline
+            // Cell box lines
             if self.show_cell && self.cell_line_count > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                // Bind group 0 is already camera_bind_group, but let's be explicit
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
-                render_pass.draw(0..self.cell_line_count, 0..1);
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                pass.draw(0..self.cell_line_count, 0..1);
             }
+
+            // Bond cylinders
             if self.show_bonds && self.bond_instance_count > 0 {
-                render_pass.set_pipeline(&self.bond_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
-                // 12 segments * 6 vertices = 72 vertices per impostor cylinder quad equivalent
-                render_pass.draw(0..72, 0..self.bond_instance_count);
+                pass.set_pipeline(&self.bond_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
+                pass.draw(0..72, 0..self.bond_instance_count);
+            }
+        }
+
+        // ═══ Depth copy: opaque → transparent (for Pass 2 depth test) ════
+        let needs_transparent_pass = 
+            (self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both)) ||
+            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both));
+
+        if needs_transparent_pass {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.opaque_depth_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.transparent_depth_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.gpu.config.width,
+                    height: self.gpu.config.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+
+            // ═══ Pass 2: Transparent objects — depth read-only ═══════════
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Transparent Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load, // preserve opaque colors
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.transparent_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load, // preserve opaque depth
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                // Volume raycast FIRST (inner fill), then Isosurface (outer skin)
+                if self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both) {
+                    if let Some(vol_pipe) = &self.volume_raycast_pipeline {
+                        vol_pipe.render(&mut pass, &self.camera_bind_group);
+                    }
+                }
+
+                // Isosurface LAST (semi-transparent outer envelope)
+                if self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both) {
+                    if let Some(iso_pipe) = &self.isosurface_pipeline {
+                        iso_pipe.draw(&mut pass, &self.camera_bind_group);
+                    }
+                }
             }
         }
 
@@ -412,11 +523,17 @@ impl Renderer {
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create off-screen depth texture
-        let (_, depth_view) =
+        // Create off-screen depth textures (dual-pass)
+        let (offscreen_opaque_depth, offscreen_opaque_depth_view) =
             pipeline::create_depth_texture(&self.gpu.device, width, height);
+        let (offscreen_transparent_depth, offscreen_transparent_depth_view) =
+            pipeline::create_transparent_depth_texture(&self.gpu.device, width, height);
 
-        // Encode the render pass (identical to on-screen render())
+        // Temporarily rebind volume pipeline depth for offscreen size
+        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
+            vol_pipe.update_depth_view(&self.gpu.device, &offscreen_opaque_depth_view);
+        }
+
         let mut encoder = self
             .gpu
             .device
@@ -424,9 +541,10 @@ impl Renderer {
                 label: Some("Offscreen Render Encoder"),
             });
 
+        // ═══ Offscreen Pass 1: Opaque ═══
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Offscreen Render Pass"),
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Offscreen Opaque Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &color_view,
                     resolve_target: None,
@@ -436,7 +554,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
+                    view: &offscreen_opaque_depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -447,29 +565,90 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            // Atoms
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
             if self.instance_count > 0 {
-                render_pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-                render_pass.draw(0..6, 0..self.instance_count);
+                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                pass.draw(0..6, 0..self.instance_count);
             }
 
-            // Cell lines
             if self.show_cell && self.cell_line_count > 0 {
-                render_pass.set_pipeline(&self.line_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
-                render_pass.draw(0..self.cell_line_count, 0..1);
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                pass.draw(0..self.cell_line_count, 0..1);
             }
 
-            // Bonds
             if self.show_bonds && self.bond_instance_count > 0 {
-                render_pass.set_pipeline(&self.bond_pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
-                render_pass.draw(0..72, 0..self.bond_instance_count);
+                pass.set_pipeline(&self.bond_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
+                pass.draw(0..72, 0..self.bond_instance_count);
             }
+        }
+
+        // ═══ Offscreen Pass 2: Transparent ═══
+        let needs_transparent = 
+            (self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both)) ||
+            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both));
+
+        if needs_transparent {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &offscreen_opaque_depth,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &offscreen_transparent_depth,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            );
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Offscreen Transparent Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &offscreen_transparent_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                if self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both) {
+                    if let Some(vol_pipe) = &self.volume_raycast_pipeline {
+                        vol_pipe.render(&mut pass, &self.camera_bind_group);
+                    }
+                }
+
+                if self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both) {
+                    if let Some(iso_pipe) = &self.isosurface_pipeline {
+                        iso_pipe.draw(&mut pass, &self.camera_bind_group);
+                    }
+                }
+            }
+        }
+
+        // Restore volume pipeline depth binding to on-screen size
+        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
+            vol_pipe.update_depth_view(&self.gpu.device, &self.opaque_depth_view);
         }
 
         // Copy texture to a CPU-readable buffer
@@ -563,5 +742,72 @@ impl Renderer {
         );
 
         Ok(rgba_data)
+    }
+
+
+    /// Clear volumetric pipelines when switching to a non-volumetric file.
+    pub fn clear_volumetric(&mut self) {
+        self.isosurface_pipeline = None;
+        self.volume_raycast_pipeline = None;
+        self.show_isosurface = false;
+        self.show_volume = false;
+        self.volume_render_mode = VolumeRenderMode::Isosurface;
+    }
+
+    /// Upload volumetric data to GPU and initialize isosurface pipeline.
+    pub fn upload_volumetric(&mut self, vol: &crate::volumetric::VolumetricData) {
+        if self.gpu.render_config.supports_compute_shaders {
+            let iso_pipe = crate::renderer::isosurface::IsosurfacePipeline::new(
+                &self.gpu.device,
+                &self.gpu.queue,
+                self.gpu.surface_format(),
+                &self.camera_bind_group_layout,
+                vol,
+            );
+            self.isosurface_pipeline = Some(iso_pipe);
+            self.show_isosurface = true;
+        } else {
+            log::warn!("Compute shaders not supported! GPU Marching Cubes cannot run on this device.");
+        }
+
+        let vol_pipe = crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
+            &self.gpu.device,
+            self.gpu.surface_format(),
+            &self.camera_bind_group_layout,
+            vol,
+            &self.opaque_depth_view,
+        );
+
+        self.volume_raycast_pipeline = Some(vol_pipe);
+        self.show_volume = true;
+        self.volume_render_mode = VolumeRenderMode::Both;
+    }
+
+    /// Update isovalue threshold and trigger compute pass.
+    pub fn update_isovalue(&mut self, grid_dims: [usize; 3], threshold: f32) {
+        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+            self.isosurface_dispatch_size = iso_pipe.update_threshold(&self.gpu.queue, grid_dims, threshold);
+            
+            // Dispatch compute pass immediately to update the mesh buffers
+            let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Isosurface Compute Encoder"),
+            });
+            iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);
+            self.gpu.queue.submit(std::iter::once(encoder.finish()));
+        }
+    }
+
+    /// Update isosurface solid color.
+    pub fn set_isosurface_color(&mut self, color: [f32; 4]) {
+        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+            iso_pipe.set_color(&self.gpu.queue, color);
+        }
+    }
+
+    /// Update isosurface opacity.
+    pub fn set_isosurface_opacity(&mut self, opacity: f32) {
+        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+            iso_pipe.set_opacity(&self.gpu.queue, opacity);
+        }
     }
 }

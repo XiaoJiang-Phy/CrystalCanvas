@@ -31,7 +31,7 @@ pub struct HitResult {
 /// Pick the nearest atom intersected by a ray.
 ///
 /// Uses a brute-force linear scan with analytic ray-sphere intersection.
-/// For ≤1,000 atoms this completes in well under 1ms (TDD Node 2.2).
+/// For ≤1,000 atoms this completes in well under 1 ms.
 ///
 /// Returns `None` if the ray misses all atoms.
 pub fn ray_pick(atoms: &[PickAtom], ray: &Ray) -> Option<HitResult> {

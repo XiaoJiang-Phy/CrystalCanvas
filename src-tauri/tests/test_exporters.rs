@@ -29,6 +29,7 @@ fn get_dummy_state() -> CrystalState {
         phonon_phase: 0.0,
         intrinsic_sites: 0,
         selected_atoms: vec![],
+        volumetric_data: None,
     };
     state.try_add_atom("Na", 11, [0.0, 0.0, 0.0]).unwrap();
     state.try_add_atom("Cl", 17, [0.5, 0.5, 0.5]).unwrap();

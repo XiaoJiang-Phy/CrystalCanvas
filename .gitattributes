@@ -1,0 +1,4 @@
+tests/data/**/*.xsf filter=lfs diff=lfs merge=lfs -text
+tests/data/**/*.cube filter=lfs diff=lfs merge=lfs -text
+tests/data/**/CHGCAR filter=lfs diff=lfs merge=lfs -text
+tests/data/**/LOCPOT filter=lfs diff=lfs merge=lfs -text

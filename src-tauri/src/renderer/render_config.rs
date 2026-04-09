@@ -1,4 +1,4 @@
-//! GPU adapter info and device limits — logged at startup per TDD §1.5
+//! GPU adapter info and device limits — logged at startup
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -20,6 +20,12 @@ pub struct RenderConfig {
     pub max_texture_dimension_2d: u32,
     /// Maximum number of bind groups
     pub max_bind_groups: u32,
+    /// Indicates if compute shaders are supported by the GPU
+    pub supports_compute_shaders: bool,
+    /// Maximum dimensions of a compute workgroup (x, y, z)
+    pub max_compute_workgroup_size: [u32; 3],
+    /// Maximum size of a storage buffer binding
+    pub max_storage_buffer_size: u64,
 }
 
 impl RenderConfig {
@@ -28,6 +34,8 @@ impl RenderConfig {
     pub fn from_adapter(adapter: &wgpu::Adapter) -> Self {
         let info = adapter.get_info();
         let limits = adapter.limits();
+        
+        let supports_compute_shaders = limits.max_compute_workgroup_size_x > 0;
 
         let config = Self {
             device_name: info.name.clone(),
@@ -36,9 +44,15 @@ impl RenderConfig {
             max_buffer_size: limits.max_buffer_size,
             max_texture_dimension_2d: limits.max_texture_dimension_2d,
             max_bind_groups: limits.max_bind_groups,
+            supports_compute_shaders,
+            max_compute_workgroup_size: [
+                limits.max_compute_workgroup_size_x,
+                limits.max_compute_workgroup_size_y,
+                limits.max_compute_workgroup_size_z,
+            ],
+            max_storage_buffer_size: limits.max_storage_buffer_binding_size as u64,
         };
 
-        // Log device baseline per TDD §1.5
         log::info!("=== GPU Device Baseline ===");
         log::info!("  Device:     {}", config.device_name);
         log::info!("  Backend:    {}", config.backend_name);
@@ -49,6 +63,8 @@ impl RenderConfig {
         );
         log::info!("  Max tex 2D: {}", config.max_texture_dimension_2d);
         log::info!("  Bind groups:{}", config.max_bind_groups);
+        log::info!("  Compute:    {} (Max wg: {:?})", config.supports_compute_shaders, config.max_compute_workgroup_size);
+        log::info!("  Storage Buf:{} MB", config.max_storage_buffer_size / (1024 * 1024));
         log::info!("===========================");
 
         config

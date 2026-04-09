@@ -39,6 +39,7 @@ fn make_fcc_al_state() -> CrystalState {
         phonon_phase: 0.0,
         intrinsic_sites: 4,
         selected_atoms: vec![],
+        volumetric_data: None,
     }
 }
 
@@ -65,6 +66,7 @@ fn make_sc_state(a: f64) -> CrystalState {
         phonon_phase: 0.0,
         intrinsic_sites: 1,
         selected_atoms: vec![],
+        volumetric_data: None,
     }
 }
 
@@ -299,6 +301,7 @@ fn make_nacl_state() -> CrystalState {
         phonon_phase: 0.0,
         intrinsic_sites: 8,
         selected_atoms: vec![],
+        volumetric_data: None,
     }
 }
 

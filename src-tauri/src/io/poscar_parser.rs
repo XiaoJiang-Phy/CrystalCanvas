@@ -6,6 +6,10 @@ use std::fs;
 
 pub fn parse_poscar(path: &str) -> Result<CrystalState, String> {
     let content = fs::read_to_string(path).map_err(|e| format!("Failed to read POSCAR: {}", e))?;
+    parse_poscar_str(&content)
+}
+
+pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
     let mut lines = content.lines().map(|l| l.trim()).filter(|l| !l.is_empty());
 
     // Line 1: Comment (name)

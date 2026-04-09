@@ -12,7 +12,7 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-    theme: 'dark',
+    theme: 'light',
     toggleTheme: () => { },
 });
 
@@ -24,7 +24,7 @@ interface ShellProps {
 }
 
 export const Shell: React.FC<ShellProps> = ({ children, viewportRef }) => {
-    const [theme, setTheme] = useState<Theme>('dark');
+    const [theme, setTheme] = useState<Theme>('light');
 
     // Toggle dark class on html root for Tailwind
     useEffect(() => {

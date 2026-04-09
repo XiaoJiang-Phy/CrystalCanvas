@@ -319,6 +319,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             app_handle
                 .dialog()
                 .file()
+                .add_filter("All Supported", &["cif", "xyz", "pdb", "poscar", "contcar", "vasp", "in", "pwi", "chgcar", "locpot", "cube", "xsf"])
+                .add_filter("Volumetric", &["chgcar", "locpot", "cube", "xsf"])
                 .set_title("Open Structure File")
                 .pick_file(move |file_path| {
                     let Some(path) = file_path else { return };
@@ -364,6 +366,9 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     Ok(mut renderer) => {
                                         renderer.update_atoms(&instances);
                                         renderer.update_lines(&state, &settings);
+                                        if let Some(vol) = &state.volumetric_data {
+                                            renderer.upload_volumetric(vol);
+                                        }
                                         let extent =
                                             state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
                                         let center = state.unit_cell_center();
@@ -654,7 +659,17 @@ fn main() {
             commands::set_phonon_phase,
             commands::update_lattice_params,
             commands::export_image,
-            commands::shift_termination
+            commands::shift_termination,
+            commands::load_volumetric_file,
+            commands::set_isovalue,
+            commands::set_isosurface_color,
+            commands::set_isosurface_opacity,
+            commands::set_isosurface_sign_mode,
+            commands::set_volume_render_mode,
+            commands::set_volume_opacity_range,
+            commands::set_volume_density_cutoff,
+            commands::set_volume_colormap,
+            commands::get_volumetric_info
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

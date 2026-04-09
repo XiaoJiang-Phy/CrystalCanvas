@@ -26,6 +26,9 @@ pub fn load_file(path: &str) -> Result<CrystalState, String> {
         "pdb" => load_pdb(path),
         "vasp" => crate::io::poscar_parser::parse_poscar(path),
         "in" | "pwi" => crate::io::qe_parser::parse_scf_in(path),
+        "chgcar" | "locpot" => crate::io::chgcar_parser::parse_chgcar(path),
+        "cube" => crate::io::cube_parser::parse_cube(path),
+        "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(path),
         _ => {
             // Check literal filenames for cases where extension is missing/different
             if filename == "poscar" || filename == "contcar" || filename.starts_with("poscar_") {
@@ -143,6 +146,27 @@ pub(crate) fn get_atomic_number(elem: &str) -> u8 {
         "PA" => 91,
         "U" => 92,
         _ => 0,
+    }
+}
+
+pub(crate) fn get_element_symbol(at_num: u8) -> String {
+    let elements = [
+        "X", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg",
+        "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr",
+        "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br",
+        "Kr", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd",
+        "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La",
+        "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er",
+        "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au",
+        "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
+        "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md",
+        "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn",
+        "Nh", "Fl", "Mc", "Lv", "Ts", "Og"
+    ];
+    if (at_num as usize) < elements.len() {
+        elements[at_num as usize].to_string()
+    } else {
+        "X".to_string()
     }
 }
 

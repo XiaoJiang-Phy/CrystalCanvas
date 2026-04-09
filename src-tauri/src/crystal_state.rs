@@ -83,6 +83,8 @@ pub struct CrystalState {
     pub intrinsic_sites: usize,
     #[serde(skip)]
     pub selected_atoms: Vec<usize>,
+    #[serde(skip)]
+    pub volumetric_data: Option<crate::volumetric::VolumetricData>,
 }
 
 impl Default for CrystalState {
@@ -112,6 +114,7 @@ impl Default for CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: 0,
             selected_atoms: Vec::new(),
+            volumetric_data: None,
         }
     }
 }
@@ -206,6 +209,7 @@ impl CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: actual_n,
             selected_atoms: Vec::new(),
+            volumetric_data: None,
         };
 
         state.fractional_to_cartesian();
@@ -577,6 +581,7 @@ impl CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: n_actual_usize,
             selected_atoms: Vec::new(),
+            volumetric_data: None,
         };
 
         for i in 0..n_actual_usize {
@@ -774,6 +779,7 @@ impl CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: n_new_usize,
             selected_atoms: Vec::new(),
+            volumetric_data: None,
         };
 
         for i in 0..n_new_usize {
@@ -1129,6 +1135,7 @@ mod tests {
             phonon_phase: 0.0,
             intrinsic_sites: 2,
             selected_atoms: vec![],
+            volumetric_data: None,
         };
         state.fractional_to_cartesian();
         state
