@@ -4,7 +4,7 @@
 
 # 🔬 CrystalCanvas
 
-**High-performance crystal structure modeling, slab cleaving, and DFT/MD file preparation — in a native desktop app.**
+**High-performance crystal structure modeling, volumetric visualization, and DFT/MD file preparation — in a native desktop app.**
 
 CrystalCanvas is an open-source desktop GUI application designed for computational materials science, condensed matter physics, and quantum chemistry. It breaks free from the limitations of traditional tools (VESTA, Materials Studio) by combining a native-first architecture with modern AI-powered workflows.
 
@@ -13,6 +13,7 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 ## ✨ Key Features
 
 - **🖱️ Pixel-precise manual modeling** — Hardware-accelerated 3D view with real-time atom selection, addition, deletion, and element substitution.
+- **📊 Volumetric data visualization** — Real-time isosurface extraction (GPU Marching Cubes) and volume raycasting for CHGCAR, Gaussian Cube, and XSF files. 10 scientific colormaps, dual-color signed isosurfaces, density cutoff control.
 - **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
 - **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*. Context-aware LLM acts as a semantic parameterizer and command orchestrator with strict physics validation (MIC overlap checks).
 - [🔌 **Seamless DFT/MD integration**](docs/knowledge/M7_Linker_IO_Learnings.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
@@ -20,21 +21,21 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 ---
 
-## 🛠️ Known Issues (v0.1 Alpha)
+## 🛠️ Known Issues
 
-> **⚠️ Slab Cleaving & Cutting Plane:**
-> The "Cutting Plane" tool correctly retains isolated and clean atomic coordinate exports. However, for low-symmetry crystals, it may produce mathematically offset or physically unverified surface terminations in the 3D viewer. This limitation has been hard-fenced from the underlying export formats and will undergo a complete algorithmic rewrite in v0.1.x revisions. Please double check all cleaved topology outputs prior to DFT/MD simulation.
+> **⚠️ Platform Support:**
+> Due to rendering engine (`wgpu`) backend differences, **Windows** and **Linux** builds may have rendering issues. Currently **only macOS** is fully tested and supported.
 
 ### 🍎 Note for macOS Users (Unverified Developer)
 
-Since this Alpha release is not signed with an Apple Developer Certificate, macOS will prevent it from running with a "Developer cannot be verified" warning.
+Since releases are not signed with an Apple Developer Certificate, macOS will prevent it from running with a "Developer cannot be verified" warning.
 
 **To run the app:**
 1. Move `CrystalCanvas.app` to your `/Applications` folder.
 2. **Right-click (or Control-click)** the app icon and select **Open**.
 3. Click **Open** again in the dialog box.
 
-Alternatively, you can run the following command in Terminal to clear the isolation attribute:
+Alternatively, run the following command in Terminal:
 ```bash
 sudo xattr -cr /Applications/CrystalCanvas.app
 ```
@@ -49,7 +50,9 @@ sudo xattr -cr /Applications/CrystalCanvas.app
 ├─────────────────────────────────────────────────────┤
 │  Rust / Tauri 2.0  (Application Logic / SSoT)       │
 ├─────────────────────────────────────────────────────┤
-│  Rust / wgpu  (Rendering: Impostor Sphere)          │
+│  Rust / wgpu  (Impostor Sphere + Volume Raycast)    │
+├─────────────────────────────────────────────────────┤
+│  WGSL Compute  (GPU Marching Cubes / Raycasting)    │
 ├─────────────────────────────────────────────────────┤
 │  C++ Physics Kernel  (Spglib / Gemmi / Eigen)       │
 └─────────────────────────────────────────────────────┘
@@ -60,6 +63,7 @@ sudo xattr -cr /Applications/CrystalCanvas.app
 | **Presentation** | React + TailwindCSS | UI panels, toolbars, chat |
 | **Application** | Rust / Tauri 2.0 | State management, IPC, I/O pipeline |
 | **Rendering** | Rust / wgpu | GPU-accelerated 3D (Metal / Vulkan / DX12) |
+| **Volumetric** | WGSL Compute + Raycast | Isosurface extraction, volume rendering |
 | **Compute** | C++ (Spglib, Gemmi, Eigen) | Symmetry, Overlap Detection, MIC |
 | **FFI Bridge** | `cxx` (Rust ↔ C++) | Type-safe, zero-copy data transfer |
 
@@ -130,7 +134,7 @@ RUST_LOG=info cargo run --bin render_demo
 - [x] **M8.5: Persistent Settings & UI Polish** — Local JSON caching, global rendering customization.
 - [x] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
 - [x] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
-- [ ] **M11: Volumetric & Magnetic States** — Real-time Compute Shader isosurfaces (CHGCAR) and non-collinear spin vectors.
+- [x] **M11: Volumetric Rendering** — GPU Marching Cubes isosurfaces, volume raycasting, 10 colormaps, CHGCAR/Cube/XSF parsers.
 - [ ] **M12+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
 
 ---
@@ -141,12 +145,15 @@ RUST_LOG=info cargo run --bin render_demo
 CrystalCanvas/
 ├── .github/            # GitHub Actions (CI/CD release workflows)
 ├── src-tauri/          # Rust backend (Tauri commands, state handling, wgpu orchestration)
-│   ├── shaders/        # WGSL compute/render shader sources
-│   ├── src/            # Rust core logic (State Manager, Command Router)
+│   ├── shaders/        # WGSL shaders (volume_raycast, marching_cubes, isosurface_render)
+│   ├── src/
+│   │   ├── io/         # File parsers (CIF, POSCAR, CHGCAR, Cube, XSF, QE)
+│   │   ├── renderer/   # wgpu pipelines (atoms, bonds, isosurface, volume raycast)
+│   │   └── ...         # State manager, command router, volumetric module
 │   ├── build.rs        # Unified Rust + C++ build script (cmake/cxx bridge)
 │   └── Cargo.toml
 ├── src/                # React frontend (TypeScript + TailwindCSS components)
-│   ├── components/     # UI Panel components
+│   ├── components/     # UI Panel components (RightSidebar: volumetric controls)
 │   ├── hooks/          # Custom React hooks (tauri events, file-drop, 3D interaction)
 │   └── types/          # Strict TS IPC mappings (e.g., CrystalState, CrystalCommand)
 ├── cpp/                # C++ physics kernel
@@ -154,7 +161,7 @@ CrystalCanvas/
 │   ├── src/            # Implementation code (Spglib, Gemmi, Eigen integrations)
 │   └── CMakeLists.txt
 ├── docs/               # System documentation ([User Manual](docs/UserManual_v0.1.md), Development Notes)
-├── tests/              # End-to-end integration tests & CIF data
+├── tests/              # Integration tests & benchmark data (LFS-tracked volumetric files)
 ├── dev_env.sh          # Local toolchain environment activation script
 ├── CHANGELOG.md        # Release history and known issues
 └── README.md
