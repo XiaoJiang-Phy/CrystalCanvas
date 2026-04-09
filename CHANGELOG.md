@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-09
+
+### Added
+- **📊 Volumetric Rendering Pipeline**: Full-stack volumetric data visualization for charge densities, electrostatic potentials, and orbital wavefunctions.
+  - **File Parsers**: VASP CHGCAR/LOCPOT (with $V_{\text{cell}}$ normalization), Gaussian Cube (Bohr→Å, C→F reorder), XSF DATAGRID_3D.
+  - **Isosurface Extraction**: CPU Marching Cubes ([Lorensen87]) reference implementation + GPU compute shader pipeline for real-time mesh generation.
+  - **Volume Raycasting**: Depth-aware front-to-back compositing with Blinn-Phong shading, supporting both orthographic and perspective projections.
+  - **Dual-Color Isosurface**: Positive/negative lobes rendered in distinct colormap-derived colors for signed data (Wannier functions, $\Delta\rho$).
+  - **10 Scientific Colormaps**: Viridis, Inferno, Plasma, Magma, Cividis, Turbo, Hot, Grayscale, Coolwarm (diverging), RdYlBu (diverging).
+  - **Signed Volume Mapping**: $\sqrt{|v/v_{\max}|}$ perceptual stretch for enhanced positive/negative lobe contrast on sequential colormaps.
+  - **Dynamic Step Size**: Nyquist-compliant raymarching ($\Delta t = 0.5 \cdot \min(h_a, h_b, h_c)$) eliminates Moiré banding artifacts.
+  - **Render Modes**: Isosurface-only, Volume-only, or Both (with soft-fade clipping at isosurface boundary).
+  - **Volume Density Cutoff**: User-adjustable threshold to trim low-density regions; unified with isovalue in Both mode.
+  - **Opacity Control**: Per-mode opacity scale slider for fine-tuning transparency.
+  - **Drag-and-Drop**: Volumetric files can be loaded via drag-and-drop or File menu.
+
+### Changed
+- **Git LFS**: Large test data files (CHGCAR, Cube, XSF; ~54 MB total) migrated to Git LFS for repository hygiene.
+- **Light Mode Default**: Application now starts in light mode by default.
+- **Code Quality**: Removed all internal development tracking codes from production source files.
+
 ## [0.2.0] - 2026-04-05
 
 ### Fixed
