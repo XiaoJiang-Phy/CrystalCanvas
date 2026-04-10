@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { cn } from '../../utils/cn';
 import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
-import { CrystalState, BondAnalysisResult, PhononModeSummary } from '../../types/crystal';
+import { CrystalState, BondAnalysisResult, PhononModeSummary, BzInfo } from '../../types/crystal';
 import { PromptModal } from './PromptModal';
 import { PhononImportModal } from './PhononImportModal';
 
@@ -37,6 +38,23 @@ export const RightSidebar: React.FC<{
     const [volumetricInfo, setVolumetricInfo] = useState<any | null>(null);
     const [volumetricRange, setVolumetricRange] = useState<{min: number, max: number}>({min: -1.0, max: 1.0});
     const [isovalue, setIsovalue] = useState(0.05);
+
+    // Reciprocal Space State
+    const [bzInfo, setBzInfo] = useState<BzInfo | null>(null);
+    const [isBzVisible, setIsBzVisible] = useState(false);
+    const [bzScale, setBzScale] = useState(0.35);
+    const [bzLabels, setBzLabels] = useState<{label: string, x: number, y: number}[]>([]);
+
+    const fetch_bz_labels = useCallback(async () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        try {
+            const labels = await safeInvoke<{label: string, x: number, y: number}[]>('get_bz_label_positions', { width: w, height: h });
+            if (labels) setBzLabels(labels);
+        } catch (_e) {
+            setBzLabels([]);
+        }
+    }, []);
 
     useEffect(() => {
         let unlisten = () => {};
@@ -178,6 +196,45 @@ export const RightSidebar: React.FC<{
         safeInvoke('set_phonon_mode', { modeIndex: idx }).catch(console.error);
     };
 
+    const handle_compute_bz = () => {
+        safeInvoke<BzInfo>('compute_brillouin_zone')
+            .then(res => {
+                if (res) {
+                    setBzInfo(res);
+                    return safeInvoke('toggle_bz_display', { show: true }).then(() => {
+                        setIsBzVisible(true);
+                        setTimeout(fetch_bz_labels, 150);
+                    });
+                }
+            })
+            .catch(console.error);
+    };
+
+    const handle_toggle_bz = () => {
+        const next = !isBzVisible;
+        safeInvoke('toggle_bz_display', { show: next })
+            .then(() => {
+                setIsBzVisible(next);
+                if (next) {
+                    setTimeout(fetch_bz_labels, 200);
+                } else {
+                    setBzLabels([]);
+                }
+            })
+            .catch(console.error);
+    };
+
+    const handle_bz_resize = (delta: number) => {
+        const next = Math.min(1.0, Math.max(0.15, bzScale + delta));
+        setBzScale(next);
+        safeInvoke('set_bz_scale', { scale: next }).catch(console.error);
+    };
+
+    const handle_bz_close = () => {
+        setIsBzVisible(false);
+        safeInvoke('toggle_bz_display', { show: false }).catch(console.error);
+    };
+
 
     useEffect(() => {
         if (!isAnimating) return;
@@ -195,6 +252,7 @@ export const RightSidebar: React.FC<{
     }, [isAnimating, amplitude]);
 
     return (
+        <>
         <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
 
             {/* Bond Analysis Accordion */}
@@ -451,6 +509,112 @@ export const RightSidebar: React.FC<{
                 </div>
             </Accordion>
 
+            {/* Reciprocal Space Accordion */}
+            <Accordion title="Reciprocal Space" isOpen={openAccordion === 'Reciprocal Space'} onToggle={() => setOpenAccordion(openAccordion === 'Reciprocal Space' ? null : 'Reciprocal Space')}>
+                <div className="space-y-3">
+                    <ActionButton label="Compute Brillouin Zone" onClick={handle_compute_bz} />
+                    
+                    <button 
+                        onClick={handle_toggle_bz} 
+                        disabled={!bzInfo}
+                        className={cn(
+                            "w-full py-1.5 rounded-md text-xs font-medium transition-colors shadow-sm pointer-events-auto",
+                            !bzInfo ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed" :
+                            isBzVisible 
+                                ? "bg-amber-500 hover:bg-amber-600 text-white" 
+                                : "bg-slate-500 hover:bg-slate-600 text-white"
+                        )}
+                    >
+                        {isBzVisible ? "◀ Back to Crystal View" : "View Brillouin Zone"}
+                    </button>
+
+                    {bzInfo && (
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-2 rounded border border-slate-100 dark:border-slate-700 space-y-1">
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">Bravais Type:</span>
+                                <span className="font-semibold">{bzInfo.bravais_type}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">Geometry:</span>
+                                <span>
+                                    {bzInfo.is_2d ? `${bzInfo.edges_count} edges, ` : `${bzInfo.faces_count} faces, `} 
+                                    {bzInfo.vertices_count} vertices
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    {bzInfo && (
+                        <>
+                        <div className="border-t border-slate-200 dark:border-slate-700 my-2"></div>
+                        <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Band Path Generator</div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <label className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">N<sub>k</sub></label>
+                            <input 
+                                type="number" min={5} max={100} defaultValue={20}
+                                id="kpath-npoints"
+                                className="w-14 bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-slate-700 dark:text-slate-300 pointer-events-auto"
+                            />
+                            <select
+                                id="kpath-format"
+                                defaultValue="qe"
+                                className="flex-1 bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-slate-700 dark:text-slate-300 pointer-events-auto"
+                            >
+                                <option value="qe">QE (crystal)</option>
+                                <option value="vasp">VASP (KPOINTS)</option>
+                            </select>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                const nEl = document.getElementById('kpath-npoints') as HTMLInputElement;
+                                const fmtEl = document.getElementById('kpath-format') as HTMLSelectElement;
+                                const npoints = parseInt(nEl?.value) || 20;
+                                const fmt = fmtEl?.value || 'qe';
+                                try {
+                                    const res = await safeInvoke<{qe: string, vasp: string}>('generate_kpath_text', { npoints });
+                                    if (!res) return;
+                                    const text = fmt === 'qe' ? res.qe : res.vasp;
+                                    const preEl = document.getElementById('kpath-preview');
+                                    if (preEl) preEl.textContent = text;
+                                    const defaultName = fmt === 'qe' ? 'kpath_qe.txt' : 'KPOINTS';
+                                    const savePath = await safeDialogSave({
+                                        title: 'Save K-Path',
+                                        defaultPath: defaultName,
+                                        filters: [{ name: 'Text', extensions: ['txt'] }],
+                                    });
+                                    if (savePath) {
+                                        await safeInvoke('write_text_file', { path: String(savePath), content: text });
+                                    }
+                                } catch (e) { alert(String(e)); }
+                            }}
+                            className="w-full py-1.5 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-md text-xs font-medium transition-colors border border-indigo-200/50 dark:border-indigo-800/50 active:scale-[0.98] pointer-events-auto"
+                        >
+                            💾 Generate &amp; Save K-Path
+                        </button>
+                        <pre 
+                            id="kpath-preview"
+                            className="mt-1 max-h-32 overflow-y-auto text-[10px] bg-slate-900 text-green-400 p-2 rounded font-mono whitespace-pre custom-scrollbar empty:hidden pointer-events-auto select-text cursor-text"
+                        ></pre>
+                        </>
+                    )}
+
+                    <div className="border-t border-slate-200 dark:border-slate-700 my-2"></div>
+                    
+                    <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Standardization</div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <ActionButton label="Niggli Reduce" onClick={() => {
+                            safeInvoke('apply_niggli_reduce').then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
+                        }} />
+                        <ActionButton label="Primitive" onClick={() => {
+                            safeInvoke('apply_cell_standardize', { toPrimitive: true }).then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
+                        }} />
+                        <ActionButton label="Conventional" onClick={() => {
+                            safeInvoke('apply_cell_standardize', { toPrimitive: false }).then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
+                        }} />
+                    </div>
+                </div>
+            </Accordion>
+
             {/* Supercell Accordion */}
             <Accordion title="Supercell Construction" isOpen={openAccordion === 'Supercell'} onToggle={() => setOpenAccordion(openAccordion === 'Supercell' ? null : 'Supercell')}>
                 <div className="space-y-3">
@@ -555,6 +719,55 @@ export const RightSidebar: React.FC<{
                 onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
             />
         </div>
+
+        {/* BZ k-point label overlay */}
+        {isBzVisible && bzLabels.length > 0 && ReactDOM.createPortal(
+            <div className="fixed inset-0 pointer-events-none z-[60]" style={{fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif"}}>
+                {(() => {
+                    const pad = 32;
+                    const minDist = 22;
+                    const positioned = bzLabels.map(l => ({ ...l, dx: 0, dy: -18 }));
+                    for (let pass = 0; pass < 3; pass++) {
+                        for (let i = 0; i < positioned.length; i++) {
+                            for (let j = i + 1; j < positioned.length; j++) {
+                                const ax = positioned[i].x + positioned[i].dx;
+                                const ay = positioned[i].y + positioned[i].dy;
+                                const bx = positioned[j].x + positioned[j].dx;
+                                const by = positioned[j].y + positioned[j].dy;
+                                const dist = Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
+                                if (dist < minDist) {
+                                    const nudge = (minDist - dist) / 2 + 2;
+                                    positioned[j].dy += nudge;
+                                    positioned[i].dy -= nudge;
+                                }
+                            }
+                        }
+                    }
+                    return positioned.map((lbl, i) => {
+                        const cx = Math.max(pad, Math.min(lbl.x + lbl.dx, window.innerWidth - pad));
+                        const cy = Math.max(pad, Math.min(lbl.y + lbl.dy, window.innerHeight - pad));
+                        return (
+                            <span
+                                key={i}
+                                className="absolute text-[12px] font-bold whitespace-nowrap"
+                                style={{
+                                    left: cx,
+                                    top: cy,
+                                    transform: 'translate(-50%, -50%)',
+                                    color: '#f59e0b',
+                                    textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,0.6)',
+                                    letterSpacing: '0.02em',
+                                }}
+                            >
+                                {lbl.label}
+                            </span>
+                        );
+                    });
+                })()}
+            </div>,
+            document.body
+        )}
+        </>
     );
 };
 

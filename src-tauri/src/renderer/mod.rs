@@ -6,6 +6,7 @@ pub mod camera;
 pub mod gpu_context;
 pub mod instance;
 pub mod pipeline;
+pub mod bz_renderer;
 pub mod ray_picking;
 pub mod render_config;
 #[allow(clippy::module_inception)]

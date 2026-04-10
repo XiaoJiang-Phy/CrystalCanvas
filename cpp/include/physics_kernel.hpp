@@ -22,6 +22,29 @@
 int get_spacegroup(const double *lattice, const double *positions,
                    const int *types, size_t n_atoms, double symprec);
 
+/// Niggli-reduce a lattice in-place. Returns 0 on success, nonzero on failure.
+/// @param lattice 3x3 ColMajor lattice (modified in-place)
+/// @param symprec Tolerance (Å)
+int niggli_reduce(double* lattice, double symprec);
+
+/// Delaunay-reduce a lattice in-place. Returns 0 on success, nonzero on failure.
+/// @param lattice 3x3 ColMajor lattice (modified in-place)
+/// @param symprec Tolerance (Å)
+int delaunay_reduce(double* lattice, double symprec);
+
+/// Standardize cell (conventional or primitive).
+/// @param lattice 3x3 ColMajor lattice (modified in-place)
+/// @param positions Nx3 array of fractional coordinates (modified in-place)
+/// @param types Array of atomic types (modified in-place)
+/// @param n_atoms Total number of atoms (original count)
+/// @param capacity Maximum number of atoms the positions and types arrays can hold
+/// @param to_primitive If nonzero, find primitive cell; otherwise refine to conventional.
+/// @param symprec Tolerance for symmetry matching
+/// @return Number of atoms in standardized cell, or 0 on failure.
+int standardize_cell(double* lattice, double* positions, int* types,
+                     size_t n_atoms, size_t capacity, int to_primitive, double symprec);
+
+
 /// Output geometry payload for supercell operations to transmit back to Rust
 struct SupercellResult {
   double new_lattice[9];

@@ -66,6 +66,18 @@ pub mod ffi {
             symprec: f64,
         ) -> i32;
 
+        unsafe fn niggli_reduce(lattice: *mut f64, symprec: f64) -> i32;
+        unsafe fn delaunay_reduce(lattice: *mut f64, symprec: f64) -> i32;
+        unsafe fn standardize_cell(
+            lattice: *mut f64,
+            positions: *mut f64,
+            types: *mut i32,
+            n_atoms: usize,
+            capacity: usize,
+            to_primitive: i32,
+            symprec: f64,
+        ) -> i32;
+
         /// Get the number of atoms for a specific supercell expansion
         /// Returns Number of new atoms (n_atoms * determinant(expansion))
         unsafe fn get_supercell_size(n_atoms: usize, expansion: *const i32) -> i32;

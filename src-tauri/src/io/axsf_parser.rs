@@ -223,6 +223,8 @@ pub fn parse_axsf(path: &str) -> Result<(CrystalState, PhononData), String> {
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
         cart_positions: Vec::new(),
         version: 1,
+        is_2d: false,
+        vacuum_axis: None,
         bond_analysis: None,
         phonon_data: None,
         active_phonon_mode: None,
@@ -230,6 +232,7 @@ pub fn parse_axsf(path: &str) -> Result<(CrystalState, PhononData), String> {
         intrinsic_sites: elems.len(),
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
     };
 
     state.fractional_to_cartesian();
