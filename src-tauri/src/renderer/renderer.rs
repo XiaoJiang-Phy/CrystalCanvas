@@ -65,6 +65,10 @@ pub struct Renderer {
 
     // Background clear color (for dark/light mode toggles)
     pub clear_color: wgpu::Color,
+
+    // Reciprocal Space
+    pub bz_viewport: Option<crate::renderer::bz_renderer::BzSubViewport>,
+    pub show_bz: bool,
 }
 
 impl Renderer {
@@ -172,6 +176,8 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
+        let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&gpu, 200, 200));
+
         Self {
             gpu,
             camera,
@@ -202,6 +208,8 @@ impl Renderer {
             camera_bind_group_layout,
             isosurface_dispatch_size: [0; 3],
             clear_color: default_clear,
+            bz_viewport,
+            show_bz: false,
         }
     }
 
@@ -332,6 +340,13 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
+        // Render BZ offscreen first
+        if self.show_bz {
+            if let Some(bz) = &self.bz_viewport {
+                bz.render_to_texture(&mut encoder);
+            }
+        }
+
         // ═══ Pass 1: Opaque objects — write depth ═════════════════════════
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -444,6 +459,36 @@ impl Renderer {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
                 }
+            }
+        }
+
+        // ═══ Pass 3: Post-processing & UI (Blit BZ) ══════════════════════
+        if self.show_bz {
+            if let Some(bz) = &self.bz_viewport {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("BZ Blit Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                
+                // Position BZ inset at bottom right (e.g. 20x20 padding offset)
+                let padding = 20.0;
+                let bz_scale = 0.25; // 25% of window min dimension
+                let min_dim = self.gpu.config.width.min(self.gpu.config.height) as f32;
+                let size = min_dim * bz_scale;
+                let x = self.gpu.config.width as f32 - size - padding;
+                let y = self.gpu.config.height as f32 - size - padding;
+                
+                bz.blit_to_main(&mut pass, x, y, size, size);
             }
         }
 
@@ -752,6 +797,26 @@ impl Renderer {
         self.show_isosurface = false;
         self.show_volume = false;
         self.volume_render_mode = VolumeRenderMode::Isosurface;
+    }
+
+    /// Toggle bond display.
+    pub fn toggle_bonds(&mut self, show: bool) {
+        self.show_bonds = show;
+    }
+
+    /// Update Brillouin Zone data and trigger refresh of the PiP viewport buffers.
+    pub fn update_bz_data(&mut self, bz_opt: Option<(&crate::brillouin_zone::BrillouinZone, &crate::kpath::KPath)>) {
+        if let Some((bz, kpath)) = bz_opt {
+            if self.bz_viewport.is_none() {
+                self.bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&self.gpu, 200, 200));
+            }
+            if let Some(viewport) = &mut self.bz_viewport {
+                viewport.update_bz(&self.gpu, bz, kpath);
+                self.show_bz = true;
+            }
+        } else {
+            self.show_bz = false;
+        }
     }
 
     /// Upload volumetric data to GPU and initialize isosurface pipeline.

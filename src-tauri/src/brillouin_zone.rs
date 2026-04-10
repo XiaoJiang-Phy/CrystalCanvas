@@ -179,7 +179,7 @@ impl BrillouinZone {
             }
 
             if new_face_vertices.len() >= 3 {
-                let mut valid_new_face = Vec::new();
+                let mut valid_new_face: Vec<[f64; 3]> = Vec::new();
                 for pt in &new_face_vertices {
                     let mut is_dup = false;
                     for valid_pt in &valid_new_face {
