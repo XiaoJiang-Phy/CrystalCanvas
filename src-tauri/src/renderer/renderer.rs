@@ -176,7 +176,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
-        let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&gpu, 200, 200));
+        let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&gpu, 400, 400));
 
         Self {
             gpu,
@@ -481,10 +481,10 @@ impl Renderer {
                 });
                 
                 // Position BZ inset at bottom right (e.g. 20x20 padding offset)
-                let padding = 20.0;
-                let bz_scale = 0.25; // 25% of window min dimension
+                let padding = 16.0;
+                let bz_scale = 0.35;
                 let min_dim = self.gpu.config.width.min(self.gpu.config.height) as f32;
-                let size = min_dim * bz_scale;
+                let size = (min_dim * bz_scale).max(200.0);
                 let x = self.gpu.config.width as f32 - size - padding;
                 let y = self.gpu.config.height as f32 - size - padding;
                 
@@ -808,7 +808,7 @@ impl Renderer {
     pub fn update_bz_data(&mut self, bz_opt: Option<(&crate::brillouin_zone::BrillouinZone, &crate::kpath::KPath)>) {
         if let Some((bz, kpath)) = bz_opt {
             if self.bz_viewport.is_none() {
-                self.bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&self.gpu, 200, 200));
+                self.bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&self.gpu, 400, 400));
             }
             if let Some(viewport) = &mut self.bz_viewport {
                 viewport.update_bz(&self.gpu, bz, kpath);

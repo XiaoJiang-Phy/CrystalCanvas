@@ -213,6 +213,7 @@ impl CrystalState {
             intrinsic_sites: actual_n,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         };
 
         state.fractional_to_cartesian();
@@ -805,6 +806,7 @@ impl CrystalState {
             intrinsic_sites: n_actual_usize,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         };
 
         for i in 0..n_actual_usize {
@@ -1003,6 +1005,7 @@ impl CrystalState {
             intrinsic_sites: n_new_usize,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         };
 
         for i in 0..n_new_usize {
@@ -1359,6 +1362,7 @@ mod tests {
             intrinsic_sites: 2,
             selected_atoms: vec![],
             volumetric_data: None,
+            bz_cache: None,
         };
         state.fractional_to_cartesian();
         state

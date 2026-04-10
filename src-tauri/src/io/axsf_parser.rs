@@ -230,6 +230,7 @@ pub fn parse_axsf(path: &str) -> Result<(CrystalState, PhononData), String> {
         intrinsic_sites: elems.len(),
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
     };
 
     state.fractional_to_cartesian();
