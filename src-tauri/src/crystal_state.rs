@@ -85,6 +85,8 @@ pub struct CrystalState {
     pub selected_atoms: Vec<usize>,
     #[serde(skip)]
     pub volumetric_data: Option<crate::volumetric::VolumetricData>,
+    #[serde(skip)]
+    pub bz_cache: Option<(crate::brillouin_zone::BrillouinZone, crate::kpath::KPath)>,
 }
 
 impl Default for CrystalState {
@@ -115,6 +117,7 @@ impl Default for CrystalState {
             intrinsic_sites: 0,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         }
     }
 }

@@ -671,7 +671,10 @@ fn main() {
             commands::set_volume_opacity_range,
             commands::set_volume_density_cutoff,
             commands::set_volume_colormap,
-            commands::get_volumetric_info
+            commands::get_volumetric_info,
+            commands::compute_brillouin_zone,
+            commands::toggle_bz_display,
+            commands::get_kpath_info
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

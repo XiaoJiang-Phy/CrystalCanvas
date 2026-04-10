@@ -1699,6 +1699,110 @@ pub fn load_volumetric_file(
     Ok(info)
 }
 
+// =========================================================================
+// Reciprocal Space Commands (Node N5)
+// =========================================================================
+
+#[derive(serde::Serialize)]
+pub struct BzInfoResponse {
+    pub bravais_type: String,
+    pub spacegroup: i32,
+    pub vertices_count: usize,
+    pub edges_count: usize,
+    pub faces_count: usize,
+}
+
+#[derive(serde::Serialize)]
+pub struct KPathPointUi {
+    pub label: String,
+    pub coord_frac: [f64; 3],
+}
+
+#[derive(serde::Serialize)]
+pub struct KPathInfoResponse {
+    pub points: Vec<KPathPointUi>,
+    pub segments: Vec<Vec<String>>,
+}
+
+#[tauri::command]
+pub fn compute_brillouin_zone(
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<BzInfoResponse, String> {
+    let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
+    
+    let sg = cs.spacegroup_number;
+    let bz_type = crate::kpath::identify_bravais_type(sg);
+    
+    let lattice_col = cs.get_lattice_col_major();
+    // BrillouinZone::new expects row vectors [ [x,y,z], [x,y,z], [x,y,z] ]
+    let lat = [
+        [lattice_col[0], lattice_col[1], lattice_col[2]],
+        [lattice_col[3], lattice_col[4], lattice_col[5]],
+        [lattice_col[6], lattice_col[7], lattice_col[8]],
+    ];
+    
+    let bz = crate::brillouin_zone::BrillouinZone::new(lat, bz_type);
+    let kpath = crate::kpath::get_kpath(bz_type, &lat);
+    
+    let response = BzInfoResponse {
+        bravais_type: format!("{:?}", bz_type),
+        spacegroup: sg,
+        vertices_count: bz.vertices.len(),
+        edges_count: bz.edges.len(),
+        faces_count: bz.faces.len(),
+    };
+    
+    if let Ok(mut renderer) = renderer_state.lock() {
+        renderer.update_bz_data(Some((&bz, &kpath)));
+    }
+    
+    cs.bz_cache = Some((bz, kpath));
+    
+    Ok(response)
+}
+
+#[tauri::command]
+pub fn toggle_bz_display(
+    show: bool,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<(), String> {
+    let mut renderer = renderer_state.lock().map_err(|e| e.to_string())?;
+    if show {
+        if let Ok(cs) = crystal_state.lock() {
+            if let Some((bz, kpath)) = &cs.bz_cache {
+                renderer.update_bz_data(Some((bz, kpath)));
+            } else {
+                renderer.show_bz = true;
+            }
+        }
+    } else {
+        renderer.show_bz = false;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_kpath_info(
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<KPathInfoResponse, String> {
+    let cs = crystal_state.lock().map_err(|e| e.to_string())?;
+    if let Some((_, kpath)) = &cs.bz_cache {
+        let points = kpath.points.iter().map(|p| KPathPointUi {
+            label: p.label.clone(),
+            coord_frac: p.coord_frac,
+        }).collect();
+        
+        Ok(KPathInfoResponse {
+            points,
+            segments: kpath.path_segments.clone(),
+        })
+    } else {
+        Err("Brillouin Zone not computed yet".into())
+    }
+}
+
 #[tauri::command]
 pub fn set_isovalue(
     value: f32,

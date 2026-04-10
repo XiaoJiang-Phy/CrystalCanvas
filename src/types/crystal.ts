@@ -89,3 +89,25 @@ export interface PhononModeSummary {
     is_imaginary: boolean;
     q_point: [number, number, number];
 }
+
+// =========================================================================
+// Reciprocal Space Data Types (Phase 6)
+// =========================================================================
+
+export interface BzInfo {
+    bravais_type: string;
+    spacegroup: number;
+    vertices_count: number;
+    edges_count: number;
+    faces_count: number;
+}
+
+export interface KPathPointUi {
+    label: string;
+    coord_frac: [number, number, number];
+}
+
+export interface KPathInfo {
+    points: KPathPointUi[];
+    segments: string[][];
+}

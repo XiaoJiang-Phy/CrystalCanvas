@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { cn } from '../../utils/cn';
 import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
-import { CrystalState, BondAnalysisResult, PhononModeSummary } from '../../types/crystal';
+import { CrystalState, BondAnalysisResult, PhononModeSummary, BzInfo, KPathInfo } from '../../types/crystal';
 import { PromptModal } from './PromptModal';
 import { PhononImportModal } from './PhononImportModal';
 
@@ -37,6 +37,10 @@ export const RightSidebar: React.FC<{
     const [volumetricInfo, setVolumetricInfo] = useState<any | null>(null);
     const [volumetricRange, setVolumetricRange] = useState<{min: number, max: number}>({min: -1.0, max: 1.0});
     const [isovalue, setIsovalue] = useState(0.05);
+
+    // Reciprocal Space State
+    const [bzInfo, setBzInfo] = useState<BzInfo | null>(null);
+    const [isBzVisible, setIsBzVisible] = useState(false);
 
     useEffect(() => {
         let unlisten = () => {};
@@ -176,6 +180,23 @@ export const RightSidebar: React.FC<{
             onActivePhononModeUpdate(mode || null);
         }
         safeInvoke('set_phonon_mode', { modeIndex: idx }).catch(console.error);
+    };
+
+    const handle_compute_bz = () => {
+        safeInvoke<BzInfo>('compute_brillouin_zone')
+            .then(res => {
+                if (res) {
+                    setBzInfo(res);
+                    setIsBzVisible(true);
+                }
+            })
+            .catch(console.error);
+    };
+
+    const handle_toggle_bz = () => {
+        safeInvoke('toggle_bz_display', { show: !isBzVisible })
+            .then(() => setIsBzVisible(!isBzVisible))
+            .catch(console.error);
     };
 
 
@@ -448,6 +469,52 @@ export const RightSidebar: React.FC<{
                             </button>
                         </>
                     )}
+                </div>
+            </Accordion>
+
+            {/* Reciprocal Space Accordion */}
+            <Accordion title="Reciprocal Space" isOpen={openAccordion === 'Reciprocal Space'} onToggle={() => setOpenAccordion(openAccordion === 'Reciprocal Space' ? null : 'Reciprocal Space')}>
+                <div className="space-y-3">
+                    <ActionButton label="Compute Brillouin Zone" onClick={handle_compute_bz} />
+                    
+                    <label className="flex items-center space-x-2 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={isBzVisible} 
+                            onChange={handle_toggle_bz} 
+                            disabled={!bzInfo}
+                            className="rounded border-slate-300 text-emerald-500 focus:ring-emerald-500 disabled:opacity-50"
+                        />
+                        <span className={!bzInfo ? "opacity-50" : ""}>Show Brillouin Zone (Inset)</span>
+                    </label>
+
+                    {bzInfo && (
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-2 rounded border border-slate-100 dark:border-slate-700 space-y-1">
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">Bravais Type:</span>
+                                <span className="font-semibold">{bzInfo.bravais_type}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">Geometry:</span>
+                                <span>{bzInfo.faces_count} faces, {bzInfo.vertices_count} vertices</span>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="border-t border-slate-200 dark:border-slate-700 my-2"></div>
+                    
+                    <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Standardization</div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <ActionButton label="Niggli Reduce" onClick={() => {
+                            safeInvoke('apply_niggli_reduce').then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
+                        }} />
+                        <ActionButton label="Primitive" onClick={() => {
+                            safeInvoke('apply_cell_standardize', { toPrimitive: true }).then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
+                        }} />
+                        <ActionButton label="Conventional" onClick={() => {
+                            safeInvoke('apply_cell_standardize', { toPrimitive: false }).then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
+                        }} />
+                    </div>
                 </div>
             </Accordion>
 
