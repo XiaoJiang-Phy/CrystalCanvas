@@ -69,6 +69,7 @@ pub struct Renderer {
     // Reciprocal Space
     pub bz_viewport: Option<crate::renderer::bz_renderer::BzSubViewport>,
     pub show_bz: bool,
+    pub bz_scale: f32,
 }
 
 impl Renderer {
@@ -210,6 +211,7 @@ impl Renderer {
             clear_color: default_clear,
             bz_viewport,
             show_bz: false,
+            bz_scale: 0.35,
         }
     }
 
@@ -340,12 +342,27 @@ impl Renderer {
                 label: Some("Render Encoder"),
             });
 
-        // Render BZ offscreen first
+        // ═══ Full-screen BZ mode — takes over entire viewport ════════════
         if self.show_bz {
-            if let Some(bz) = &self.bz_viewport {
-                bz.render_to_texture(&mut encoder);
+            if let Some(bz) = &mut self.bz_viewport {
+                let w = self.gpu.config.width as f32;
+                let h = self.gpu.config.height as f32;
+                let cc = self.clear_color;
+                bz.render_fullscreen(
+                    &mut encoder,
+                    &view,
+                    &self.opaque_depth_view,
+                    cc,
+                    w, h,
+                    &self.gpu.queue,
+                );
             }
+            self.gpu.queue.submit(std::iter::once(encoder.finish()));
+            output.present();
+            return Ok(());
         }
+
+        // ═══ Normal crystal rendering path ═══════════════════════════════
 
         // ═══ Pass 1: Opaque objects — write depth ═════════════════════════
         {
@@ -459,36 +476,6 @@ impl Renderer {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
                 }
-            }
-        }
-
-        // ═══ Pass 3: Post-processing & UI (Blit BZ) ══════════════════════
-        if self.show_bz {
-            if let Some(bz) = &self.bz_viewport {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("BZ Blit Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                
-                // Position BZ inset at bottom right (e.g. 20x20 padding offset)
-                let padding = 16.0;
-                let bz_scale = 0.35;
-                let min_dim = self.gpu.config.width.min(self.gpu.config.height) as f32;
-                let size = (min_dim * bz_scale).max(200.0);
-                let x = self.gpu.config.width as f32 - size - padding;
-                let y = self.gpu.config.height as f32 - size - padding;
-                
-                bz.blit_to_main(&mut pass, x, y, size, size);
             }
         }
 

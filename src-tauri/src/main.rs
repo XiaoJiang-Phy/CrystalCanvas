@@ -674,7 +674,9 @@ fn main() {
             commands::get_volumetric_info,
             commands::compute_brillouin_zone,
             commands::toggle_bz_display,
-            commands::get_kpath_info
+            commands::get_kpath_info,
+            commands::set_bz_scale,
+            commands::get_bz_label_positions
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1802,6 +1802,85 @@ pub fn get_kpath_info(
 }
 
 #[tauri::command]
+pub fn set_bz_scale(
+    scale: f32,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<(), String> {
+    let mut renderer = renderer_state.lock().map_err(|e| e.to_string())?;
+    renderer.bz_scale = scale.clamp(0.15, 1.0);
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct BzLabelPos {
+    pub label: String,
+    pub x: f32,
+    pub y: f32,
+}
+
+#[tauri::command]
+pub fn get_bz_label_positions(
+    width: f32,
+    height: f32,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<Vec<BzLabelPos>, String> {
+    let cs = crystal_state.lock().map_err(|e| e.to_string())?;
+    let (bz, kpath) = cs.bz_cache.as_ref().ok_or("No BZ data")?;
+
+    // Reconstruct camera state identical to BzSubViewport::update_bz
+    let mut max_r = 0.0_f64;
+    for v in &bz.vertices {
+        let r = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt();
+        if r > max_r { max_r = r; }
+    }
+    let mut max_b = 0.0_f64;
+    for row in &bz.recip_lattice {
+        let m = (row[0]*row[0] + row[1]*row[1] + row[2]*row[2]).sqrt();
+        if m > max_b { max_b = m; }
+    }
+    if max_r < 1e-6 { max_r = max_b; }
+    let fit_scale = (max_r * 2.8) as f32;
+    let ortho_scale = fit_scale.max(1.0);
+    let dist = fit_scale * 2.0;
+
+    let eye = glam::Vec3::new(dist * 0.4, dist * 0.3, dist);
+    let target = glam::Vec3::ZERO;
+    let up = glam::Vec3::Y;
+
+    let view = glam::Mat4::look_at_rh(eye, target, up);
+    let aspect = width / height;
+    let hw = ortho_scale * aspect / 2.0;
+    let hh = ortho_scale / 2.0;
+    let proj = glam::Mat4::orthographic_rh(-hw, hw, -hh, hh, 0.1, 200.0);
+    let vp = proj * view;
+
+    let mut labels = Vec::with_capacity(kpath.points.len());
+    for kp in &kpath.points {
+        let mut c = [0.0_f64; 3];
+        for j in 0..3 {
+            c[j] = kp.coord_frac[0] * bz.recip_lattice[0][j]
+                 + kp.coord_frac[1] * bz.recip_lattice[1][j]
+                 + kp.coord_frac[2] * bz.recip_lattice[2][j];
+        }
+
+        let pos = glam::Vec4::new(c[0] as f32, c[1] as f32, c[2] as f32, 1.0);
+        let clip = vp * pos;
+        if clip.w.abs() < 1e-6 { continue; }
+
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+
+        labels.push(BzLabelPos {
+            label: kp.label.clone(),
+            x: (ndc_x + 1.0) / 2.0 * width,
+            y: (1.0 - ndc_y) / 2.0 * height,
+        });
+    }
+
+    Ok(labels)
+}
+
+#[tauri::command]
 pub fn set_isovalue(
     value: f32,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import { cn } from '../../utils/cn';
 import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
 import { CrystalState, BondAnalysisResult, PhononModeSummary, BzInfo } from '../../types/crystal';
@@ -41,6 +42,19 @@ export const RightSidebar: React.FC<{
     // Reciprocal Space State
     const [bzInfo, setBzInfo] = useState<BzInfo | null>(null);
     const [isBzVisible, setIsBzVisible] = useState(false);
+    const [bzScale, setBzScale] = useState(0.35);
+    const [bzLabels, setBzLabels] = useState<{label: string, x: number, y: number}[]>([]);
+
+    const fetch_bz_labels = useCallback(async () => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        try {
+            const labels = await safeInvoke<{label: string, x: number, y: number}[]>('get_bz_label_positions', { width: w, height: h });
+            if (labels) setBzLabels(labels);
+        } catch (_e) {
+            setBzLabels([]);
+        }
+    }, []);
 
     useEffect(() => {
         let unlisten = () => {};
@@ -187,16 +201,38 @@ export const RightSidebar: React.FC<{
             .then(res => {
                 if (res) {
                     setBzInfo(res);
-                    setIsBzVisible(true);
+                    return safeInvoke('toggle_bz_display', { show: true }).then(() => {
+                        setIsBzVisible(true);
+                        setTimeout(fetch_bz_labels, 150);
+                    });
                 }
             })
             .catch(console.error);
     };
 
     const handle_toggle_bz = () => {
-        safeInvoke('toggle_bz_display', { show: !isBzVisible })
-            .then(() => setIsBzVisible(!isBzVisible))
+        const next = !isBzVisible;
+        safeInvoke('toggle_bz_display', { show: next })
+            .then(() => {
+                setIsBzVisible(next);
+                if (next) {
+                    setTimeout(fetch_bz_labels, 200);
+                } else {
+                    setBzLabels([]);
+                }
+            })
             .catch(console.error);
+    };
+
+    const handle_bz_resize = (delta: number) => {
+        const next = Math.min(1.0, Math.max(0.15, bzScale + delta));
+        setBzScale(next);
+        safeInvoke('set_bz_scale', { scale: next }).catch(console.error);
+    };
+
+    const handle_bz_close = () => {
+        setIsBzVisible(false);
+        safeInvoke('toggle_bz_display', { show: false }).catch(console.error);
     };
 
 
@@ -216,6 +252,7 @@ export const RightSidebar: React.FC<{
     }, [isAnimating, amplitude]);
 
     return (
+        <>
         <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
 
             {/* Bond Analysis Accordion */}
@@ -477,16 +514,19 @@ export const RightSidebar: React.FC<{
                 <div className="space-y-3">
                     <ActionButton label="Compute Brillouin Zone" onClick={handle_compute_bz} />
                     
-                    <label className="flex items-center space-x-2 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            checked={isBzVisible} 
-                            onChange={handle_toggle_bz} 
-                            disabled={!bzInfo}
-                            className="rounded border-slate-300 text-emerald-500 focus:ring-emerald-500 disabled:opacity-50"
-                        />
-                        <span className={!bzInfo ? "opacity-50" : ""}>Show Brillouin Zone (Inset)</span>
-                    </label>
+                    <button 
+                        onClick={handle_toggle_bz} 
+                        disabled={!bzInfo}
+                        className={cn(
+                            "w-full py-1.5 rounded-md text-xs font-medium transition-colors shadow-sm pointer-events-auto",
+                            !bzInfo ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed" :
+                            isBzVisible 
+                                ? "bg-amber-500 hover:bg-amber-600 text-white" 
+                                : "bg-slate-500 hover:bg-slate-600 text-white"
+                        )}
+                    >
+                        {isBzVisible ? "◀ Back to Crystal View" : "View Brillouin Zone"}
+                    </button>
 
                     {bzInfo && (
                         <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-2 rounded border border-slate-100 dark:border-slate-700 space-y-1">
@@ -622,6 +662,30 @@ export const RightSidebar: React.FC<{
                 onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
             />
         </div>
+
+        {/* BZ k-point label overlay */}
+        {isBzVisible && bzLabels.length > 0 && ReactDOM.createPortal(
+            <div className="fixed inset-0 pointer-events-none z-[60]" style={{fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif"}}>
+                {bzLabels.map((lbl, i) => (
+                    <span
+                        key={i}
+                        className="absolute text-[13px] font-bold"
+                        style={{
+                            left: lbl.x,
+                            top: lbl.y,
+                            transform: 'translate(-50%, -140%)',
+                            color: '#f59e0b',
+                            textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,0.6)',
+                            letterSpacing: '0.02em',
+                        }}
+                    >
+                        {lbl.label}
+                    </span>
+                ))}
+            </div>,
+            document.body
+        )}
+        </>
     );
 };
 

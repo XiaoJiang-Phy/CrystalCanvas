@@ -316,7 +316,7 @@ impl BzSubViewport {
             let m = (r[0]*r[0] + r[1]*r[1] + r[2]*r[2]).sqrt();
             if m > max_b { max_b = m; }
         }
-        let radius = (max_b * 0.02) as f32;
+        let radius = (max_b * 0.012) as f32;
         
         for kp in &kpath.points {
             let mut c = [0.0; 3];
@@ -339,8 +339,20 @@ impl BzSubViewport {
             });
         }
 
-        self.camera.target = [0.0, 0.0, 0.0].into();       
-        self.camera.eye = self.camera.target + glam::Vec3::new(0.0, 0.0, (max_b * 2.5) as f32);
+        // Auto-fit camera to BZ bounding sphere
+        let mut max_r = 0.0_f64;
+        for v in &bz.vertices {
+            let r = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt();
+            if r > max_r { max_r = r; }
+        }
+        if max_r < 1e-6 { max_r = max_b; }
+        let fit_scale = (max_r * 2.8) as f32;
+        
+        self.camera.target = [0.0, 0.0, 0.0].into();
+        self.camera.set_orthographic(fit_scale.max(1.0));
+        // Oblique viewing angle for 3D depth perception
+        let dist = fit_scale * 2.0;
+        self.camera.eye = self.camera.target + glam::Vec3::new(dist * 0.4, dist * 0.3, dist);
         self.camera_uniform.update_from_camera(&self.camera);
         gpu.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
@@ -393,5 +405,57 @@ impl BzSubViewport {
     pub fn update_camera(&mut self, queue: &wgpu::Queue) {
         self.camera_uniform.update_from_camera(&self.camera);
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+    }
+
+    /// Render BZ directly into the main framebuffer at full resolution.
+    pub fn render_fullscreen(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        target_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+        clear_color: wgpu::Color,
+        width: f32,
+        height: f32,
+        queue: &wgpu::Queue,
+    ) {
+        self.camera.set_aspect(width, height);
+        self.camera_uniform.update_from_camera(&self.camera);
+        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("BZ Fullscreen Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        if self.edge_count > 0 {
+            render_pass.set_pipeline(&self.line_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.edge_buffer.slice(..));
+            render_pass.draw(0..self.edge_count, 0..1);
+        }
+
+        if self.point_count > 0 {
+            render_pass.set_pipeline(&self.point_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.point_buffer.slice(..));
+            render_pass.draw(0..6, 0..self.point_count);
+        }
     }
 }
