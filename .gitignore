@@ -3,10 +3,8 @@
 # ===========================
 
 # ----- Internal project docs (not for GitHub) -----
-# Roadmap, design docs, overview, and env config
-roadmap.md
-Overview.md
-docs/
+# Roadmap, design docs, TDD, knowledge base
+doc/
 .env
 .env.*
 
