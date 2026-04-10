@@ -69,6 +69,8 @@ pub struct CrystalState {
     pub cart_positions: Vec<[f32; 3]>,
     // State version to trigger frontend reactivity
     pub version: u32,
+    pub is_2d: bool,
+    pub vacuum_axis: Option<usize>,
     // Bond analysis cache (M10) — recomputed on state change
     #[serde(skip)]
     pub bond_analysis: Option<BondAnalysis>,
@@ -110,6 +112,8 @@ impl Default for CrystalState {
             atomic_numbers: Vec::new(),
             cart_positions: Vec::new(),
             version: 0,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -206,6 +210,8 @@ impl CrystalState {
             atomic_numbers,
             cart_positions: Vec::new(),
             version: 0,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -799,6 +805,8 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n_actual_usize),
             cart_positions: Vec::new(),
             version: 1,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -998,6 +1006,8 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n_new_usize),
             cart_positions: Vec::new(),
             version: 1,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -1239,6 +1249,100 @@ impl CrystalState {
             threshold_factor,
         });
     }
+
+    /// Detect if the system is 2D and set `is_2d` and `vacuum_axis` accordingly.
+    pub fn detect_2d(&mut self) {
+        let mut best_axis = None;
+        let mut max_gap = 0.0;
+        let mut best_ratio = 0.0;
+        
+        let axes = [0, 1, 2];
+        let lengths = [self.cell_a, self.cell_b, self.cell_c];
+        
+        for &axis in &axes {
+            let mut coords = Vec::with_capacity(self.intrinsic_sites);
+            for i in 0..self.intrinsic_sites {
+                let mut v = match axis {
+                    0 => self.fract_x[i],
+                    1 => self.fract_y[i],
+                    2 => self.fract_z[i],
+                    _ => unreachable!(),
+                };
+                v = v - v.floor();
+                coords.push(v);
+            }
+            
+            if coords.is_empty() { continue; }
+            coords.sort_by(|a, b| a.total_cmp(b));
+            
+            let mut current_max_gap = 0.0;
+            let n = coords.len();
+            for i in 0..(n-1) {
+                let gap = coords[i+1] - coords[i];
+                if gap > current_max_gap {
+                    current_max_gap = gap;
+                }
+            }
+            // wraparound gap
+            let wrap_gap = 1.0 - coords[n-1] + coords[0];
+            if wrap_gap > current_max_gap {
+                current_max_gap = wrap_gap;
+            }
+            
+            let other_len = (lengths[(axis + 1) % 3] + lengths[(axis + 2) % 3]) / 2.0;
+            if other_len > 0.0 {
+                let ratio = lengths[axis] / other_len;
+                if current_max_gap > 0.35 && ratio > 2.0 {
+                    if current_max_gap > max_gap {
+                        max_gap = current_max_gap;
+                        best_axis = Some(axis);
+                        best_ratio = ratio;
+                    }
+                }
+            }
+        }
+        
+        if let Some(axis) = best_axis {
+            self.is_2d = true;
+            self.vacuum_axis = Some(axis);
+        } else {
+            self.is_2d = false;
+            self.vacuum_axis = None;
+        }
+        
+        log::info!(
+            "[detect_2d] is_2d={}, vacuum_axis={:?}, max_gap={:.3}, ratio={:.2}",
+            self.is_2d,
+            self.vacuum_axis,
+            max_gap,
+            best_ratio
+        );
+    }
+    
+    /// Get the two in-plane lattice vectors projected to 2D given the vacuum axis.
+    pub fn get_inplane_lattice(&self) -> ([f64; 2], [f64; 2]) {
+        let lattice = self.get_lattice_col_major(); 
+        let v1 = [lattice[0], lattice[1], lattice[2]];
+        let v2 = [lattice[3], lattice[4], lattice[5]];
+        let v3 = [lattice[6], lattice[7], lattice[8]];
+        
+        if let Some(axis) = self.vacuum_axis {
+            match axis {
+                0 => {
+                    ([v2[1], v2[2]], [v3[1], v3[2]])
+                },
+                1 => {
+                    ([v1[0], v1[2]], [v3[0], v3[2]])
+                },
+                2 => {
+                    ([v1[0], v1[1]], [v2[0], v2[1]])
+                },
+                _ => ([v1[0], v1[1]], [v2[0], v2[1]])
+            }
+        } else {
+            ([v1[0], v1[1]], [v2[0], v2[1]])
+        }
+    }
 }
 
 /// Classify polyhedron type from coordination number.
@@ -1355,6 +1459,8 @@ mod tests {
             atomic_numbers: vec![1, 8],
             cart_positions: vec![],
             version: 1,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,

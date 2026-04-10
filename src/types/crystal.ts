@@ -100,6 +100,7 @@ export interface BzInfo {
     vertices_count: number;
     edges_count: number;
     faces_count: number;
+    is_2d: boolean;
 }
 
 export interface KPathPointUi {

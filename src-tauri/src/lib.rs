@@ -14,3 +14,4 @@ pub mod utils;
 pub mod volumetric;
 pub mod brillouin_zone;
 pub mod kpath;
+pub mod kpath_2d;

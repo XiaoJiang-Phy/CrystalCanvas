@@ -120,6 +120,8 @@ pub fn parse_scf_out(path: &str) -> Result<CrystalState, String> {
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
         cart_positions: Vec::new(),
         version: 1,
+        is_2d: false,
+        vacuum_axis: None,
         bond_analysis: None,
         phonon_data: None,
         active_phonon_mode: None,
@@ -299,6 +301,8 @@ pub fn parse_scf_in(path: &str) -> Result<CrystalState, String> {
         occupancies: vec![1.0; elems.len()],
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
         version: 1,
+        is_2d: false,
+        vacuum_axis: None,
         intrinsic_sites: elems.len(),
         ..Default::default()
     };

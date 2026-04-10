@@ -536,9 +536,66 @@ export const RightSidebar: React.FC<{
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-500">Geometry:</span>
-                                <span>{bzInfo.faces_count} faces, {bzInfo.vertices_count} vertices</span>
+                                <span>
+                                    {bzInfo.is_2d ? `${bzInfo.edges_count} edges, ` : `${bzInfo.faces_count} faces, `} 
+                                    {bzInfo.vertices_count} vertices
+                                </span>
                             </div>
                         </div>
+                    )}
+
+                    {bzInfo && (
+                        <>
+                        <div className="border-t border-slate-200 dark:border-slate-700 my-2"></div>
+                        <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Band Path Generator</div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <label className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">N<sub>k</sub></label>
+                            <input 
+                                type="number" min={5} max={100} defaultValue={20}
+                                id="kpath-npoints"
+                                className="w-14 bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-slate-700 dark:text-slate-300 pointer-events-auto"
+                            />
+                            <select
+                                id="kpath-format"
+                                defaultValue="qe"
+                                className="flex-1 bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-slate-700 dark:text-slate-300 pointer-events-auto"
+                            >
+                                <option value="qe">QE (crystal)</option>
+                                <option value="vasp">VASP (KPOINTS)</option>
+                            </select>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                const nEl = document.getElementById('kpath-npoints') as HTMLInputElement;
+                                const fmtEl = document.getElementById('kpath-format') as HTMLSelectElement;
+                                const npoints = parseInt(nEl?.value) || 20;
+                                const fmt = fmtEl?.value || 'qe';
+                                try {
+                                    const res = await safeInvoke<{qe: string, vasp: string}>('generate_kpath_text', { npoints });
+                                    if (!res) return;
+                                    const text = fmt === 'qe' ? res.qe : res.vasp;
+                                    const preEl = document.getElementById('kpath-preview');
+                                    if (preEl) preEl.textContent = text;
+                                    const defaultName = fmt === 'qe' ? 'kpath_qe.txt' : 'KPOINTS';
+                                    const savePath = await safeDialogSave({
+                                        title: 'Save K-Path',
+                                        defaultPath: defaultName,
+                                        filters: [{ name: 'Text', extensions: ['txt'] }],
+                                    });
+                                    if (savePath) {
+                                        await safeInvoke('write_text_file', { path: String(savePath), content: text });
+                                    }
+                                } catch (e) { alert(String(e)); }
+                            }}
+                            className="w-full py-1.5 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-md text-xs font-medium transition-colors border border-indigo-200/50 dark:border-indigo-800/50 active:scale-[0.98] pointer-events-auto"
+                        >
+                            💾 Generate &amp; Save K-Path
+                        </button>
+                        <pre 
+                            id="kpath-preview"
+                            className="mt-1 max-h-32 overflow-y-auto text-[10px] bg-slate-900 text-green-400 p-2 rounded font-mono whitespace-pre custom-scrollbar empty:hidden pointer-events-auto select-text cursor-text"
+                        ></pre>
+                        </>
                     )}
 
                     <div className="border-t border-slate-200 dark:border-slate-700 my-2"></div>
@@ -666,22 +723,47 @@ export const RightSidebar: React.FC<{
         {/* BZ k-point label overlay */}
         {isBzVisible && bzLabels.length > 0 && ReactDOM.createPortal(
             <div className="fixed inset-0 pointer-events-none z-[60]" style={{fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif"}}>
-                {bzLabels.map((lbl, i) => (
-                    <span
-                        key={i}
-                        className="absolute text-[13px] font-bold"
-                        style={{
-                            left: lbl.x,
-                            top: lbl.y,
-                            transform: 'translate(-50%, -140%)',
-                            color: '#f59e0b',
-                            textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,0.6)',
-                            letterSpacing: '0.02em',
-                        }}
-                    >
-                        {lbl.label}
-                    </span>
-                ))}
+                {(() => {
+                    const pad = 32;
+                    const minDist = 22;
+                    const positioned = bzLabels.map(l => ({ ...l, dx: 0, dy: -18 }));
+                    for (let pass = 0; pass < 3; pass++) {
+                        for (let i = 0; i < positioned.length; i++) {
+                            for (let j = i + 1; j < positioned.length; j++) {
+                                const ax = positioned[i].x + positioned[i].dx;
+                                const ay = positioned[i].y + positioned[i].dy;
+                                const bx = positioned[j].x + positioned[j].dx;
+                                const by = positioned[j].y + positioned[j].dy;
+                                const dist = Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
+                                if (dist < minDist) {
+                                    const nudge = (minDist - dist) / 2 + 2;
+                                    positioned[j].dy += nudge;
+                                    positioned[i].dy -= nudge;
+                                }
+                            }
+                        }
+                    }
+                    return positioned.map((lbl, i) => {
+                        const cx = Math.max(pad, Math.min(lbl.x + lbl.dx, window.innerWidth - pad));
+                        const cy = Math.max(pad, Math.min(lbl.y + lbl.dy, window.innerHeight - pad));
+                        return (
+                            <span
+                                key={i}
+                                className="absolute text-[12px] font-bold whitespace-nowrap"
+                                style={{
+                                    left: cx,
+                                    top: cy,
+                                    transform: 'translate(-50%, -50%)',
+                                    color: '#f59e0b',
+                                    textShadow: '0 0 4px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,0.6)',
+                                    letterSpacing: '0.02em',
+                                }}
+                            >
+                                {lbl.label}
+                            </span>
+                        );
+                    });
+                })()}
             </div>,
             document.body
         )}

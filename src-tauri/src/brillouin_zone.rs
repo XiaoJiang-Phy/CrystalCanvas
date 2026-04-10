@@ -30,6 +30,7 @@ pub struct BrillouinZone {
     pub edges: Vec<[usize; 2]>,
     pub faces: Vec<Vec<usize>>,
     pub bravais_type: BravaisType,
+    pub is_2d: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -55,7 +56,162 @@ impl BrillouinZone {
             edges,
             faces,
             bravais_type,
+            is_2d: false,
         }
+    }
+
+    /// Construct a 2D Brillouin zone from in-plane lattice vectors.
+    ///
+    /// `a1`, `a2`: projected real-space lattice vectors (from `CrystalState::get_inplane_lattice`).
+    /// `vacuum_axis`: 0, 1, or 2 — the Cartesian axis normal to the slab plane.
+    ///
+    /// 2D reciprocal vectors: $\mathbf{b}_1 = 2\pi(a_{2y}, -a_{2x}) / \det$,
+    /// $\mathbf{b}_2 = 2\pi(-a_{1y}, a_{1x}) / \det$ where $\det = a_{1x}a_{2y} - a_{1y}a_{2x}$.
+    pub fn new_2d(a1: [f64; 2], a2: [f64; 2], vacuum_axis: usize) -> Self {
+        let det = a1[0] * a2[1] - a1[1] * a2[0];
+        if det.abs() < 1e-12 {
+            log::warn!("[new_2d] Degenerate 2D lattice: det={:.2e}", det);
+            return Self {
+                recip_lattice: [[0.0; 3]; 3],
+                vertices: Vec::new(),
+                edges: Vec::new(),
+                faces: Vec::new(),
+                bravais_type: BravaisType::Unknown,
+                is_2d: true,
+            };
+        }
+
+        let f = 2.0 * std::f64::consts::PI / det;
+        let b1 = [a2[1] * f, -a2[0] * f];
+        let b2 = [-a1[1] * f, a1[0] * f];
+
+        let poly = Self::wigner_seitz_2d(&b1, &b2);
+
+        let embed = |p: &[f64; 2]| -> [f64; 3] {
+            match vacuum_axis {
+                0 => [0.0, p[0], p[1]],
+                1 => [p[0], 0.0, p[1]],
+                _ => [p[0], p[1], 0.0],
+            }
+        };
+
+        let vertices: Vec<[f64; 3]> = poly.iter().map(|p| embed(p)).collect();
+        let n = vertices.len();
+        let edges: Vec<[usize; 2]> = (0..n).map(|i| [i, (i + 1) % n]).collect();
+        let face_indices: Vec<usize> = (0..n).collect();
+        let faces = if n >= 3 { vec![face_indices] } else { Vec::new() };
+
+        let mut recip_lattice = [[0.0; 3]; 3];
+        recip_lattice[0] = embed(&b1);
+        recip_lattice[1] = embed(&b2);
+        let mut vacuum_unit = [0.0; 3];
+        vacuum_unit[vacuum_axis] = 1.0;
+        recip_lattice[2] = vacuum_unit;
+
+        log::info!(
+            "[new_2d] BZ constructed: {} vertices, {} edges, vacuum_axis={}",
+            n, edges.len(), vacuum_axis
+        );
+
+        Self {
+            recip_lattice,
+            vertices,
+            edges,
+            faces,
+            bravais_type: BravaisType::Unknown,
+            is_2d: true,
+        }
+    }
+
+    /// 2D Wigner-Seitz construction via Sutherland-Hodgman polygon clipping.
+    ///
+    /// Iterates over reciprocal lattice vectors $\mathbf{G} = n_1 \mathbf{b}_1 + n_2 \mathbf{b}_2$
+    /// for $(n_1, n_2) \in [-2, 2]^2 \setminus \{(0,0)\}$ and clips a large initial polygon
+    /// by the perpendicular bisector half-plane $\mathbf{r} \cdot \hat{G} \le |\mathbf{G}|/2$.
+    fn wigner_seitz_2d(b1: &[f64; 2], b2: &[f64; 2]) -> Vec<[f64; 2]> {
+        let b_max = (b1[0] * b1[0] + b1[1] * b1[1]).sqrt()
+            .max((b2[0] * b2[0] + b2[1] * b2[1]).sqrt());
+        let s = b_max * 3.0;
+        let mut poly: Vec<[f64; 2]> = vec![[-s, -s], [s, -s], [s, s], [-s, s]];
+
+        for n1 in -2..=2_i32 {
+            for n2 in -2..=2_i32 {
+                if n1 == 0 && n2 == 0 {
+                    continue;
+                }
+                let gx = n1 as f64 * b1[0] + n2 as f64 * b2[0];
+                let gy = n1 as f64 * b1[1] + n2 as f64 * b2[1];
+                let g_mag = (gx * gx + gy * gy).sqrt();
+                if g_mag < 1e-12 {
+                    continue;
+                }
+                let nx = gx / g_mag;
+                let ny = gy / g_mag;
+                let d = g_mag / 2.0;
+
+                poly = Self::clip_polygon_2d(&poly, nx, ny, d);
+            }
+        }
+
+        Self::dedup_and_sort_2d(&mut poly);
+        poly
+    }
+
+    /// Sutherland-Hodgman clip of a convex polygon against a half-plane $\mathbf{r} \cdot \hat{n} \le d$.
+    fn clip_polygon_2d(poly: &[[f64; 2]], nx: f64, ny: f64, d: f64) -> Vec<[f64; 2]> {
+        let n = poly.len();
+        if n < 3 {
+            return poly.to_vec();
+        }
+        let mut out = Vec::with_capacity(n + 2);
+        for i in 0..n {
+            let curr = poly[i];
+            let next = poly[(i + 1) % n];
+            let d_curr = curr[0] * nx + curr[1] * ny - d;
+            let d_next = next[0] * nx + next[1] * ny - d;
+            let curr_in = d_curr <= 1e-9;
+            let next_in = d_next <= 1e-9;
+
+            if curr_in {
+                out.push(curr);
+            }
+            if curr_in != next_in {
+                let t = d_curr / (d_curr - d_next);
+                out.push([
+                    curr[0] + t * (next[0] - curr[0]),
+                    curr[1] + t * (next[1] - curr[1]),
+                ]);
+            }
+        }
+        out
+    }
+
+    /// Deduplicate vertices within tolerance and sort CCW by polar angle.
+    fn dedup_and_sort_2d(poly: &mut Vec<[f64; 2]>) {
+        let mut deduped: Vec<[f64; 2]> = Vec::with_capacity(poly.len());
+        for p in poly.iter() {
+            let dup = deduped.iter().any(|q| {
+                let dx = p[0] - q[0];
+                let dy = p[1] - q[1];
+                dx * dx + dy * dy < 1e-14
+            });
+            if !dup {
+                deduped.push(*p);
+            }
+        }
+        if deduped.len() < 3 {
+            *poly = deduped;
+            return;
+        }
+        let n = deduped.len() as f64;
+        let cx: f64 = deduped.iter().map(|p| p[0]).sum::<f64>() / n;
+        let cy: f64 = deduped.iter().map(|p| p[1]).sum::<f64>() / n;
+        deduped.sort_by(|a, b| {
+            let angle_a = (a[1] - cy).atan2(a[0] - cx);
+            let angle_b = (b[1] - cy).atan2(b[0] - cx);
+            angle_a.total_cmp(&angle_b)
+        });
+        *poly = deduped;
     }
 
     fn compute_reciprocal_lattice(a: [[f64; 3]; 3]) -> [[f64; 3]; 3] {

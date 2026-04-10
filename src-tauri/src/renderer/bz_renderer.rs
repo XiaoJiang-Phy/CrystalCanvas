@@ -37,6 +37,7 @@ pub struct BzSubViewport {
     pub blit_bind_group: wgpu::BindGroup,
     pub blit_bind_group_layout: wgpu::BindGroupLayout,
     pub bz_sampler: wgpu::Sampler,
+    pub is_2d: bool,
 }
 
 impl BzSubViewport {
@@ -221,6 +222,7 @@ impl BzSubViewport {
             blit_bind_group,
             blit_bind_group_layout,
             bz_sampler,
+            is_2d: false,
         }
     }
 
@@ -348,11 +350,37 @@ impl BzSubViewport {
         if max_r < 1e-6 { max_r = max_b; }
         let fit_scale = (max_r * 2.8) as f32;
         
+        self.is_2d = bz.is_2d;
+
         self.camera.target = [0.0, 0.0, 0.0].into();
         self.camera.set_orthographic(fit_scale.max(1.0));
-        // Oblique viewing angle for 3D depth perception
         let dist = fit_scale * 2.0;
-        self.camera.eye = self.camera.target + glam::Vec3::new(dist * 0.4, dist * 0.3, dist);
+        
+        if self.is_2d {
+            // The `new_2d` constructor always places the vacuum normal vector in `recip_lattice[2]`.
+            let mut vac_axis = 2;
+            if bz.recip_lattice[2][0].abs() > 0.5 {
+                vac_axis = 0;
+            } else if bz.recip_lattice[2][1].abs() > 0.5 {
+                vac_axis = 1;
+            }
+            
+            // Eye along negative vacuum axis
+            let mut eye = [0.0; 3];
+            eye[vac_axis] = -dist;
+            self.camera.eye = self.camera.target + glam::Vec3::from_array(eye);
+            
+            // Target at origin, up = second in-plane axis
+            let up_axis = (vac_axis + 2) % 3;
+            let mut up = [0.0; 3];
+            up[up_axis] = 1.0;
+            self.camera.up = glam::Vec3::from_array(up);
+        } else {
+            // Oblique viewing angle for 3D depth perception
+            self.camera.eye = self.camera.target + glam::Vec3::new(dist * 0.4, dist * 0.3, dist);
+            self.camera.up = glam::Vec3::Y;
+        }
+
         self.camera_uniform.update_from_camera(&self.camera);
         gpu.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }

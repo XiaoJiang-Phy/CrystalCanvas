@@ -676,7 +676,9 @@ fn main() {
             commands::toggle_bz_display,
             commands::get_kpath_info,
             commands::set_bz_scale,
-            commands::get_bz_label_positions
+            commands::get_bz_label_positions,
+            commands::generate_kpath_text,
+            commands::write_text_file
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
