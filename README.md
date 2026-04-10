@@ -13,7 +13,9 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 ## ✨ Key Features
 
 - **🖱️ Pixel-precise manual modeling** — Hardware-accelerated 3D view with real-time atom selection, addition, deletion, and element substitution.
+- **🔷 Brillouin Zone visualization** — 3D Wigner-Seitz cell construction (14 Bravais types) and 2D BZ support (5 wallpaper types) with high-symmetry k-point labeling, one-click band path export for QE/VASP.
 - **📊 Volumetric data visualization** — Real-time isosurface extraction (GPU Marching Cubes) and volume raycasting for CHGCAR, Gaussian Cube, and XSF files. 10 scientific colormaps, dual-color signed isosurfaces, density cutoff control.
+- **⚛️ Cell standardization** — Niggli reduction, Primitive/Conventional cell transforms via Spglib.
 - **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
 - **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*. Context-aware LLM acts as a semantic parameterizer and command orchestrator with strict physics validation (MIC overlap checks).
 - [🔌 **Seamless DFT/MD integration**](docs/knowledge/M7_Linker_IO_Learnings.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
@@ -50,7 +52,7 @@ sudo xattr -cr /Applications/CrystalCanvas.app
 ├─────────────────────────────────────────────────────┤
 │  Rust / Tauri 2.0  (Application Logic / SSoT)       │
 ├─────────────────────────────────────────────────────┤
-│  Rust / wgpu  (Impostor Sphere + Volume Raycast)    │
+│  Rust / wgpu  (Impostor Sphere + Volume Raycast + BZ) │
 ├─────────────────────────────────────────────────────┤
 │  WGSL Compute  (GPU Marching Cubes / Raycasting)    │
 ├─────────────────────────────────────────────────────┤
@@ -134,8 +136,10 @@ RUST_LOG=info cargo run --bin render_demo
 - [x] **M8.5: Persistent Settings & UI Polish** — Local JSON caching, global rendering customization.
 - [x] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
 - [x] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
+- [x] **M10+: Brillouin Zone & Cell Standardization** — 3D/2D Wigner-Seitz BZ, high-symmetry k-path (14+5 Bravais types), Niggli/Primitive/Conventional transforms.
 - [x] **M11: Volumetric Rendering** — GPU Marching Cubes isosurfaces, volume raycasting, 10 colormaps, CHGCAR/Cube/XSF parsers.
-- [ ] **M12+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
+- [ ] **M12: Electronic Overlays** — Wannier tight-binding hopping network visualization, MP API agent.
+- [ ] **M13+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
 
 ---
 
