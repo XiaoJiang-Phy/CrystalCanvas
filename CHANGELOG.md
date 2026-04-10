@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-10
+
+### Added
+- **🔷 Brillouin Zone Visualization**: Full reciprocal-space analysis pipeline with interactive BZ rendering.
+  - **3D Wigner-Seitz Construction**: Voronoi-based BZ generation covering all 14 Bravais lattice types (Setyawan-Curtarolo 2010 convention).
+  - **2D BZ Support**: Automated 2D material detection (vacuum gap + c/a ratio heuristics) with Sutherland-Hodgman polygon clipping for 5 wallpaper group types (Hexagonal, Square, Rectangular, Centered-Rectangular, Oblique).
+  - **High-Symmetry K-Points**: Automatic identification and labeling of $\Gamma$, $K$, $M$, $X$, $L$, $W$, $U$ etc. based on Bravais type.
+  - **Band Path Generator**: One-click k-path export for Quantum ESPRESSO (`K_POINTS {crystal}`) and VASP (`KPOINTS`) with configurable density ($N_k$) and uniform segment spacing.
+  - **Orthographic Locked View**: Fixed camera projection ensuring label-wireframe alignment; pan and zoom supported, rotation disabled.
+  - **Dedicated Sub-Viewport**: Offscreen wgpu render target with alpha-blended blit compositing onto the main framebuffer.
+- **⚛️ Cell Standardization & Reduction**: Complete crystallographic cell transformation toolkit.
+  - **Niggli Reduction**: Reduce any lattice to its unique Niggli-reduced form via Spglib.
+  - **Primitive Cell**: Transform conventional cell to primitive representation.
+  - **Conventional Cell**: Transform primitive cell to conventional representation.
+- **🧪 Test Structures**: Reference CIF files for BZ validation — graphene, MoS₂ monolayer, Si diamond cubic, Fe(100) a-axis vacuum slab.
+
+### Fixed
+- **2D K-Point Mapping**: Fixed `map_2d_to_3d` coordinate mapping that incorrectly routed k-point components into the vacuum direction for non-standard vacuum axes (a-axis, b-axis).
+- **BZ Label Desync**: Disabled camera rotation in BZ view to prevent HTML label overlays from desyncing with GPU-rendered wireframe geometry.
+
 ## [0.3.0] - 2026-04-09
 
 ### Added
