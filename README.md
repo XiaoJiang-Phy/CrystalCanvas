@@ -18,7 +18,7 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 - **⚛️ Cell standardization** — Niggli reduction, Primitive/Conventional cell transforms via Spglib.
 - **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
 - **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*. Context-aware LLM acts as a semantic parameterizer and command orchestrator with strict physics validation (MIC overlap checks).
-- [🔌 **Seamless DFT/MD integration**](docs/knowledge/M7_Linker_IO_Learnings.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
+- [🔌 **Seamless DFT/MD integration**](CHANGELOG.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
 - **🛡️ Memory-safe architecture** — Rust logic layer eliminates crashes from dangling pointers and buffer overflows.
 
 ---
@@ -73,7 +73,7 @@ sudo xattr -cr /Applications/CrystalCanvas.app
 
 ## 🚀 Getting Started
 
-**New to CrystalCanvas? Check out the [User Manual (v0.1)](docs/UserManual_v0.1.md) for a comprehensive guide on modeling, AI workflows, and DFT exports.**
+**New to CrystalCanvas? Check out the [User Manual](docs/UserManual.md) for a comprehensive guide on all features.**
 
 CrystalCanvas utilizes a **Zero-Global-Pollution** strategy. All toolchains (Rust, Node) and dependencies are isolated within the project directory.
 
@@ -164,7 +164,7 @@ CrystalCanvas/
 │   ├── include/        # Public C-compatible headers (cxx bridge)
 │   ├── src/            # Implementation code (Spglib, Gemmi, Eigen integrations)
 │   └── CMakeLists.txt
-├── docs/               # System documentation ([User Manual](docs/UserManual_v0.1.md), Development Notes)
+├── docs/               # Public documentation ([User Manual](docs/UserManual.md))
 ├── tests/              # Integration tests & benchmark data (LFS-tracked volumetric files)
 ├── dev_env.sh          # Local toolchain environment activation script
 ├── CHANGELOG.md        # Release history and known issues
