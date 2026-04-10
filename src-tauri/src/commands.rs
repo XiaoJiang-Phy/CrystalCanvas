@@ -1768,14 +1768,12 @@ pub fn toggle_bz_display(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> Result<(), String> {
+    let cs = crystal_state.lock().map_err(|e| e.to_string())?;
     let mut renderer = renderer_state.lock().map_err(|e| e.to_string())?;
+    
     if show {
-        if let Ok(cs) = crystal_state.lock() {
-            if let Some((bz, kpath)) = &cs.bz_cache {
-                renderer.update_bz_data(Some((bz, kpath)));
-            } else {
-                renderer.show_bz = true;
-            }
+        if let Some((bz, kpath)) = &cs.bz_cache {
+            renderer.update_bz_data(Some((bz, kpath)));
         }
     } else {
         renderer.show_bz = false;
