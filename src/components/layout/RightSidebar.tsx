@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { cn } from '../../utils/cn';
-import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
+import { safeInvoke, safeListen, safeDialogOpen, safeDialogSave } from '../../utils/tauri-mock';
 import { CrystalState, BondAnalysisResult, PhononModeSummary, BzInfo } from '../../types/crystal';
 import { PromptModal } from './PromptModal';
 import { PhononImportModal } from './PhononImportModal';
