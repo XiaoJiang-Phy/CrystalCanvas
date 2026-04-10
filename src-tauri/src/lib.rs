@@ -12,3 +12,4 @@ pub mod renderer;
 pub mod settings;
 pub mod utils;
 pub mod volumetric;
+pub mod brillouin_zone;

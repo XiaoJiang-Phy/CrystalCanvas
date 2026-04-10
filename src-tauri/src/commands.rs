@@ -528,6 +528,84 @@ pub fn apply_slab(
     Ok(())
 }
 
+/// Apply Niggli reduction to the current crystal.
+#[tauri::command]
+pub fn apply_niggli_reduce(
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<(), String> {
+    log::info!("apply_niggli_reduce");
+    
+    let mut cs = crystal_state.lock().map_err(|e| format!("Failed to lock crystal state: {}", e))?;
+    cs.niggli_reduce()?;
+    
+    let settings = settings_state.lock().map_err(|e| format!("Settings lock fail: {}", e))?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions, &cs.atomic_numbers, &cs.elements, &settings, &cs.selected_atoms,
+    );
+    
+    if let Ok(mut renderer) = renderer_state.lock() {
+        renderer.update_atoms(&instances);
+        renderer.update_lines(&cs, &settings);
+        
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
+        if !renderer.camera.is_perspective {
+            renderer.camera.set_orthographic(extent * 1.5);
+        }
+        renderer.update_camera();
+    }
+    app.emit("state_changed", ()).ok();
+    Ok(())
+}
+
+/// Apply cell standardization (primitive or conventional).
+#[tauri::command]
+pub fn apply_cell_standardize(
+    to_primitive: bool,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+) -> Result<(), String> {
+    log::info!("apply_cell_standardize: to_primitive={}", to_primitive);
+    
+    let mut cs = crystal_state.lock().map_err(|e| format!("Failed to lock crystal state: {}", e))?;
+    
+    if to_primitive {
+        cs.to_primitive()?;
+    } else {
+        cs.to_conventional()?;
+    }
+    
+    let settings = settings_state.lock().map_err(|e| format!("Settings lock fail: {}", e))?;
+    let instances = crate::renderer::instance::build_instance_data(
+        &cs.cart_positions, &cs.atomic_numbers, &cs.elements, &settings, &cs.selected_atoms,
+    );
+    
+    if let Ok(mut renderer) = renderer_state.lock() {
+        renderer.update_atoms(&instances);
+        renderer.update_lines(&cs, &settings);
+        
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        let center = cs.unit_cell_center();
+        let center_vec = glam::Vec3::from_array(center);
+        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+        renderer.camera.target = center_vec;
+        if !renderer.camera.is_perspective {
+            renderer.camera.set_orthographic(extent * 1.5);
+        }
+        renderer.update_camera();
+    }
+    app.emit("state_changed", ()).ok();
+    Ok(())
+}
+
 /// Shift slab termination to expose a different surface layer.
 #[tauri::command]
 pub fn shift_termination(

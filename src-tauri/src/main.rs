@@ -648,6 +648,8 @@ fn main() {
             commands::set_render_flags,
             commands::apply_supercell,
             commands::apply_slab,
+            commands::apply_niggli_reduce,
+            commands::apply_cell_standardize,
             commands::set_camera_view_axis,
             commands::get_settings,
             commands::update_settings,
