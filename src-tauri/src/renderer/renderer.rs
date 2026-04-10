@@ -65,6 +65,11 @@ pub struct Renderer {
 
     // Background clear color (for dark/light mode toggles)
     pub clear_color: wgpu::Color,
+
+    // Reciprocal Space
+    pub bz_viewport: Option<crate::renderer::bz_renderer::BzSubViewport>,
+    pub show_bz: bool,
+    pub bz_scale: f32,
 }
 
 impl Renderer {
@@ -172,6 +177,8 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
+        let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&gpu, 400, 400));
+
         Self {
             gpu,
             camera,
@@ -202,6 +209,9 @@ impl Renderer {
             camera_bind_group_layout,
             isosurface_dispatch_size: [0; 3],
             clear_color: default_clear,
+            bz_viewport,
+            show_bz: false,
+            bz_scale: 0.35,
         }
     }
 
@@ -331,6 +341,28 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+
+        // ═══ Full-screen BZ mode — takes over entire viewport ════════════
+        if self.show_bz {
+            if let Some(bz) = &mut self.bz_viewport {
+                let w = self.gpu.config.width as f32;
+                let h = self.gpu.config.height as f32;
+                let cc = self.clear_color;
+                bz.render_fullscreen(
+                    &mut encoder,
+                    &view,
+                    &self.opaque_depth_view,
+                    cc,
+                    w, h,
+                    &self.gpu.queue,
+                );
+            }
+            self.gpu.queue.submit(std::iter::once(encoder.finish()));
+            output.present();
+            return Ok(());
+        }
+
+        // ═══ Normal crystal rendering path ═══════════════════════════════
 
         // ═══ Pass 1: Opaque objects — write depth ═════════════════════════
         {
@@ -752,6 +784,26 @@ impl Renderer {
         self.show_isosurface = false;
         self.show_volume = false;
         self.volume_render_mode = VolumeRenderMode::Isosurface;
+    }
+
+    /// Toggle bond display.
+    pub fn toggle_bonds(&mut self, show: bool) {
+        self.show_bonds = show;
+    }
+
+    /// Update Brillouin Zone data and trigger refresh of the PiP viewport buffers.
+    pub fn update_bz_data(&mut self, bz_opt: Option<(&crate::brillouin_zone::BrillouinZone, &crate::kpath::KPath)>) {
+        if let Some((bz, kpath)) = bz_opt {
+            if self.bz_viewport.is_none() {
+                self.bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&self.gpu, 400, 400));
+            }
+            if let Some(viewport) = &mut self.bz_viewport {
+                viewport.update_bz(&self.gpu, bz, kpath);
+                self.show_bz = true;
+            }
+        } else {
+            self.show_bz = false;
+        }
     }
 
     /// Upload volumetric data to GPU and initialize isosurface pipeline.

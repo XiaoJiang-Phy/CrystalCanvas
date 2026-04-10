@@ -69,6 +69,8 @@ pub struct CrystalState {
     pub cart_positions: Vec<[f32; 3]>,
     // State version to trigger frontend reactivity
     pub version: u32,
+    pub is_2d: bool,
+    pub vacuum_axis: Option<usize>,
     // Bond analysis cache (M10) — recomputed on state change
     #[serde(skip)]
     pub bond_analysis: Option<BondAnalysis>,
@@ -85,6 +87,8 @@ pub struct CrystalState {
     pub selected_atoms: Vec<usize>,
     #[serde(skip)]
     pub volumetric_data: Option<crate::volumetric::VolumetricData>,
+    #[serde(skip)]
+    pub bz_cache: Option<(crate::brillouin_zone::BrillouinZone, crate::kpath::KPath)>,
 }
 
 impl Default for CrystalState {
@@ -108,6 +112,8 @@ impl Default for CrystalState {
             atomic_numbers: Vec::new(),
             cart_positions: Vec::new(),
             version: 0,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -115,6 +121,7 @@ impl Default for CrystalState {
             intrinsic_sites: 0,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         }
     }
 }
@@ -203,6 +210,8 @@ impl CrystalState {
             atomic_numbers,
             cart_positions: Vec::new(),
             version: 0,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -210,6 +219,7 @@ impl CrystalState {
             intrinsic_sites: actual_n,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         };
 
         state.fractional_to_cartesian();
@@ -369,6 +379,226 @@ impl CrystalState {
             cy,
             cz,
         ]
+    }
+
+    /// Set unit cell parameters from a 3x3 column-major lattice matrix.
+    pub fn set_lattice_col_major(&mut self, mat: &[f64; 9]) {
+        let vx = [mat[0], mat[1], mat[2]];
+        let vy = [mat[3], mat[4], mat[5]];
+        let vz = [mat[6], mat[7], mat[8]];
+
+        let a = (vx[0] * vx[0] + vx[1] * vx[1] + vx[2] * vx[2]).sqrt();
+        let b = (vy[0] * vy[0] + vy[1] * vy[1] + vy[2] * vy[2]).sqrt();
+        let c = (vz[0] * vz[0] + vz[1] * vz[1] + vz[2] * vz[2]).sqrt();
+
+        let dot_ab = vx[0] * vy[0] + vx[1] * vy[1] + vx[2] * vy[2];
+        let dot_bc = vy[0] * vz[0] + vy[1] * vz[1] + vy[2] * vz[2];
+        let dot_ca = vz[0] * vx[0] + vz[1] * vx[1] + vz[2] * vx[2];
+
+        self.cell_gamma = (dot_ab / (a * b)).clamp(-1.0, 1.0).acos().to_degrees();
+        self.cell_alpha = (dot_bc / (b * c)).clamp(-1.0, 1.0).acos().to_degrees();
+        self.cell_beta = (dot_ca / (c * a)).clamp(-1.0, 1.0).acos().to_degrees();
+        
+        self.cell_a = a;
+        self.cell_b = b;
+        self.cell_c = c;
+    }
+
+    /// Reduce lattice to its Niggli form.
+    /// Fractional coordinates are transformed via $\mathbf{f}' = L_{\text{new}}^{-1} \cdot L_{\text{old}} \cdot \mathbf{f}$.
+    pub fn niggli_reduce(&mut self) -> Result<(), String> {
+        let old_lattice = self.get_lattice_col_major();
+        let mut new_lattice = old_lattice;
+        let status = unsafe { ffi::niggli_reduce(new_lattice.as_mut_ptr(), 1e-4) };
+        if status != 0 {
+            return Err("Niggli reduce failed".to_string());
+        }
+        self.transform_fractional_coords(&old_lattice, &new_lattice);
+        self.set_lattice_col_major(&new_lattice);
+        self.fractional_to_cartesian();
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Reduce lattice to its Delaunay form.
+    /// Fractional coordinates are transformed via $\mathbf{f}' = L_{\text{new}}^{-1} \cdot L_{\text{old}} \cdot \mathbf{f}$.
+    pub fn delaunay_reduce(&mut self) -> Result<(), String> {
+        let old_lattice = self.get_lattice_col_major();
+        let mut new_lattice = old_lattice;
+        let status = unsafe { ffi::delaunay_reduce(new_lattice.as_mut_ptr(), 1e-4) };
+        if status != 0 {
+            return Err("Delaunay reduce failed".to_string());
+        }
+        self.transform_fractional_coords(&old_lattice, &new_lattice);
+        self.set_lattice_col_major(&new_lattice);
+        self.fractional_to_cartesian();
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Transform fractional coordinates from one lattice basis to another.
+    /// $\mathbf{f}_{\text{new}} = L_{\text{new}}^{-1} \cdot L_{\text{old}} \cdot \mathbf{f}_{\text{old}}$
+    fn transform_fractional_coords(&mut self, old_lat: &[f64; 9], new_lat: &[f64; 9]) {
+        // L_new^{-1} via Cramer's rule (3x3 ColMajor)
+        let det = new_lat[0] * (new_lat[4] * new_lat[8] - new_lat[5] * new_lat[7])
+                - new_lat[3] * (new_lat[1] * new_lat[8] - new_lat[2] * new_lat[7])
+                + new_lat[6] * (new_lat[1] * new_lat[5] - new_lat[2] * new_lat[4]);
+
+        if det.abs() < 1e-15 {
+            return; // degenerate lattice, bail
+        }
+        let inv_det = 1.0 / det;
+
+        // Cofactor matrix of new_lat (ColMajor), transposed = adjugate
+        let inv = [
+            (new_lat[4] * new_lat[8] - new_lat[5] * new_lat[7]) * inv_det,  // [0]
+            (new_lat[2] * new_lat[7] - new_lat[1] * new_lat[8]) * inv_det,  // [1]
+            (new_lat[1] * new_lat[5] - new_lat[2] * new_lat[4]) * inv_det,  // [2]
+            (new_lat[5] * new_lat[6] - new_lat[3] * new_lat[8]) * inv_det,  // [3]
+            (new_lat[0] * new_lat[8] - new_lat[2] * new_lat[6]) * inv_det,  // [4]
+            (new_lat[2] * new_lat[3] - new_lat[0] * new_lat[5]) * inv_det,  // [5]
+            (new_lat[3] * new_lat[7] - new_lat[4] * new_lat[6]) * inv_det,  // [6]
+            (new_lat[1] * new_lat[6] - new_lat[0] * new_lat[7]) * inv_det,  // [7]
+            (new_lat[0] * new_lat[4] - new_lat[1] * new_lat[3]) * inv_det,  // [8]
+        ];
+
+        // M = L_new^{-1} * L_old  (both ColMajor, result ColMajor)
+        let mut m = [0.0f64; 9];
+        for col in 0..3 {
+            for row in 0..3 {
+                m[col * 3 + row] = inv[row] * old_lat[col * 3]
+                    + inv[3 + row] * old_lat[col * 3 + 1]
+                    + inv[6 + row] * old_lat[col * 3 + 2];
+            }
+        }
+
+        let n = self.intrinsic_sites;
+        for i in 0..n {
+            let fx = self.fract_x[i];
+            let fy = self.fract_y[i];
+            let fz = self.fract_z[i];
+
+            let mut nx = m[0] * fx + m[3] * fy + m[6] * fz;
+            let mut ny = m[1] * fx + m[4] * fy + m[7] * fz;
+            let mut nz = m[2] * fx + m[5] * fy + m[8] * fz;
+
+            // Wrap to [0, 1)
+            nx -= nx.floor();
+            ny -= ny.floor();
+            nz -= nz.floor();
+
+            self.fract_x[i] = nx;
+            self.fract_y[i] = ny;
+            self.fract_z[i] = nz;
+        }
+    }
+
+    /// Standardize cell to its primitive representation.
+    pub fn to_primitive(&mut self) -> Result<(), String> {
+        self.standardize(true)
+    }
+
+    /// Standardize cell to its conventional representation.
+    pub fn to_conventional(&mut self) -> Result<(), String> {
+        self.standardize(false)
+    }
+
+    /// Standardize the cell (internal implementation)
+    fn standardize(&mut self, to_primitive: bool) -> Result<(), String> {
+        let n_atoms = self.intrinsic_sites;
+        if n_atoms == 0 {
+            return Ok(());
+        }
+
+        let mut lattice = self.get_lattice_col_major();
+        // Spglib may need up to 4x atoms when converting primitive -> face-centered conventional
+        let capacity = n_atoms * 4; 
+        
+        let mut flat_positions = Vec::with_capacity(capacity * 3);
+        let mut types = Vec::with_capacity(capacity);
+
+        for i in 0..n_atoms {
+            flat_positions.push(self.fract_x[i]);
+            flat_positions.push(self.fract_y[i]);
+            flat_positions.push(self.fract_z[i]);
+            types.push(self.atomic_numbers[i] as i32);
+        }
+        
+        // Resize to capacity padding with zeros so C++ can write safely
+        flat_positions.resize(capacity * 3, 0.0);
+        types.resize(capacity, 0);
+
+        let new_size = unsafe {
+            ffi::standardize_cell(
+                lattice.as_mut_ptr(),
+                flat_positions.as_mut_ptr(),
+                types.as_mut_ptr(),
+                n_atoms,
+                capacity,
+                if to_primitive { 1 } else { 0 },
+                1e-4,
+            )
+        };
+
+        if new_size <= 0 {
+            return Err("Spglib standardize_cell failed".to_string());
+        }
+        
+        let new_size = new_size as usize;
+        self.set_lattice_col_major(&lattice);
+        
+        // Rebuild atom lists
+        let mut new_labels = Vec::with_capacity(new_size);
+        let mut new_elements = Vec::with_capacity(new_size);
+        let mut new_fract_x = Vec::with_capacity(new_size);
+        let mut new_fract_y = Vec::with_capacity(new_size);
+        let mut new_fract_z = Vec::with_capacity(new_size);
+        let mut new_atomic_numbers = Vec::with_capacity(new_size);
+        let mut new_occupancies = vec![1.0; new_size];
+
+        for i in 0..new_size {
+            let t = types[i] as u8;
+            let mut label = format!("Element{}", t);
+            let mut elem = "Unknown".to_string();
+
+            for j in 0..n_atoms {
+                if self.atomic_numbers[j] == t {
+                    label = self.labels[j].clone();
+                    elem = self.elements[j].clone();
+                    break;
+                }
+            }
+
+            // Wrap coordinates to [0, 1) properly
+            let mut fx = flat_positions[3 * i];
+            let mut fy = flat_positions[3 * i + 1];
+            let mut fz = flat_positions[3 * i + 2];
+            fx = fx - fx.floor();
+            fy = fy - fy.floor();
+            fz = fz - fz.floor();
+
+            new_labels.push(label);
+            new_elements.push(elem);
+            new_fract_x.push(fx);
+            new_fract_y.push(fy);
+            new_fract_z.push(fz);
+            new_atomic_numbers.push(t);
+        }
+
+        self.labels = new_labels;
+        self.elements = new_elements;
+        self.fract_x = new_fract_x;
+        self.fract_y = new_fract_y;
+        self.fract_z = new_fract_z;
+        self.atomic_numbers = new_atomic_numbers;
+        self.occupancies = new_occupancies;
+        self.intrinsic_sites = new_size;
+        
+        self.fractional_to_cartesian();
+        self.detect_spacegroup();
+        self.version += 1;
+
+        Ok(())
     }
 
     /// Convert fractional coordinates to Cartesian using the unit cell matrix.
@@ -575,6 +805,8 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n_actual_usize),
             cart_positions: Vec::new(),
             version: 1,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -582,6 +814,7 @@ impl CrystalState {
             intrinsic_sites: n_actual_usize,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         };
 
         for i in 0..n_actual_usize {
@@ -773,6 +1006,8 @@ impl CrystalState {
             atomic_numbers: Vec::with_capacity(n_new_usize),
             cart_positions: Vec::new(),
             version: 1,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -780,6 +1015,7 @@ impl CrystalState {
             intrinsic_sites: n_new_usize,
             selected_atoms: Vec::new(),
             volumetric_data: None,
+            bz_cache: None,
         };
 
         for i in 0..n_new_usize {
@@ -1013,6 +1249,100 @@ impl CrystalState {
             threshold_factor,
         });
     }
+
+    /// Detect if the system is 2D and set `is_2d` and `vacuum_axis` accordingly.
+    pub fn detect_2d(&mut self) {
+        let mut best_axis = None;
+        let mut max_gap = 0.0;
+        let mut best_ratio = 0.0;
+        
+        let axes = [0, 1, 2];
+        let lengths = [self.cell_a, self.cell_b, self.cell_c];
+        
+        for &axis in &axes {
+            let mut coords = Vec::with_capacity(self.intrinsic_sites);
+            for i in 0..self.intrinsic_sites {
+                let mut v = match axis {
+                    0 => self.fract_x[i],
+                    1 => self.fract_y[i],
+                    2 => self.fract_z[i],
+                    _ => unreachable!(),
+                };
+                v = v - v.floor();
+                coords.push(v);
+            }
+            
+            if coords.is_empty() { continue; }
+            coords.sort_by(|a, b| a.total_cmp(b));
+            
+            let mut current_max_gap = 0.0;
+            let n = coords.len();
+            for i in 0..(n-1) {
+                let gap = coords[i+1] - coords[i];
+                if gap > current_max_gap {
+                    current_max_gap = gap;
+                }
+            }
+            // wraparound gap
+            let wrap_gap = 1.0 - coords[n-1] + coords[0];
+            if wrap_gap > current_max_gap {
+                current_max_gap = wrap_gap;
+            }
+            
+            let other_len = (lengths[(axis + 1) % 3] + lengths[(axis + 2) % 3]) / 2.0;
+            if other_len > 0.0 {
+                let ratio = lengths[axis] / other_len;
+                if current_max_gap > 0.35 && ratio > 2.0 {
+                    if current_max_gap > max_gap {
+                        max_gap = current_max_gap;
+                        best_axis = Some(axis);
+                        best_ratio = ratio;
+                    }
+                }
+            }
+        }
+        
+        if let Some(axis) = best_axis {
+            self.is_2d = true;
+            self.vacuum_axis = Some(axis);
+        } else {
+            self.is_2d = false;
+            self.vacuum_axis = None;
+        }
+        
+        log::info!(
+            "[detect_2d] is_2d={}, vacuum_axis={:?}, max_gap={:.3}, ratio={:.2}",
+            self.is_2d,
+            self.vacuum_axis,
+            max_gap,
+            best_ratio
+        );
+    }
+    
+    /// Get the two in-plane lattice vectors projected to 2D given the vacuum axis.
+    pub fn get_inplane_lattice(&self) -> ([f64; 2], [f64; 2]) {
+        let lattice = self.get_lattice_col_major(); 
+        let v1 = [lattice[0], lattice[1], lattice[2]];
+        let v2 = [lattice[3], lattice[4], lattice[5]];
+        let v3 = [lattice[6], lattice[7], lattice[8]];
+        
+        if let Some(axis) = self.vacuum_axis {
+            match axis {
+                0 => {
+                    ([v2[1], v2[2]], [v3[1], v3[2]])
+                },
+                1 => {
+                    ([v1[0], v1[2]], [v3[0], v3[2]])
+                },
+                2 => {
+                    ([v1[0], v1[1]], [v2[0], v2[1]])
+                },
+                _ => ([v1[0], v1[1]], [v2[0], v2[1]])
+            }
+        } else {
+            ([v1[0], v1[1]], [v2[0], v2[1]])
+        }
+    }
 }
 
 /// Classify polyhedron type from coordination number.
@@ -1129,6 +1459,8 @@ mod tests {
             atomic_numbers: vec![1, 8],
             cart_positions: vec![],
             version: 1,
+            is_2d: false,
+            vacuum_axis: None,
             bond_analysis: None,
             phonon_data: None,
             active_phonon_mode: None,
@@ -1136,6 +1468,7 @@ mod tests {
             intrinsic_sites: 2,
             selected_atoms: vec![],
             volumetric_data: None,
+            bz_cache: None,
         };
         state.fractional_to_cartesian();
         state

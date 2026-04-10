@@ -648,6 +648,8 @@ fn main() {
             commands::set_render_flags,
             commands::apply_supercell,
             commands::apply_slab,
+            commands::apply_niggli_reduce,
+            commands::apply_cell_standardize,
             commands::set_camera_view_axis,
             commands::get_settings,
             commands::update_settings,
@@ -669,7 +671,14 @@ fn main() {
             commands::set_volume_opacity_range,
             commands::set_volume_density_cutoff,
             commands::set_volume_colormap,
-            commands::get_volumetric_info
+            commands::get_volumetric_info,
+            commands::compute_brillouin_zone,
+            commands::toggle_bz_display,
+            commands::get_kpath_info,
+            commands::set_bz_scale,
+            commands::get_bz_label_positions,
+            commands::generate_kpath_text,
+            commands::write_text_file
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

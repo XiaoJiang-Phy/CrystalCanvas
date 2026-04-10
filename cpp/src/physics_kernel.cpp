@@ -69,6 +69,82 @@ int get_spacegroup(const double *lattice, const double *positions,
   }
 }
 
+int niggli_reduce(double* lattice, double symprec) {
+    try {
+        double spg_lattice[3][3] = {
+            {lattice[0], lattice[3], lattice[6]},
+            {lattice[1], lattice[4], lattice[7]},
+            {lattice[2], lattice[5], lattice[8]}
+        };
+        int result = spg_niggli_reduce(spg_lattice, symprec);
+        if (result == 0) return 1; // spglib returns 0 on failure
+        // Write back transposed
+        lattice[0] = spg_lattice[0][0]; lattice[3] = spg_lattice[0][1]; lattice[6] = spg_lattice[0][2];
+        lattice[1] = spg_lattice[1][0]; lattice[4] = spg_lattice[1][1]; lattice[7] = spg_lattice[1][2];
+        lattice[2] = spg_lattice[2][0]; lattice[5] = spg_lattice[2][1]; lattice[8] = spg_lattice[2][2];
+        return 0; // our API returns 0 on success
+    } catch (...) {
+        return 1;
+    }
+}
+
+int delaunay_reduce(double* lattice, double symprec) {
+    try {
+        double spg_lattice[3][3] = {
+            {lattice[0], lattice[3], lattice[6]},
+            {lattice[1], lattice[4], lattice[7]},
+            {lattice[2], lattice[5], lattice[8]}
+        };
+        int result = spg_delaunay_reduce(spg_lattice, symprec);
+        if (result == 0) return 1; // failure
+        lattice[0] = spg_lattice[0][0]; lattice[3] = spg_lattice[0][1]; lattice[6] = spg_lattice[0][2];
+        lattice[1] = spg_lattice[1][0]; lattice[4] = spg_lattice[1][1]; lattice[7] = spg_lattice[1][2];
+        lattice[2] = spg_lattice[2][0]; lattice[5] = spg_lattice[2][1]; lattice[8] = spg_lattice[2][2];
+        return 0;
+    } catch (...) {
+        return 1;
+    }
+}
+
+int standardize_cell(double* lattice, double* positions, int* types,
+                     size_t n_atoms, size_t capacity, int to_primitive, double symprec) {
+    try {
+        double spg_lattice[3][3] = {
+            {lattice[0], lattice[3], lattice[6]},
+            {lattice[1], lattice[4], lattice[7]},
+            {lattice[2], lattice[5], lattice[8]}
+        };
+        
+        std::vector<double> pos_vec(capacity * 3, 0.0);
+        std::copy(positions, positions + n_atoms * 3, pos_vec.begin());
+        double(*spg_positions)[3] = reinterpret_cast<double(*)[3]>(pos_vec.data());
+
+        std::vector<int> types_vec(capacity, 0);
+        std::copy(types, types + n_atoms, types_vec.begin());
+
+        int no_idealize = 0; // we want idealized lengths and angles
+        int num_new_atoms = spg_standardize_cell(
+            spg_lattice, spg_positions, types_vec.data(), 
+            static_cast<int>(n_atoms), to_primitive, no_idealize, symprec);
+        
+        if (num_new_atoms == 0) return 0; // failure
+        if (static_cast<size_t>(num_new_atoms) > capacity) return 0; // buffer overflow guard
+
+        // Write back lattice
+        lattice[0] = spg_lattice[0][0]; lattice[3] = spg_lattice[0][1]; lattice[6] = spg_lattice[0][2];
+        lattice[1] = spg_lattice[1][0]; lattice[4] = spg_lattice[1][1]; lattice[7] = spg_lattice[1][2];
+        lattice[2] = spg_lattice[2][0]; lattice[5] = spg_lattice[2][1]; lattice[8] = spg_lattice[2][2];
+
+        // Write back positions and types
+        std::copy(pos_vec.begin(), pos_vec.begin() + num_new_atoms * 3, positions);
+        std::copy(types_vec.begin(), types_vec.begin() + num_new_atoms, types);
+        
+        return num_new_atoms;
+    } catch (...) {
+        return 0;
+    }
+}
+
 #include <Eigen/Dense>
 
 int get_supercell_size(size_t n_atoms, const int32_t* expansion) {
