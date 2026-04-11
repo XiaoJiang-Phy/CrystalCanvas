@@ -89,6 +89,8 @@ pub struct CrystalState {
     pub volumetric_data: Option<crate::volumetric::VolumetricData>,
     #[serde(skip)]
     pub bz_cache: Option<(crate::brillouin_zone::BrillouinZone, crate::kpath::KPath)>,
+    #[serde(skip)]
+    pub wannier_overlay: Option<crate::wannier::WannierOverlay>,
 }
 
 impl Default for CrystalState {
@@ -122,6 +124,7 @@ impl Default for CrystalState {
             selected_atoms: Vec::new(),
             volumetric_data: None,
             bz_cache: None,
+            wannier_overlay: None,
         }
     }
 }
@@ -220,6 +223,7 @@ impl CrystalState {
             selected_atoms: Vec::new(),
             volumetric_data: None,
             bz_cache: None,
+            wannier_overlay: None,
         };
 
         state.fractional_to_cartesian();
@@ -815,6 +819,7 @@ impl CrystalState {
             selected_atoms: Vec::new(),
             volumetric_data: None,
             bz_cache: None,
+            wannier_overlay: None,
         };
 
         for i in 0..n_actual_usize {
@@ -1016,6 +1021,7 @@ impl CrystalState {
             selected_atoms: Vec::new(),
             volumetric_data: None,
             bz_cache: None,
+            wannier_overlay: None,
         };
 
         for i in 0..n_new_usize {
@@ -1469,6 +1475,7 @@ mod tests {
             selected_atoms: vec![],
             volumetric_data: None,
             bz_cache: None,
+            wannier_overlay: None,
         };
         state.fractional_to_cartesian();
         state
