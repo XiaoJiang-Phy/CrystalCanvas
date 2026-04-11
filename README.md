@@ -210,7 +210,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 - **Primary dev platform**: macOS (Intel & Apple Silicon)
 - **Environment**: Always `source dev_env.sh` before building. API keys stored in OS Keychain — never in code or logs.
-- **Code conventions**: `snake_case` for variables/functions, `PascalCase` for types, physics symbol fidelity preserved (e.g., `sigma_k` ≠ `Sigma_K`). See [TDD §5](doc/TDD_CrystalCanvas_v1.md) for architecture decisions.
+- **Code conventions**: `snake_case` for variables/functions, `PascalCase` for types, physics symbol fidelity preserved (e.g., `sigma_k` ≠ `Sigma_K`). See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 - **Documentation**: Internal docs in `doc/`, public docs in `docs/`. Changes tracked in `CHANGELOG.md`.
 
 ---
