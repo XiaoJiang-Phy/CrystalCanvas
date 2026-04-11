@@ -319,8 +319,9 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             app_handle
                 .dialog()
                 .file()
-                .add_filter("All Supported", &["cif", "xyz", "pdb", "poscar", "contcar", "vasp", "in", "pwi", "chgcar", "locpot", "cube", "xsf"])
+                .add_filter("All Supported", &["cif", "xyz", "pdb", "poscar", "contcar", "vasp", "in", "pwi", "chgcar", "locpot", "cube", "xsf", "dat"])
                 .add_filter("Volumetric", &["chgcar", "locpot", "cube", "xsf"])
+                .add_filter("Wannier Hopping", &["dat"])
                 .set_title("Open Structure File")
                 .pick_file(move |file_path| {
                     let Some(path) = file_path else { return };
@@ -678,7 +679,14 @@ fn main() {
             commands::set_bz_scale,
             commands::get_bz_label_positions,
             commands::generate_kpath_text,
-            commands::write_text_file
+            commands::write_text_file,
+            commands::load_wannier_hr,
+            commands::set_wannier_t_min,
+            commands::set_wannier_r_shell,
+            commands::set_wannier_orbital,
+            commands::toggle_wannier_onsite,
+            commands::toggle_hopping_display,
+            commands::clear_wannier
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

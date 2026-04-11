@@ -454,3 +454,68 @@ pub fn build_bond_instances(
 
     instances
 }
+
+/// Build instances for Wannier hoppings using the bond cylinder shader.
+pub fn build_hopping_instances(
+    hoppings: &[crate::wannier::VisibleHopping],
+    t_max: f64,
+) -> Vec<BondInstance> {
+    let mut instances = Vec::with_capacity(hoppings.len());
+    let safe_t_max = if t_max.abs() < 1e-12 { 1.0 } else { t_max.abs() };
+
+    for h in hoppings {
+        let frac = (h.magnitude / safe_t_max).min(1.0) as f32;
+        let radius = 0.02 + 0.06 * frac;
+
+        let color = if h.sign >= 0.0 {
+            [0.85, 0.25, 0.20, 0.9] // Red
+        } else {
+            [0.20, 0.45, 0.85, 0.9] // Blue
+        };
+
+        instances.push(BondInstance {
+            start: h.start_cart,
+            radius,
+            end: h.end_cart,
+            _pad: 0.0,
+            color,
+        });
+    }
+
+    instances
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wannier::VisibleHopping;
+
+    #[test]
+    fn test_hopping_instance_sign_color() {
+        let hoppings = vec![
+            VisibleHopping {
+                start_cart: [0.0, 0.0, 0.0],
+                end_cart: [1.0, 0.0, 0.0],
+                magnitude: 2.0,
+                sign: 1.0,
+            },
+            VisibleHopping {
+                start_cart: [0.0, 0.0, 0.0],
+                end_cart: [0.0, 1.0, 0.0],
+                magnitude: 1.0,
+                sign: -1.0,
+            },
+        ];
+
+        let instances = build_hopping_instances(&hoppings, 4.0);
+        assert_eq!(instances.len(), 2);
+
+        // Check positive (red) with frac = 2.0/4.0 = 0.5 -> radius 0.02 + 0.03 = 0.05
+        assert!((instances[0].radius - 0.05).abs() < 1e-4);
+        assert_eq!(instances[0].color, [0.85, 0.25, 0.20, 0.9]);
+
+        // Check negative (blue) with frac = 1.0/4.0 = 0.25 -> radius 0.02 + 0.015 = 0.035
+        assert!((instances[1].radius - 0.035).abs() < 1e-4);
+        assert_eq!(instances[1].color, [0.20, 0.45, 0.85, 0.9]);
+    }
+}
