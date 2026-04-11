@@ -2,34 +2,71 @@
   <img src="logo.svg" width="200" alt="CrystalCanvas Logo">
 </p>
 
-# 🔬 CrystalCanvas
+# CrystalCanvas
 
 **High-performance crystal structure modeling, volumetric visualization, and DFT/MD file preparation — in a native desktop app.**
 
-CrystalCanvas is an open-source desktop GUI application designed for computational materials science, condensed matter physics, and quantum chemistry. It breaks free from the limitations of traditional tools (VESTA, Materials Studio) by combining a native-first architecture with modern AI-powered workflows.
+CrystalCanvas is an open-source desktop GUI application for computational materials science, condensed matter physics, and quantum chemistry. It combines a native-first architecture (Rust + wgpu + C++) with modern AI-powered workflows to deliver interactive 3D crystal modeling, publication-quality volumetric rendering, and seamless DFT/MD integration — all in a single, memory-safe application.
+
+> **Current Release**: `v0.5.0` · Rust 15.5k LOC · TypeScript 3.9k LOC · C++ 737 LOC · 5 WGSL shaders
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- **🖱️ Pixel-precise manual modeling** — Hardware-accelerated 3D view with real-time atom selection, addition, deletion, and element substitution.
-- **🔷 Brillouin Zone visualization** — 3D Wigner-Seitz cell construction (14 Bravais types) and 2D BZ support (5 wallpaper types) with high-symmetry k-point labeling, one-click band path export for QE/VASP.
-- **⚡ Tight-Binding (Wannier) visualizer** — Parse `wannier90_hr.dat` hopping Hamiltonians and render as 3D network overlays with per-orbital color coding, R-shell/orbital selection, magnitude filtering, and ghost atom rendering for neighboring cells.
-- **📊 Volumetric data visualization** — Real-time isosurface extraction (GPU Marching Cubes) and volume raycasting for CHGCAR, Gaussian Cube, and XSF files. 10 scientific colormaps, dual-color signed isosurfaces, density cutoff control.
-- **⚛️ Cell standardization** — Niggli reduction, Primitive/Conventional cell transforms via Spglib.
-- **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
-- **🧠 AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*. Context-aware LLM acts as a semantic parameterizer and command orchestrator with strict physics validation (MIC overlap checks).
-- [🔌 **Seamless DFT/MD integration**](CHANGELOG.md) — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
-- **🛡️ Memory-safe architecture** — Rust logic layer eliminates crashes from dangling pointers and buffer overflows.
+### Crystal Structure Modeling
+- **Pixel-precise manual modeling** — Hardware-accelerated 3D viewport with real-time atom selection, addition, deletion, element substitution, and multi-atom drag translation.
+- **Cell standardization** — Niggli reduction, Delaunay reduction, Primitive ↔ Conventional cell transforms via Spglib.
+- **Slab cleaving** — Rigorous $(h,k,l)$ surface cutting via Extended Euclidean Algorithm (Diophantine solver), not heuristic templates. Adjustable layer count, vacuum thickness, and termination selection.
+- **Supercell generator** — Arbitrary $3\times3$ integer transformation matrices with automatic coordinate remapping and boundary deduplication.
+
+### Reciprocal Space & Electronic Structure
+- **Brillouin Zone visualization** — 3D Wigner-Seitz cell construction (all 14 Bravais lattice types) and 2D BZ support (5 wallpaper group types) with high-symmetry $\mathbf{k}$-point labeling. One-click band path export for Quantum ESPRESSO and VASP.
+- **Tight-Binding (Wannier) visualizer** — Parse `wannier90_hr.dat` hopping Hamiltonians $H = \sum_{\mathbf{R}} t_{ij}(\mathbf{R}) c^\dagger_{i,\mathbf{0}} c_{j,\mathbf{R}}$ and render as 3D network overlays with per-orbital color coding (10-color Material palette), $\mathbf{R}$-shell/orbital selection, magnitude filtering, and ghost atom rendering for neighboring cells.
+
+### Volumetric Data Visualization
+- **GPU isosurface extraction** — Real-time Marching Cubes (GPU compute shader) for CHGCAR, Gaussian Cube, and XSF files.
+- **Volume raycasting** — Depth-aware front-to-back compositing with Blinn-Phong shading. Nyquist-compliant step size eliminates Moiré banding.
+- **Dual-color signed isosurfaces** — Positive/negative lobes in distinct colormap-derived colors for Wannier functions and $\Delta\rho$. 10 scientific colormaps (Viridis, Coolwarm, RdYlBu, etc.).
+
+### DFT/MD Integration & AI
+- **Seamless DFT/MD export** — Native high-fidelity export for VASP (POSCAR), LAMMPS (Data), Quantum ESPRESSO (Input with automatic K-point density and IUPAC 2021 masses).
+- **AI-powered workflow** *(experimental)* — Natural language commands like *"Generate a 3×3×3 silicon supercell and dope 5% phosphorus on the surface"*. Context-aware LLM agent with strict physics validation (MIC overlap checks).
+- **Memory-safe architecture** — Rust logic layer eliminates crashes from dangling pointers and buffer overflows. All crystal state managed via SSoT (Single Source of Truth) with `f64` physics / `f32` GPU precision separation.
 
 ---
 
-## 🛠️ Known Issues
+## Roadmap
 
-> **⚠️ Platform Support:**
+### Completed
+
+| Version | Highlights |
+|---|---|
+| **v0.1.0** | Hybrid window (wgpu + WebView), impostor sphere rendering, CIF parsing |
+| **v0.2.0** | Slab cleaving (Diophantine), supercell, atom editing, DFT exporters |
+| **v0.3.0** | Volumetric rendering (GPU Marching Cubes, volume raycasting, 10 colormaps) |
+| **v0.4.0** | 3D/2D Brillouin Zone, cell standardization (Niggli/Primitive/Conventional) |
+| **v0.5.0** | Wannier tight-binding visualizer, icon toolbar UI redesign |
+
+### Planned
+
+| Version | Target | Key Features |
+|---|---|---|
+| **v0.6.0** | UX Foundation | Distance/angle measurement, undo/redo stack, partial occupancy visualization, `commands.rs` refactor |
+| **v0.7.0** | CMP Core | In-GUI charge density difference ($\Delta\rho$), collinear magnetic moments ($m_z$), MSAA anti-aliasing |
+| **v0.8.0** | Reciprocal Physics | 3D Fermi surface viewer (`.bxsf`), non-collinear magnetism |
+| **v0.9.0+** | Flagship | Moiré superlattice generator (twistronics), high-quality rendering engine (SSAO), symmetry element overlay |
+
+> For detailed technical design, see [TDD](doc/TDD_CrystalCanvas_v1.md) · [Roadmap](doc/roadmap.md) · [Feature Assessment (中文)](doc/feature_assessment_zh.md)
+
+---
+
+## Known Issues
+
+> **Platform Support:**
 > Due to rendering engine (`wgpu`) backend differences, **Windows** and **Linux** builds may have rendering issues. Currently **only macOS** is fully tested and supported.
 
-### 🍎 Note for macOS Users (Unverified Developer)
+### Note for macOS Users (Unverified Developer)
 
 Since releases are not signed with an Apple Developer Certificate, macOS will prevent it from running with a "Developer cannot be verified" warning.
 
@@ -45,36 +82,44 @@ sudo xattr -cr /Applications/CrystalCanvas.app
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  React + TypeScript + TailwindCSS  (UI)             │
-├─────────────────────────────────────────────────────┤
-│  Rust / Tauri 2.0  (Application Logic / SSoT)       │
-├─────────────────────────────────────────────────────┤
-│  Rust / wgpu  (Impostor Sphere + Volume Raycast + BZ) │
-├─────────────────────────────────────────────────────┤
-│  WGSL Compute  (GPU Marching Cubes / Raycasting)    │
-├─────────────────────────────────────────────────────┤
-│  C++ Physics Kernel  (Spglib / Gemmi / Eigen)       │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  L4: React + TypeScript + TailwindCSS  (Presentation)   │
+│      WebView / Tauri IPC (invoke / events)              │
+├─────────────────────────────────────────────────────────┤
+│  L3: Rust / Tauri 2.0  (Application Logic / SSoT)       │
+│      State Manager • Command Router • Undo Stack        │
+├─────────────────────────────────────────────────────────┤
+│  L2: Rust / wgpu  (Rendering Engine)                    │
+│      Impostor Spheres • Bond Cylinders • BZ Wireframe   │
+│      Volume Raycast • GPU Marching Cubes • Wannier Net  │
+├─────────────────────────────────────────────────────────┤
+│  L1: C++ Physics Kernel  (Spglib / Gemmi / Eigen)       │
+│      Symmetry • Slab • Supercell • Overlap Detection    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Technology | Role |
 |---|---|---|
-| **Presentation** | React + TailwindCSS | UI panels, toolbars, chat |
-| **Application** | Rust / Tauri 2.0 | State management, IPC, I/O pipeline |
-| **Rendering** | Rust / wgpu | GPU-accelerated 3D (Metal / Vulkan / DX12) |
-| **Volumetric** | WGSL Compute + Raycast | Isosurface extraction, volume rendering |
-| **Compute** | C++ (Spglib, Gemmi, Eigen) | Symmetry, Overlap Detection, MIC |
-| **FFI Bridge** | `cxx` (Rust ↔ C++) | Type-safe, zero-copy data transfer |
+| **L4 Presentation** | React + TailwindCSS | UI panels, icon toolbar, chat, measurement overlays |
+| **L3 Application** | Rust / Tauri 2.0 | SSoT state management, IPC, I/O pipeline, undo stack |
+| **L2 Rendering** | Rust / wgpu (WGSL) | GPU-accelerated 3D (Metal / Vulkan / DX12), isosurface, BZ |
+| **L1 Compute** | C++ (Spglib, Gemmi, Eigen) | Symmetry analysis, slab geometry, bonding (MIC) |
+| **FFI Bridge** | `cxx` (Rust ↔ C++) | Type-safe, zero-copy data transfer, exception isolation |
+
+**Key Design Decisions:**
+- **Dual-precision**: `f64` for crystallographic calculations, `f32` for GPU rendering
+- **ColMajor enforcement**: All lattice matrices follow Fortran column-major order throughout the stack
+- **Full GPU reconstruction**: Instance buffer rebuilt on every state change (~16 KB for 500 atoms, < 0.1 ms)
+- **Three-layer LLM safety**: Schema validation → physics sandbox → undo snapshot before every AI-generated command
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
-**New to CrystalCanvas? Check out the [User Manual](docs/UserManual.md) for a comprehensive guide on all features.**
+**New to CrystalCanvas? Check out the [User Manual](docs/UserManual.md) for a comprehensive guide.**
 
 CrystalCanvas utilizes a **Zero-Global-Pollution** strategy. All toolchains (Rust, Node) and dependencies are isolated within the project directory.
 
@@ -102,10 +147,8 @@ pnpm install
 
 ### 3. Build & Run
 
-CrystalCanvas handles C++/Rust/TS full-stack compilation in a unified flow.
-
 #### Activation
-Always source the environment script before starting development to ensure `RUSTUP_HOME` and `CARGO_HOME` point to the project-local folders:
+Always source the environment script before starting development:
 ```bash
 source dev_env.sh
 ```
@@ -128,24 +171,7 @@ RUST_LOG=info cargo run --bin render_demo
 
 ---
 
-## 🗺️ Roadmap & Progress
-
-- [x] **M1-M2: Infrastructure & Data Model** — Rust/C++ bridge, CIF parsing.
-- [x] **M3: High-Performance Rendering (wgpu)** — Impostor spheres, ray-picking, orbital camera.
-- [x] **M4-M6: UI Integration & Geometry Ops** — Hybrid window, slab cleaving, supercells, atomic operations.
-- [x] **M7-M8: DFT/MD Ecology & I/O Pipeline** — Overlap detection (MIC), native exporters (VASP, QE, LAMMPS).
-- [x] **M8.5: Persistent Settings & UI Polish** — Local JSON caching, global rendering customization.
-- [x] **M9: LLM Command Bus** — Context-aware semantic AI agent for macro-scale geometry manipulation.
-- [x] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
-- [x] **M10+: Brillouin Zone & Cell Standardization** — 3D/2D Wigner-Seitz BZ, high-symmetry k-path (14+5 Bravais types), Niggli/Primitive/Conventional transforms.
-- [x] **M11: Volumetric Rendering** — GPU Marching Cubes isosurfaces, volume raycasting, 10 colormaps, CHGCAR/Cube/XSF parsers.
-- [x] **M12: Electronic Overlays** — Wannier tight-binding hopping visualizer with ghost atoms, per-orbital palette, R-shell selection.
-- [ ] **M12+: Advanced Topology** — $\mathcal{O}(N)$ Voronoi bonding, MP API agent, tensor strain generator.
-- [ ] **M13+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```text
 CrystalCanvas/
@@ -153,41 +179,43 @@ CrystalCanvas/
 ├── src-tauri/          # Rust backend (Tauri commands, state handling, wgpu orchestration)
 │   ├── shaders/        # WGSL shaders (volume_raycast, marching_cubes, isosurface_render)
 │   ├── src/
-│   │   ├── io/         # File parsers (CIF, POSCAR, CHGCAR, Cube, XSF, QE)
-│   │   ├── renderer/   # wgpu pipelines (atoms, bonds, hopping, isosurface, volume raycast)
-│   │   └── ...         # State manager, command router, volumetric, wannier module
+│   │   ├── io/         # File parsers (CIF, POSCAR, CHGCAR, Cube, XSF, QE, wannier90_hr)
+│   │   ├── renderer/   # wgpu pipelines (atoms, bonds, hopping, isosurface, volume, BZ)
+│   │   └── ...         # State manager, command router, volumetric, wannier, BZ modules
 │   ├── build.rs        # Unified Rust + C++ build script (cmake/cxx bridge)
 │   └── Cargo.toml
 ├── src/                # React frontend (TypeScript + TailwindCSS components)
-│   ├── components/     # UI Panel components (RightSidebar: volumetric controls)
+│   ├── components/     # UI components (icon toolbar, panels, chat)
 │   ├── hooks/          # Custom React hooks (tauri events, file-drop, 3D interaction)
-│   └── types/          # Strict TS IPC mappings (e.g., CrystalState, CrystalCommand)
+│   └── types/          # Strict TS IPC type mappings
 ├── cpp/                # C++ physics kernel
 │   ├── include/        # Public C-compatible headers (cxx bridge)
-│   ├── src/            # Implementation code (Spglib, Gemmi, Eigen integrations)
+│   ├── src/            # Spglib, Gemmi, Eigen integrations
 │   └── CMakeLists.txt
-├── docs/               # Public documentation ([User Manual](docs/UserManual.md))
+├── doc/                # Internal technical docs (TDD, Roadmap, Feature Assessment)
+├── docs/               # Public documentation (User Manual)
 ├── tests/              # Integration tests & benchmark data (LFS-tracked volumetric files)
 ├── dev_env.sh          # Local toolchain environment activation script
-├── CHANGELOG.md        # Release history and known issues
+├── CHANGELOG.md        # Release history
 └── README.md
 ```
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Development Notes
 
 - **Primary dev platform**: macOS (Intel & Apple Silicon)
-- **Environment toolchains** should be installed locally within the project directory when possible (see `.gitignore` for excluded paths).
-- Documentation in `docs/` and `CHANGELOG.md` is tracked for release transparency.
+- **Environment**: Always `source dev_env.sh` before building. API keys stored in OS Keychain — never in code or logs.
+- **Code conventions**: `snake_case` for variables/functions, `PascalCase` for types, physics symbol fidelity preserved (e.g., `sigma_k` ≠ `Sigma_K`). See [TDD §5](doc/TDD_CrystalCanvas_v1.md) for architecture decisions.
+- **Documentation**: Internal docs in `doc/`, public docs in `docs/`. Changes tracked in `CHANGELOG.md`.
 
 ---
 
-## 📄 License
+## License
 
 This project is dual-licensed under the **MIT License** and the **Apache License 2.0**. You may choose either license for your use.
 
@@ -198,7 +226,7 @@ For third-party software licenses used in this project, please see [THIRD_PARTY_
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Spglib](https://spglib.github.io/spglib/) — Crystal symmetry analysis
 - [Gemmi](https://gemmi.readthedocs.io/) — CIF/PDB file parsing
