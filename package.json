@@ -1,6 +1,6 @@
 {
   "name": "crystal-canvas",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "High-performance crystal structure modeling desktop GUI",
   "author": "Xiao Jiang and CrystalCanvas Contributors",
   "license": "MIT OR Apache-2.0",

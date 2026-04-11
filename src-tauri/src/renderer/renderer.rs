@@ -50,6 +50,10 @@ pub struct Renderer {
     bond_instance_buffer: wgpu::Buffer,
     bond_instance_count: u32,
 
+    pub hopping_instance_buffer: wgpu::Buffer,
+    pub hopping_instance_count: u32,
+    pub show_hoppings: bool,
+
     pub show_cell: bool,
     pub show_bonds: bool,
 
@@ -177,6 +181,21 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
+        let dummy_hopping = [crate::renderer::instance::BondInstance {
+            start: [0.0, 0.0, 0.0],
+            radius: 0.0,
+            end: [0.0, 0.0, 0.0],
+            _pad: 0.0,
+            color: [0.0, 0.0, 0.0, 0.0],
+        }];
+        let hopping_instance_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Hopping Instance Buffer"),
+                contents: bytemuck::cast_slice(&dummy_hopping),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+
         let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&gpu, 400, 400));
 
         Self {
@@ -198,6 +217,9 @@ impl Renderer {
             bond_pipeline,
             bond_instance_buffer,
             bond_instance_count: 0,
+            hopping_instance_buffer,
+            hopping_instance_count: 0,
+            show_hoppings: true,
             show_cell: true,
             show_bonds: true,
             isosurface_pipeline: None,
@@ -299,6 +321,23 @@ impl Renderer {
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Bond Instance Buffer"),
+                    contents: bytemuck::cast_slice(instances),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
+    }
+
+    /// Update actual hopping cylinder instances.
+    pub fn update_hoppings(&mut self, instances: &[crate::renderer::instance::BondInstance]) {
+        self.hopping_instance_count = instances.len() as u32;
+        if instances.is_empty() {
+            return;
+        }
+
+        self.hopping_instance_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Hopping Instance Buffer"),
                     contents: bytemuck::cast_slice(instances),
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
@@ -410,6 +449,14 @@ impl Renderer {
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
                 pass.draw(0..72, 0..self.bond_instance_count);
+            }
+
+            // Hopping cylinders
+            if self.show_hoppings && self.hopping_instance_count > 0 {
+                pass.set_pipeline(&self.bond_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.hopping_instance_buffer.slice(..));
+                pass.draw(0..72, 0..self.hopping_instance_count);
             }
         }
 
@@ -616,6 +663,13 @@ impl Renderer {
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
                 pass.draw(0..72, 0..self.bond_instance_count);
+            }
+
+            if self.show_hoppings && self.hopping_instance_count > 0 {
+                pass.set_pipeline(&self.bond_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.hopping_instance_buffer.slice(..));
+                pass.draw(0..72, 0..self.hopping_instance_count);
             }
         }
 
