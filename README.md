@@ -57,7 +57,7 @@ CrystalCanvas is an open-source desktop GUI application for computational materi
 | **v0.8.0** | Reciprocal Physics | 3D Fermi surface viewer (`.bxsf`), non-collinear magnetism |
 | **v0.9.0+** | Flagship | Moiré superlattice generator (twistronics), high-quality rendering engine (SSAO), symmetry element overlay |
 
-> For detailed technical design, see [TDD](doc/TDD_CrystalCanvas_v1.md) · [Roadmap](doc/roadmap.md) · [Feature Assessment (中文)](doc/feature_assessment_zh.md)
+> For the full roadmap, see [ROADMAP.md](ROADMAP.md).
 
 ---
 

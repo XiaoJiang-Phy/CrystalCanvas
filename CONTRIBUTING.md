@@ -79,7 +79,7 @@ pnpm run tauri dev
 - **ColMajor enforcement**: All lattice matrices follow Fortran column-major order. Never transpose implicitly.
 - **Lock ordering**: When acquiring multiple `Mutex` locks, always follow `crystal_state → settings → renderer` order to prevent deadlocks.
 - FFI boundaries must use the `cxx` bridge. Do not use raw `extern "C"` unless `cxx` is insufficient for a specific interface.
-- Use the `with_state_update` transaction helper (see [TDD §6.2.1](doc/TDD_CrystalCanvas_v1.md)) for any command that mutates `CrystalState`, instead of manual lock-mutate-rebuild-emit boilerplate.
+- Use the `with_state_update` transaction helper for any command that mutates `CrystalState`, instead of manual lock-mutate-rebuild-emit boilerplate.
 
 ### C++ (Physics Kernel)
 
@@ -120,7 +120,7 @@ Key architectural rules:
 - **L2** holds only GPU-side rendering buffer mirrors — no physical logic.
 - **L1** is a stateless computation engine: input → output, no state caching.
 
-For detailed technical design, see [TDD](doc/TDD_CrystalCanvas_v1.md) and [Roadmap](doc/roadmap.md).
+For the project roadmap, see [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -129,7 +129,7 @@ For detailed technical design, see [TDD](doc/TDD_CrystalCanvas_v1.md) and [Roadm
 - **Rust**: `cargo test` in `src-tauri/`. All tests must pass before PR submission.
 - **C++**: Unit tests within `cpp/` via CMake CTest.
 - **Visual verification**: For rendering changes, verify on at least **macOS Intel** (our development baseline). Screenshots of before/after are encouraged in the PR description.
-- **Performance thresholds**: Do not modify timing thresholds or tolerance constants to make a failing test pass. Fix the underlying logic. See [TDD §5.6](doc/TDD_CrystalCanvas_v1.md) for immutable test hard-lines.
+- **Performance thresholds**: Do not modify timing thresholds or tolerance constants to make a failing test pass. Fix the underlying logic.
 
 ---
 
