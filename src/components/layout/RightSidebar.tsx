@@ -31,7 +31,7 @@ export const RightSidebar: React.FC<{
     const [activeModeIdx, setActiveModeIdx] = useState<number | null>(null);
     const [isAnimating, setIsAnimating] = useState(false);
     const [amplitude, setAmplitude] = useState(1.0);
-    const [openAccordion, setOpenAccordion] = useState<string | null>("Structural Analysis");
+    const [openAccordion, setOpenAccordion] = useState<string | null>(null);
     const [isPhononModalOpen, setIsPhononModalOpen] = useState(false);
 
     // Volumetric State
@@ -287,9 +287,87 @@ export const RightSidebar: React.FC<{
         return () => cancelAnimationFrame(animationFrameId);
     }, [isAnimating, amplitude]);
 
+    // Icon definitions for the toolbar — domain-specific SVGs
+    const TOOL_SECTIONS = [
+        { key: 'Structural Analysis', label: 'Bonds & Polyhedra', icon: (
+            // Two circles connected by a line (bond) + a small ruler tick
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                <circle cx="7" cy="12" r="3.5" />
+                <circle cx="17" cy="12" r="3.5" />
+                <line x1="10.5" y1="12" x2="13.5" y2="12" />
+                <line x1="12" y1="9" x2="12" y2="10.5" />
+            </svg>
+        ) },
+        { key: 'Volumetric', label: 'Isosurface / Volume', icon: (
+            // Cloud-like isosurface blob
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 19a4 4 0 01-.78-7.93A7 7 0 0118.5 10.5a4.5 4.5 0 01-.36 8.5H6z" />
+            </svg>
+        ) },
+        { key: 'Phonon Animation', label: 'Phonon Modes', icon: (
+            // Sine wave (lattice vibration)
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                <path d="M2 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0" />
+                <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+                <circle cx="11" cy="12" r="1.2" fill="currentColor" stroke="none" />
+                <circle cx="17" cy="12" r="1.2" fill="currentColor" stroke="none" />
+            </svg>
+        ) },
+        { key: 'Reciprocal Space', label: 'Brillouin Zone', icon: (
+            // Hexagonal Brillouin zone with k-path segment
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="12,3 19.5,7.5 19.5,16.5 12,21 4.5,16.5 4.5,7.5" />
+                <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                <line x1="12" y1="12" x2="19.5" y2="7.5" strokeDasharray="2 2" />
+            </svg>
+        ) },
+        { key: 'Tight-Binding', label: 'Wannier / Hopping', icon: (
+            // Two atoms with a hopping arrow between them
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                <circle cx="6" cy="16" r="3" />
+                <circle cx="18" cy="8" r="3" />
+                <path d="M9 14l3.5-3.5M12.5 10.5L10.5 10M12.5 10.5L13 12.5" />
+            </svg>
+        ) },
+        { key: 'Supercell', label: 'Supercell', icon: (
+            // 2×2 unit cell grid
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                <rect x="3" y="3" width="8" height="8" rx="1" />
+                <rect x="13" y="3" width="8" height="8" rx="1" strokeDasharray="3 2" />
+                <rect x="3" y="13" width="8" height="8" rx="1" strokeDasharray="3 2" />
+                <rect x="13" y="13" width="8" height="8" rx="1" strokeDasharray="3 2" />
+            </svg>
+        ) },
+        { key: 'Cutting Plane', label: 'Slab (hkl)', icon: (
+            // Layered slab with a cutting line through it
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                <rect x="4" y="4" width="16" height="4" rx="1" />
+                <rect x="4" y="10" width="16" height="4" rx="1" />
+                <rect x="4" y="16" width="16" height="4" rx="1" />
+                <line x1="2" y1="9" x2="22" y2="9" strokeWidth={2} stroke="#ef4444" strokeDasharray="4 2" />
+            </svg>
+        ) },
+        { key: 'Atom Operations', label: 'Add / Delete Atoms', icon: (
+            // Atom circle with a small "+" badge
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+                <circle cx="11" cy="13" r="5" />
+                <circle cx="11" cy="13" r="1.8" fill="currentColor" stroke="none" />
+                <circle cx="17.5" cy="6.5" r="4" fill="white" stroke="currentColor" strokeWidth={1.5} />
+                <line x1="17.5" y1="4.5" x2="17.5" y2="8.5" strokeWidth={1.5} />
+                <line x1="15.5" y1="6.5" x2="19.5" y2="6.5" strokeWidth={1.5} />
+            </svg>
+        ) },
+    ];
+
     return (
         <>
-        <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pointer-events-none overflow-y-auto custom-scrollbar">
+        <div className="shrink-0 h-full flex flex-row pointer-events-none">
+            {/* Sliding Panel */}
+            <div className={cn(
+                "transition-all duration-300 ease-in-out overflow-hidden",
+                openAccordion ? "w-[240px] opacity-100" : "w-0 opacity-0"
+            )}>
+                <div className="w-[240px] h-full flex flex-col gap-3 p-3 overflow-y-auto custom-scrollbar pointer-events-none">
 
             {/* Bond Analysis Accordion */}
             <Accordion title="Structural Analysis" isOpen={openAccordion === 'Structural Analysis'} onToggle={() => setOpenAccordion(openAccordion === 'Structural Analysis' ? null : 'Structural Analysis')}>
@@ -868,9 +946,30 @@ export const RightSidebar: React.FC<{
                 {...promptConfig}
                 onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
             />
-        </div>
+                </div>{/* end w-[240px] inner */}
+            </div>{/* end sliding panel */}
 
-        {/* BZ k-point label overlay */}
+            {/* Icon Toolbar */}
+            <div className="w-[44px] shrink-0 h-full flex flex-col items-center pt-2 pb-2 gap-1 pointer-events-auto">
+                {TOOL_SECTIONS.map((section) => (
+                    <button
+                        key={section.key}
+                        title={section.label}
+                        onClick={() => setOpenAccordion(openAccordion === section.key ? null : section.key)}
+                        className={cn(
+                            "w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200",
+                            openAccordion === section.key
+                                ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/30"
+                                : "text-slate-500 dark:text-slate-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-slate-700 dark:hover:text-slate-200"
+                        )}
+                    >
+                        {section.icon}
+                    </button>
+                ))}
+            </div>
+        </div>{/* end flex-row container */}
+
+        {/* BZ k-point label overlay (portal, outside main tree) */}
         {isBzVisible && bzLabels.length > 0 && ReactDOM.createPortal(
             <div className="fixed inset-0 pointer-events-none z-[60]" style={{fontFamily: "'Inter', 'SF Pro', system-ui, sans-serif"}}>
                 {(() => {
@@ -948,33 +1047,17 @@ const DisabledButton = ({ label }: { label: string }) => (
     </button>
 );
 
-const Accordion: React.FC<{ title: string; isOpen: boolean; onToggle: () => void; children: React.ReactNode }> = ({ title, isOpen, onToggle, children }) => {
+const Accordion: React.FC<{ title: string; isOpen: boolean; onToggle: () => void; children: React.ReactNode }> = ({ title, isOpen, children }) => {
+    if (!isOpen) return null;
     return (
         <div className="pointer-events-auto shrink-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/30 dark:border-slate-700/50 rounded-xl shadow-lg shadow-black/5 dark:shadow-black/20 overflow-hidden">
-            <button
-                onClick={onToggle}
-                className={cn(
-                    "w-full px-3 py-2.5 flex justify-between items-center bg-transparent hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors",
-                    isOpen && "border-b border-slate-100 dark:border-slate-800"
-                )}
-            >
+            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
                 <span className="font-medium text-sm text-slate-800 dark:text-slate-200">{title}</span>
-                <svg
-                    className={cn("w-3.5 h-3.5 text-slate-400 transition-transform duration-200", isOpen && "rotate-180")}
-                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-            </button>
-
-            <div className={cn(
-                "transition-all duration-300 ease-in-out overflow-hidden origin-top",
-                isOpen ? "max-h-[800px] opacity-100 overflow-y-auto" : "max-h-0 opacity-0"
-            )}>
-                <div className="px-3 py-3">
-                    {children}
-                </div>
+            </div>
+            <div className="px-3 py-3">
+                {children}
             </div>
         </div>
     );
 };
+
