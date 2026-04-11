@@ -130,6 +130,7 @@ pub fn parse_scf_out(path: &str) -> Result<CrystalState, String> {
         selected_atoms: vec![],
         volumetric_data: None,
         bz_cache: None,
+        wannier_overlay: None,
     };
 
     state.fractional_to_cartesian();
