@@ -9,3 +9,4 @@ pub mod chgcar_parser;
 pub mod cube_parser;
 pub mod poscar_parser;
 pub mod xsf_volumetric_parser;
+pub mod wannier_hr_parser;
