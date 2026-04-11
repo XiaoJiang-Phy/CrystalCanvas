@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-11
+
+### Added
+- **⚡ Tight-Binding (Wannier) Visualizer**: Parse `wannier90_hr.dat` and visualize the hopping Hamiltonian $H = \sum_{\mathbf{R}} t_{ij}(\mathbf{R}) c^\dagger_{i,\mathbf{0}} c_{j,\mathbf{R}}$ as an interactive 3D network overlay.
+  - **Hopping Network Rendering**: Instanced cylinder rendering for inter-atomic hoppings with per-orbital color coding (Google Material 500-level palette, 10 colors, mod-cycle).
+  - **Magnitude Filtering**: Adjustable $|t|$ threshold slider to suppress noise and isolate dominant couplings.
+  - **$\mathbf{R}$-Shell Selection**: Per-shell checkbox toggles for translation vectors $[R_1, R_2, R_3]$.
+  - **Orbital Selection**: Per-orbital toggles for multi-orbital systems (e.g., $d$-band transition metals).
+  - **On-site Term Control**: Dedicated toggle for on-site ($\mathbf{R}=0$, $m=n$) diagonal terms.
+  - **Ghost Atom Rendering**: Semi-transparent neighbor-cell atoms at hopping endpoints (50% radius, 40% opacity, 20% desaturated) for visual context without structural state pollution.
+  - **Auto-Bond Management**: Chemical bonds auto-hidden on Wannier load, restored on clear.
+- **🎨 Icon Toolbar UI**: Right sidebar redesigned from stacked accordion panels to a compact 44 px icon toolbar with sliding panel.
+  - Domain-specific SVG icons: bond diagram, isosurface cloud, sine-wave phonon, hexagonal BZ, hopping arrow, 2×2 cell grid, layered slab, atom badge.
+  - Default state: all panels collapsed for maximum viewport area.
+  - Tooltip labels on hover for discoverability.
+
 ## [0.4.0] - 2026-04-10
 
 ### Added

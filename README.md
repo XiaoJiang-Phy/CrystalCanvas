@@ -14,6 +14,7 @@ CrystalCanvas is an open-source desktop GUI application designed for computation
 
 - **🖱️ Pixel-precise manual modeling** — Hardware-accelerated 3D view with real-time atom selection, addition, deletion, and element substitution.
 - **🔷 Brillouin Zone visualization** — 3D Wigner-Seitz cell construction (14 Bravais types) and 2D BZ support (5 wallpaper types) with high-symmetry k-point labeling, one-click band path export for QE/VASP.
+- **⚡ Tight-Binding (Wannier) visualizer** — Parse `wannier90_hr.dat` hopping Hamiltonians and render as 3D network overlays with per-orbital color coding, R-shell/orbital selection, magnitude filtering, and ghost atom rendering for neighboring cells.
 - **📊 Volumetric data visualization** — Real-time isosurface extraction (GPU Marching Cubes) and volume raycasting for CHGCAR, Gaussian Cube, and XSF files. 10 scientific colormaps, dual-color signed isosurfaces, density cutoff control.
 - **⚛️ Cell standardization** — Niggli reduction, Primitive/Conventional cell transforms via Spglib.
 - **⚙️ Industrial-grade physics kernel** — C++ engine with Spglib (space group analysis), Eigen (matrix transforms), and Gemmi (CIF/PDB parsing).
@@ -138,7 +139,8 @@ RUST_LOG=info cargo run --bin render_demo
 - [x] **M10: Structural Analysis & Phonons** — Polyhedra identification, defect tracking, and imaginary frequency animation.
 - [x] **M10+: Brillouin Zone & Cell Standardization** — 3D/2D Wigner-Seitz BZ, high-symmetry k-path (14+5 Bravais types), Niggli/Primitive/Conventional transforms.
 - [x] **M11: Volumetric Rendering** — GPU Marching Cubes isosurfaces, volume raycasting, 10 colormaps, CHGCAR/Cube/XSF parsers.
-- [ ] **M12: Electronic Overlays** — Wannier tight-binding hopping network visualization, MP API agent.
+- [x] **M12: Electronic Overlays** — Wannier tight-binding hopping visualizer with ghost atoms, per-orbital palette, R-shell selection.
+- [ ] **M12+: Advanced Topology** — $\mathcal{O}(N)$ Voronoi bonding, MP API agent, tensor strain generator.
 - [ ] **M13+: AI4Science Phase Space** — High-throughput MLFF dataset perturbations, NEB playback, and Symmetry Subgroup extraction.
 
 ---
@@ -152,8 +154,8 @@ CrystalCanvas/
 │   ├── shaders/        # WGSL shaders (volume_raycast, marching_cubes, isosurface_render)
 │   ├── src/
 │   │   ├── io/         # File parsers (CIF, POSCAR, CHGCAR, Cube, XSF, QE)
-│   │   ├── renderer/   # wgpu pipelines (atoms, bonds, isosurface, volume raycast)
-│   │   └── ...         # State manager, command router, volumetric module
+│   │   ├── renderer/   # wgpu pipelines (atoms, bonds, hopping, isosurface, volume raycast)
+│   │   └── ...         # State manager, command router, volumetric, wannier module
 │   ├── build.rs        # Unified Rust + C++ build script (cmake/cxx bridge)
 │   └── Cargo.toml
 ├── src/                # React frontend (TypeScript + TailwindCSS components)

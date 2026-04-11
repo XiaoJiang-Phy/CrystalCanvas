@@ -1,4 +1,4 @@
-# CrystalCanvas User Manual (v0.4)
+# CrystalCanvas User Manual (v0.5)
 
 Welcome to **CrystalCanvas**, an open-source, high-performance desktop application for computational materials science and condensed matter physics. CrystalCanvas provides a fluid native experience for building, transforming, analyzing, and exporting complex crystalline geometries.
 
@@ -53,7 +53,7 @@ Atoms are rendered as GPU Impostor Spheres at 60 FPS for up to ~1000 atoms.
 - **Settings**: Application preferences and rendering defaults.
 
 ### 2.4 Right Sidebar (Analysis & Transformations)
-The right sidebar hosts all physics operations, organized into collapsible accordion panels.
+The right sidebar uses a compact **icon toolbar** along the right edge. Click an icon to expand its tool panel; click again to collapse. Hover over any icon for a tooltip label.
 
 ---
 
@@ -164,6 +164,31 @@ Animate phonon eigenvectors directly on your crystal structure.
 
 ---
 
+## ⚡ 8.5 Tight-Binding (Wannier) Visualizer
+
+Visualize tight-binding hopping networks from Wannier90.
+
+1. Load a base crystal structure (CIF).
+2. Click the **hopping arrow icon** (⇋) in the right toolbar to open the **Tight-Binding** panel.
+3. Click **Load wannier90_hr.dat** and select your file.
+
+### Controls
+- **|t| Threshold Slider**: Filter hoppings by magnitude. Only hoppings with $|t_{ij}| > t_{\min}$ are displayed.
+- **Orbital Toggles**: Enable/disable individual Wannier orbitals.
+- **R-Shell Checkboxes**: Select which translation vectors $\mathbf{R} = [R_1, R_2, R_3]$ to display.
+- **On-site Toggle**: Show/hide on-site terms ($\mathbf{R}=0$, $m=n$).
+- **Show/Hide Hoppings**: Master toggle for the hopping overlay.
+- **Clear**: Remove all Wannier data and restore normal view.
+
+### Visual Encoding
+- **Hopping Lines**: Color-coded by orbital pair index using the Google Material 500-level palette (10 distinct colors).
+- **Ghost Atoms**: Semi-transparent atoms rendered at neighboring-cell hopping endpoints (50% radius, 40% opacity) to provide spatial context.
+- **Auto-Bond Hide**: Chemical bonds are automatically hidden when Wannier data is loaded and restored on clear.
+
+> **Supported**: `wannier90_hr.dat` format (Wannier90 standard output).
+
+---
+
 ## 🤖 9. LLM Command Bus (Experimental)
 
 A context-aware AI assistant translates natural language into validated physics operations.
@@ -199,7 +224,8 @@ The LLM presents a JSON command card. Click **Execute** to approve the operation
 | CHGCAR/LOCPOT | ✅ | — | Volumetric |
 | Gaussian Cube | ✅ | — | Volumetric |
 | XSF | ✅ | — | Volumetric (DATAGRID_3D) |
+| wannier90_hr.dat | ✅ | — | Tight-binding hopping Hamiltonian |
 
 ---
 
-*CrystalCanvas v0.4.0 — Copyright © 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
+*CrystalCanvas v0.5.0 — Copyright © 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
