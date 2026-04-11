@@ -12,6 +12,27 @@ CrystalCanvas is an open-source desktop GUI application for computational materi
 
 ---
 
+## 📥 Download & Installation
+
+[![Download for macOS](https://img.shields.io/badge/Download_v0.5.0-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
+
+> [!WARNING]
+> **Important Note for macOS Users (Unverified Developer)**
+> 
+> Because this is an open-source project and currently not signed with a paid Apple Developer Certificate, macOS will show a "Developer cannot be verified" warning and prevent the app from launching normally.
+> 
+> **To run the app:**
+> 1. Move `CrystalCanvas.app` to your `/Applications` folder.
+> 2. **Right-click (or Control-click)** the app icon and select **Open**.
+> 3. Click **Open** again in the dialog box.
+> 
+> *Alternatively, run the following command in Terminal to clear the quarantine attribute:*
+> ```bash
+> sudo xattr -cr /Applications/CrystalCanvas.app
+> ```
+
+---
+
 ## Key Features
 
 ### Crystal Structure Modeling
@@ -65,20 +86,6 @@ CrystalCanvas is an open-source desktop GUI application for computational materi
 
 > **Platform Support:**
 > Due to rendering engine (`wgpu`) backend differences, **Windows** and **Linux** builds may have rendering issues. Currently **only macOS** is fully tested and supported.
-
-### Note for macOS Users (Unverified Developer)
-
-Since releases are not signed with an Apple Developer Certificate, macOS will prevent it from running with a "Developer cannot be verified" warning.
-
-**To run the app:**
-1. Move `CrystalCanvas.app` to your `/Applications` folder.
-2. **Right-click (or Control-click)** the app icon and select **Open**.
-3. Click **Open** again in the dialog box.
-
-Alternatively, run the following command in Terminal:
-```bash
-sudo xattr -cr /Applications/CrystalCanvas.app
-```
 
 ---
 
