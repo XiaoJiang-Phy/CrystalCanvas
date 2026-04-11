@@ -104,12 +104,7 @@ pub fn update_lattice_params(
     cs.detect_spacegroup();
     
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings, &cs.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     
     let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
     renderer.update_atoms(&instances);
@@ -157,12 +152,7 @@ pub fn load_cif_file(
     let center = state.unit_cell_center();
 
     let settings = settings_state.lock().map_err(|e| format!("Failed to lock settings: {}", e))?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &state.cart_positions,
-        &state.atomic_numbers,
-        &state.elements,
-        &settings, &state.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&state, &settings);
 
     {
         let mut renderer = renderer_state.lock().map_err(|e| format!("Failed to lock renderer: {}", e))?;
@@ -236,12 +226,7 @@ pub fn add_atom(
         .map_err(|_| "Collision detected: atom too close to existing atoms")?;
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings, &cs.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
@@ -267,12 +252,7 @@ pub fn delete_atoms(
     cs.delete_atoms(&indices);
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings, &cs.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
@@ -313,12 +293,7 @@ pub fn translate_atoms_screen(
     cs.translate_atoms_cartesian(&indices, translation);
     
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings, &cs.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
     
     if let Ok(mut renderer) = renderer_state.lock() {
@@ -359,12 +334,7 @@ pub fn substitute_atoms(
     cs.substitute_atoms(&indices, &formatted_symbol, an);
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings, &cs.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
@@ -441,13 +411,7 @@ pub fn apply_supercell(
         .lock()
         .map_err(|e| format!("Settings lock fail: {}", e))?;
 
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
 
     let mut renderer = renderer_state
         .lock()
@@ -500,13 +464,7 @@ pub fn apply_slab(
         .lock()
         .map_err(|e| format!("Settings lock fail: {}", e))?;
 
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
 
     let mut renderer = renderer_state
         .lock()
@@ -542,9 +500,7 @@ pub fn apply_niggli_reduce(
     cs.niggli_reduce()?;
     
     let settings = settings_state.lock().map_err(|e| format!("Settings lock fail: {}", e))?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions, &cs.atomic_numbers, &cs.elements, &settings, &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -584,9 +540,7 @@ pub fn apply_cell_standardize(
     }
     
     let settings = settings_state.lock().map_err(|e| format!("Settings lock fail: {}", e))?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions, &cs.atomic_numbers, &cs.elements, &settings, &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -632,13 +586,7 @@ pub fn shift_termination(
         .lock()
         .map_err(|e| format!("Settings lock fail: {}", e))?;
 
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
 
     let mut renderer = renderer_state
         .lock()
@@ -850,12 +798,7 @@ pub fn load_phonon(
         
         // Trigger a reset of renderer instances just in case previous states were playing.
         let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-        let instances = crate::renderer::instance::build_instance_data(
-            &cs.cart_positions,
-            &cs.atomic_numbers,
-            &cs.elements,
-            &settings, &cs.selected_atoms
-        );
+        let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
         if let Ok(mut renderer) = renderer_state.lock() {
             renderer.update_atoms(&instances);
         }
@@ -901,12 +844,7 @@ pub fn load_phonon_interactive(
         
         // Trigger a full renderer update (atoms + unit cell lines + camera)
         let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-        let instances = crate::renderer::instance::build_instance_data(
-            &cs.cart_positions,
-            &cs.atomic_numbers,
-            &cs.elements,
-            &settings, &cs.selected_atoms
-        );
+        let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
         
         let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
         renderer.update_atoms(&instances);
@@ -952,12 +890,7 @@ pub fn load_axsf_phonon(
         *cs = new_state;
         
         let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-        let instances = crate::renderer::instance::build_instance_data(
-            &cs.cart_positions,
-            &cs.atomic_numbers,
-            &cs.elements,
-            &settings, &cs.selected_atoms
-        );
+        let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
         
         let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
         renderer.update_atoms(&instances);
@@ -1050,13 +983,7 @@ pub fn set_phonon_phase(
             let settings = settings_state
                 .lock()
                 .map_err(|_| "Settings lock fail")?;
-            let instances = crate::renderer::instance::build_instance_data(
-                &displaced,
-                &cs.atomic_numbers,
-                &cs.elements,
-                &settings,
-                &cs.selected_atoms,
-            );
+            let instances = crate::wannier::build_atoms_with_ghosts_displaced(&cs, &displaced, &settings);
             if let Ok(mut renderer) = renderer_state.lock() {
                 renderer.update_atoms(&instances);
             }
@@ -1216,13 +1143,7 @@ pub fn llm_execute_command(
     cs.version += 1;
 
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
@@ -1441,13 +1362,7 @@ pub fn update_settings(
     let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock: {}", e))?;
 
     // Update atoms (affects scale and visibility)
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &new_settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &new_settings);
     renderer.update_atoms(&instances);
 
     // Update lines (affects cell box and bonds)
@@ -1470,13 +1385,7 @@ pub fn update_selection(
     let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
     cs.selected_atoms = indices;
     let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
     let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
     if let Ok(mut renderer) = renderer_state.lock() {
         renderer.update_atoms(&instances);
@@ -1509,13 +1418,7 @@ pub fn restore_unitcell(
 
 
     let settings = settings_state.lock().map_err(|e| format!("Settings lock failed: {}", e))?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &cs.cart_positions,
-        &cs.atomic_numbers,
-        &cs.elements,
-        &settings,
-        &cs.selected_atoms,
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
 
     let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock failed: {}", e))?;
     renderer.update_atoms(&instances);
@@ -1663,12 +1566,7 @@ pub fn load_volumetric_file(
     
     // Build instances from new_state before consuming it
     let settings = settings_state.lock().map_err(|e| e.to_string())?;
-    let instances = crate::renderer::instance::build_instance_data(
-        &new_state.cart_positions,
-        &new_state.atomic_numbers,
-        &new_state.elements,
-        &settings, &new_state.selected_atoms
-    );
+    let instances = crate::wannier::build_atoms_with_ghosts(&new_state, &settings);
     
     let extent = new_state.cell_a.max(new_state.cell_b).max(new_state.cell_c) as f32;
     let center = new_state.unit_cell_center();
@@ -2401,6 +2299,7 @@ pub fn load_wannier_hr(
     path: String,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<WannierInfo, String> {
     log::info!("load_wannier_hr: {}", path);
     let hr_data = crate::io::wannier_hr_parser::parse_wannier_hr(&path)?;
@@ -2418,6 +2317,7 @@ pub fn load_wannier_hr(
     let instances = crate::renderer::instance::build_hopping_instances(&overlay.visible_hoppings, overlay.hr_data.t_max);
     renderer.update_hoppings(&instances);
     renderer.show_hoppings = true;
+    renderer.show_bonds = false;
 
     // Extract WannierInfo before moving overlay into cs
     let num_wann = overlay.hr_data.num_wann;
@@ -2425,6 +2325,11 @@ pub fn load_wannier_hr(
     let t_max = overlay.hr_data.t_max;
 
     cs.wannier_overlay = Some(overlay);
+
+    if let Ok(settings) = settings_state.lock() {
+        let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+        renderer.update_atoms(&atoms);
+    }
 
     Ok(WannierInfo {
         num_wann,
@@ -2438,6 +2343,7 @@ pub fn set_wannier_t_min(
     t_min: f64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("set_wannier_t_min: {}", t_min);
     let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
@@ -2452,6 +2358,11 @@ pub fn set_wannier_t_min(
         renderer.update_hoppings(&instances);
         
         cs.wannier_overlay = Some(overlay);
+        
+        if let Ok(settings) = settings_state.lock() {
+            let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+            renderer.update_atoms(&atoms);
+        }
     }
     Ok(())
 }
@@ -2462,6 +2373,7 @@ pub fn set_wannier_r_shell(
     active: bool,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("set_wannier_r_shell: {} -> {}", shell_idx, active);
     let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
@@ -2475,8 +2387,16 @@ pub fn set_wannier_r_shell(
             let mut renderer = renderer_state.lock().map_err(|e| e.to_string())?;
             let instances = crate::renderer::instance::build_hopping_instances(&overlay.visible_hoppings, overlay.hr_data.t_max);
             renderer.update_hoppings(&instances);
+            
+            cs.wannier_overlay = Some(overlay);
+            
+            if let Ok(settings) = settings_state.lock() {
+                let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+                renderer.update_atoms(&atoms);
+            }
+        } else {
+            cs.wannier_overlay = Some(overlay);
         }
-        cs.wannier_overlay = Some(overlay);
     }
     Ok(())
 }
@@ -2487,6 +2407,7 @@ pub fn set_wannier_orbital(
     active: bool,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("set_wannier_orbital: {} -> {}", orb_idx, active);
     let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
@@ -2500,8 +2421,16 @@ pub fn set_wannier_orbital(
             let mut renderer = renderer_state.lock().map_err(|e| e.to_string())?;
             let instances = crate::renderer::instance::build_hopping_instances(&overlay.visible_hoppings, overlay.hr_data.t_max);
             renderer.update_hoppings(&instances);
+            
+            cs.wannier_overlay = Some(overlay);
+            
+            if let Ok(settings) = settings_state.lock() {
+                let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+                renderer.update_atoms(&atoms);
+            }
+        } else {
+            cs.wannier_overlay = Some(overlay);
         }
-        cs.wannier_overlay = Some(overlay);
     }
     Ok(())
 }
@@ -2511,6 +2440,7 @@ pub fn toggle_wannier_onsite(
     show: bool,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("toggle_wannier_onsite: {}", show);
     let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
@@ -2525,6 +2455,11 @@ pub fn toggle_wannier_onsite(
         renderer.update_hoppings(&instances);
         
         cs.wannier_overlay = Some(overlay);
+        
+        if let Ok(settings) = settings_state.lock() {
+            let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+            renderer.update_atoms(&atoms);
+        }
     }
     Ok(())
 }
@@ -2544,6 +2479,7 @@ pub fn toggle_hopping_display(
 pub fn clear_wannier(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> Result<(), String> {
     log::info!("clear_wannier");
     let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
@@ -2551,6 +2487,13 @@ pub fn clear_wannier(
     
     let mut renderer = renderer_state.lock().map_err(|e| e.to_string())?;
     renderer.update_hoppings(&[]);
+    
+    if let Ok(settings) = settings_state.lock() {
+        let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+        renderer.update_atoms(&atoms);
+    }
+    
     renderer.show_hoppings = false;
+    renderer.show_bonds = true;
     Ok(())
 }

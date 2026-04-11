@@ -14,6 +14,12 @@ pub struct VisibleHopping {
     pub magnitude: f64,
     /// Principal component sign (+1.0 or -1.0) for color mapping
     pub sign: f32,
+    /// Source orbital index for per-orbital color mapping
+    pub orb_m: usize,
+    /// Destination orbital (atom) index
+    pub dest_atom: usize,
+    /// Translation vector R for the destination
+    pub r_vec: [i32; 3],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -100,6 +106,9 @@ impl WannierOverlay {
                 } else {
                     if hopping.im >= 0.0 { 1.0 } else { -1.0 }
                 },
+                orb_m: hopping.m,
+                dest_atom: hopping.n,
+                r_vec: hopping.r_vec,
             });
         }
         Ok(())
@@ -181,4 +190,64 @@ mod tests {
         assert!((h.end_cart[0] - 2.46).abs() < 1e-4);
         assert!((h.end_cart[1] - 0.0).abs() < 1e-4);
     }
+}
+
+pub fn build_atoms_with_ghosts(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+) -> Vec<crate::renderer::instance::AtomInstance> {
+    build_atoms_with_ghosts_displaced(cs, &cs.cart_positions, settings)
+}
+
+pub fn build_atoms_with_ghosts_displaced(
+    cs: &crate::crystal_state::CrystalState,
+    cart_positions: &[[f32; 3]],
+    settings: &crate::settings::AppSettings,
+) -> Vec<crate::renderer::instance::AtomInstance> {
+    let mut instances = crate::renderer::instance::build_instance_data(
+        cart_positions,
+        &cs.atomic_numbers,
+        &cs.elements,
+        settings,
+        &cs.selected_atoms,
+    );
+
+    if let Some(overlay) = &cs.wannier_overlay {
+        let mut ghosts = std::collections::HashSet::new();
+        for h in &overlay.visible_hoppings {
+            if h.r_vec != [0, 0, 0] {
+                ghosts.insert((h.dest_atom, h.r_vec));
+            }
+        }
+        
+        let lattice_col_major = cs.get_lattice_col_major();
+        for (atom_idx, r_vec) in &ghosts {
+            let pos = cart_positions[*atom_idx];
+            let rx = r_vec[0] as f64;
+            let ry = r_vec[1] as f64;
+            let rz = r_vec[2] as f64;
+            let tx = rx * lattice_col_major[0] + ry * lattice_col_major[3] + rz * lattice_col_major[6];
+            let ty = rx * lattice_col_major[1] + ry * lattice_col_major[4] + rz * lattice_col_major[7];
+            let tz = rx * lattice_col_major[2] + ry * lattice_col_major[5] + rz * lattice_col_major[8];
+            
+            if *atom_idx < instances.len() {
+                let mut inst = instances[*atom_idx].clone();
+                inst.position = [
+                    pos[0] + tx as f32,
+                    pos[1] + ty as f32,
+                    pos[2] + tz as f32,
+                ];
+                
+                inst.radius *= 0.50;
+                inst.color[3] = 0.40;
+                inst.color[0] *= 0.8;
+                inst.color[1] *= 0.8;
+                inst.color[2] *= 0.8;
+
+                instances.push(inst);
+            }
+        }
+    }
+    
+    instances
 }
