@@ -456,6 +456,21 @@ pub fn build_bond_instances(
 }
 
 /// Build instances for Wannier hoppings using the bond cylinder shader.
+/// Google Material Design 500-level palette for per-orbital hopping colors.
+/// Cycle modulo if num_wann exceeds palette size.
+const ORBITAL_PALETTE: [[f32; 4]; 10] = [
+    [0.259, 0.522, 0.957, 0.90], // Google Blue   #4285F4
+    [0.918, 0.263, 0.208, 0.90], // Google Red    #EA4335
+    [0.984, 0.737, 0.020, 0.90], // Google Yellow #FBBC05
+    [0.204, 0.659, 0.325, 0.90], // Google Green  #34A853
+    [0.671, 0.329, 0.804, 0.90], // Purple 500    #AB47BC
+    [0.000, 0.737, 0.831, 0.90], // Cyan 500      #00BCD4
+    [1.000, 0.341, 0.133, 0.90], // Deep Orange   #FF5722
+    [0.247, 0.318, 0.710, 0.90], // Indigo 500    #3F51B5
+    [0.545, 0.765, 0.290, 0.90], // Light Green   #8BC34A
+    [0.914, 0.118, 0.388, 0.90], // Pink 500      #E91E63
+];
+
 pub fn build_hopping_instances(
     hoppings: &[crate::wannier::VisibleHopping],
     t_max: f64,
@@ -466,12 +481,7 @@ pub fn build_hopping_instances(
     for h in hoppings {
         let frac = (h.magnitude / safe_t_max).min(1.0) as f32;
         let radius = 0.02 + 0.06 * frac;
-
-        let color = if h.sign >= 0.0 {
-            [0.85, 0.25, 0.20, 0.9] // Red
-        } else {
-            [0.20, 0.45, 0.85, 0.9] // Blue
-        };
+        let color = ORBITAL_PALETTE[h.orb_m % ORBITAL_PALETTE.len()];
 
         instances.push(BondInstance {
             start: h.start_cart,
@@ -491,31 +501,37 @@ mod tests {
     use crate::wannier::VisibleHopping;
 
     #[test]
-    fn test_hopping_instance_sign_color() {
+    fn test_hopping_instance_orbital_color() {
         let hoppings = vec![
             VisibleHopping {
                 start_cart: [0.0, 0.0, 0.0],
                 end_cart: [1.0, 0.0, 0.0],
                 magnitude: 2.0,
                 sign: 1.0,
+                orb_m: 0,
+                dest_atom: 1,
+                r_vec: [1, 0, 0],
             },
             VisibleHopping {
                 start_cart: [0.0, 0.0, 0.0],
                 end_cart: [0.0, 1.0, 0.0],
                 magnitude: 1.0,
                 sign: -1.0,
+                orb_m: 1,
+                dest_atom: 0,
+                r_vec: [0, 1, 0],
             },
         ];
 
         let instances = build_hopping_instances(&hoppings, 4.0);
         assert_eq!(instances.len(), 2);
 
-        // Check positive (red) with frac = 2.0/4.0 = 0.5 -> radius 0.02 + 0.03 = 0.05
-        assert!((instances[0].radius - 0.05).abs() < 1e-4);
-        assert_eq!(instances[0].color, [0.85, 0.25, 0.20, 0.9]);
+        // orb_m=0 → Google Blue #4285F4
+        assert_eq!(instances[0].color, ORBITAL_PALETTE[0]);
+        // orb_m=1 → Google Red #EA4335
+        assert_eq!(instances[1].color, ORBITAL_PALETTE[1]);
 
-        // Check negative (blue) with frac = 1.0/4.0 = 0.25 -> radius 0.02 + 0.015 = 0.035
-        assert!((instances[1].radius - 0.035).abs() < 1e-4);
-        assert_eq!(instances[1].color, [0.20, 0.45, 0.85, 0.9]);
+        // frac = 2.0/4.0 = 0.5 → radius 0.02 + 0.03 = 0.05
+        assert!((instances[0].radius - 0.05).abs() < 1e-4);
     }
 }
