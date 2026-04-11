@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { cn } from '../../utils/cn';
 import { safeInvoke, safeListen, safeDialogOpen, safeDialogSave } from '../../utils/tauri-mock';
-import { CrystalState, BondAnalysisResult, PhononModeSummary, BzInfo } from '../../types/crystal';
+import { CrystalState, BondAnalysisResult, PhononModeSummary, BzInfo, WannierInfo } from '../../types/crystal';
 import { PromptModal } from './PromptModal';
 import { PhononImportModal } from './PhononImportModal';
 
@@ -44,6 +44,15 @@ export const RightSidebar: React.FC<{
     const [isBzVisible, setIsBzVisible] = useState(false);
     const [bzScale, setBzScale] = useState(0.35);
     const [bzLabels, setBzLabels] = useState<{label: string, x: number, y: number}[]>([]);
+
+    // Wannier Hopping State
+    const [wannierInfo, setWannierInfo] = useState<WannierInfo | null>(null);
+    const [tMin, setTMin] = useState<number>(0.01);
+    const [activeRShells, setActiveRShells] = useState<boolean[]>([]);
+    const [activeOrbitals, setActiveOrbitals] = useState<boolean[]>([]);
+    const [showOnSite, setShowOnSite] = useState<boolean>(false);
+    const [isWannierVisible, setIsWannierVisible] = useState<boolean>(false);
+
 
     const fetch_bz_labels = useCallback(async () => {
         const w = window.innerWidth;
@@ -233,6 +242,33 @@ export const RightSidebar: React.FC<{
     const handle_bz_close = () => {
         setIsBzVisible(false);
         safeInvoke('toggle_bz_display', { show: false }).catch(console.error);
+    };
+
+    const handle_load_wannier = async () => {
+        try {
+            const file = await safeDialogOpen({
+                title: 'Open wannier90_hr.dat',
+                filters: [{ name: 'Wannier Hopping', extensions: ['dat'] }]
+            });
+            if (file && typeof file === 'string') {
+                const info = await safeInvoke<WannierInfo>('load_wannier_hr', { path: file });
+                if (info) {
+                    setWannierInfo(info);
+                    setActiveRShells(new Array(info.r_shells.length).fill(true));
+                    setActiveOrbitals(new Array(info.num_wann).fill(true));
+                    setIsWannierVisible(true);
+                }
+            }
+        } catch (e) {
+            alert(String(e));
+        }
+    };
+
+    const handle_clear_wannier = () => {
+        safeInvoke('clear_wannier').then(() => {
+            setWannierInfo(null);
+            setIsWannierVisible(false);
+        }).catch(console.error);
     };
 
 
@@ -612,6 +648,120 @@ export const RightSidebar: React.FC<{
                             safeInvoke('apply_cell_standardize', { toPrimitive: false }).then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch(e => alert(e));
                         }} />
                     </div>
+                </div>
+            </Accordion>
+
+            {/* Tight-Binding (Wannier) Accordion */}
+            <Accordion title="Tight-Binding (Wannier)" isOpen={openAccordion === 'Tight-Binding'} onToggle={() => setOpenAccordion(openAccordion === 'Tight-Binding' ? null : 'Tight-Binding')}>
+                <div className="space-y-3">
+                    <ActionButton label="Load wannier90_hr.dat..." onClick={handle_load_wannier} />
+                    
+                    {wannierInfo && (
+                        <>
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-2 rounded border border-slate-100 dark:border-slate-700 space-y-1">
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">Orbitals:</span>
+                                    <span className="font-semibold">{wannierInfo.num_wann}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">R-Shells:</span>
+                                    <span className="font-semibold">{wannierInfo.r_shells.length}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">Max |t|:</span>
+                                    <span className="font-semibold">{wannierInfo.t_max.toFixed(4)} eV</span>
+                                </div>
+                            </div>
+                            
+                            <div className="space-y-1">
+                                <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
+                                    <span>|t| Threshold:</span>
+                                    <span>{tMin.toFixed(3)} eV</span>
+                                </div>
+                                <input
+                                    type="range" min={0.0} max={wannierInfo.t_max} step={wannierInfo.t_max / 100}
+                                    value={tMin}
+                                    onChange={(e) => {
+                                        const v = parseFloat(e.target.value);
+                                        setTMin(v);
+                                        safeInvoke('set_wannier_t_min', { tMin: v }).catch(console.error);
+                                    }}
+                                    className="w-full h-1 accent-emerald-500 cursor-pointer pointer-events-auto"
+                                />
+                            </div>
+
+                            <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar p-1">
+                                <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700 pb-1">Orbitals (m, n)</div>
+                                <div className="flex flex-wrap gap-2">
+                                    {activeOrbitals.map((active, i) => (
+                                        <label key={`orb-${i}`} className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer pointer-events-auto">
+                                            <input type="checkbox" checked={active} onChange={(e) => {
+                                                const checked = e.target.checked;
+                                                const next = [...activeOrbitals];
+                                                next[i] = checked;
+                                                setActiveOrbitals(next);
+                                                safeInvoke('set_wannier_orbital', { orbIdx: i, active: checked }).catch(console.error);
+                                            }} className="accent-emerald-500 rounded-sm" />
+                                            Orb {i+1}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar p-1">
+                                <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700 pb-1">Translation & On-site</div>
+                                
+                                <label className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer pointer-events-auto mb-2">
+                                    <input type="checkbox" checked={showOnSite} onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setShowOnSite(checked);
+                                        safeInvoke('toggle_wannier_onsite', { show: checked }).catch(console.error);
+                                    }} className="accent-emerald-500 rounded-sm" />
+                                    Show On-site (R=0, m=n)
+                                </label>
+
+                                <div className="flex flex-wrap gap-x-3 gap-y-2">
+                                    {activeRShells.map((active, i) => {
+                                        const r = wannierInfo.r_shells[i];
+                                        return (
+                                            <label key={`r-${i}`} className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer pointer-events-auto">
+                                                <input type="checkbox" checked={active} onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    const next = [...activeRShells];
+                                                    next[i] = checked;
+                                                    setActiveRShells(next);
+                                                    safeInvoke('set_wannier_r_shell', { shellIdx: i, active: checked }).catch(console.error);
+                                                }} className="accent-emerald-500 rounded-sm" />
+                                                [{r[0]}, {r[1]}, {r[2]}]
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => {
+                                        const next = !isWannierVisible;
+                                        setIsWannierVisible(next);
+                                        safeInvoke('toggle_hopping_display', { show: next }).catch(console.error);
+                                    }}
+                                    className={cn(
+                                        "flex-1 py-1.5 rounded-md text-xs font-medium transition-colors shadow-sm pointer-events-auto",
+                                        isWannierVisible ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-emerald-500 hover:bg-emerald-600 text-white"
+                                    )}
+                                >
+                                    {isWannierVisible ? "Hide Hoppings" : "Show Hoppings"}
+                                </button>
+                                <button
+                                    onClick={handle_clear_wannier}
+                                    className="flex-[0.5] py-1.5 bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200/50 dark:border-red-800/50 pointer-events-auto"
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </div>
             </Accordion>
 

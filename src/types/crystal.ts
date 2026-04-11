@@ -112,3 +112,14 @@ export interface KPathInfo {
     points: KPathPointUi[];
     segments: string[][];
 }
+
+// =========================================================================
+// Wannier Hopping Data Types (Phase 7)
+// =========================================================================
+
+export interface WannierInfo {
+    num_wann: number;
+    r_shells: [number, number, number][];
+    t_max: number;
+}
+
