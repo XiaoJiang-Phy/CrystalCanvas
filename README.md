@@ -8,7 +8,7 @@
 
 CrystalCanvas is an open-source desktop GUI application for computational materials science, condensed matter physics, and quantum chemistry. It combines a native-first architecture (Rust + wgpu + C++) with modern AI-powered workflows to deliver interactive 3D crystal modeling, publication-quality volumetric rendering, and seamless DFT/MD integration — all in a single, memory-safe application.
 
-> **Current Release**: `v0.5.0` · Rust 15.5k LOC · TypeScript 3.9k LOC · C++ 737 LOC · 5 WGSL shaders
+> **Current Release**: `v0.5.0` · Rust 15.5k LOC · TypeScript 3.9k LOC · C++ 737 LOC · 7 WGSL shaders
 
 ---
 
@@ -128,6 +128,8 @@ CrystalCanvas is an open-source desktop GUI application for computational materi
 
 **New to CrystalCanvas? Check out the [User Manual](docs/UserManual.md) for a comprehensive guide.**
 
+For more in-depth documentation, see the [Documentation](#documentation) section below.
+
 CrystalCanvas utilizes a **Zero-Global-Pollution** strategy. All toolchains (Rust, Node) and dependencies are isolated within the project directory.
 
 ### 1. Prerequisites (macOS)
@@ -200,12 +202,33 @@ CrystalCanvas/
 │   ├── src/            # Spglib, Gemmi, Eigen integrations
 │   └── CMakeLists.txt
 ├── doc/                # Internal technical docs (TDD, Roadmap, Feature Assessment)
-├── docs/               # Public documentation (User Manual)
+├── docs/               # Public documentation
+│   ├── UserManual.md       # End-user guide
+│   ├── DeveloperGuide.md   # Architecture & contribution guide
+│   ├── Algorithms.md       # Core algorithm specifications
+│   ├── IPC_Commands.md     # Complete Tauri IPC command reference
+│   ├── Shader_Reference.md # WGSL shader bind groups & pipelines
+│   ├── TestingGuide.md     # Node TDD process & test inventory
+│   └── FAQ.md              # Troubleshooting & common issues
 ├── tests/              # Integration tests & benchmark data (LFS-tracked volumetric files)
 ├── dev_env.sh          # Local toolchain environment activation script
 ├── CHANGELOG.md        # Release history
 └── README.md
 ```
+
+---
+
+## Documentation
+
+| Document | Audience | Description |
+|---|---|---|
+| [User Manual](docs/UserManual.md) | End users | Feature walkthrough, import/export, UI guide |
+| [Developer Guide](docs/DeveloperGuide.md) | Contributors | Architecture, build system, coding conventions |
+| [Algorithms](docs/Algorithms.md) | Developers / Researchers | Mathematical formulations (Slab, BZ, Marching Cubes, Ray-Picking, etc.) |
+| [IPC Commands](docs/IPC_Commands.md) | Frontend developers | All 55 Tauri `invoke()` signatures with types and side effects |
+| [Shader Reference](docs/Shader_Reference.md) | GPU developers | Bind group layouts, vertex formats, lighting parameters for all 7 WGSL shaders |
+| [Testing Guide](docs/TestingGuide.md) | Contributors | Node TDD process, test inventory (12 Rust + 6 C++), tolerances |
+| [FAQ](docs/FAQ.md) | All | Installation troubleshooting, rendering issues, common errors |
 
 ---
 
