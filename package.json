@@ -1,7 +1,7 @@
 {
   "name": "crystal-canvas",
   "version": "0.5.0",
-  "description": "High-performance crystal structure modeling desktop GUI",
+  "description": "Next-generation crystal structure modeler with GPU-accelerated volumetric rendering, BZ visualization, and DFT/MD export",
   "author": "Xiao Jiang and CrystalCanvas Contributors",
   "license": "MIT OR Apache-2.0",
   "private": true,

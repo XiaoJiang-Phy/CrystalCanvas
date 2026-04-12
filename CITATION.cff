@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software in your research, please cite it using these metadata."
 title: "CrystalCanvas"
-abstract: "High-performance crystal structure modeling, volumetric visualization, and DFT/MD file preparation in a native desktop app powered by Rust, wgpu, and C++."
+abstract: "A next-generation, open-source desktop application for crystal structure modeling, GPU-accelerated volumetric visualization, Brillouin Zone and Wannier tight-binding analysis, and DFT/MD file preparation. Built on Rust, wgpu, and C++."
 authors:
   - given-names: Xiao
     family-names: Jiang
