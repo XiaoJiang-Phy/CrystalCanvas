@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it using these metadata."
+title: "CrystalCanvas"
+abstract: "High-performance crystal structure modeling, volumetric visualization, and DFT/MD file preparation in a native desktop app powered by Rust, wgpu, and C++."
+authors:
+  - given-names: Xiao
+    family-names: Jiang
+version: "0.5.0"
+date-released: "2026-04-11"
+license:
+  - MIT
+  - Apache-2.0
+repository-code: "https://github.com/XiaoJiang-Phy/CrystalCanvas"
+identifiers:
+  - type: url
+    value: "https://github.com/XiaoJiang-Phy/CrystalCanvas"
+    description: GitHub Repository
+keywords:
+  - condensed-matter-physics
+  - materials-science
+  - crystallography
+  - density-functional-theory
+  - scientific-visualization
+  - wgpu
+  - rust
