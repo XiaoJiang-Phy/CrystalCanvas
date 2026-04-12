@@ -4,9 +4,9 @@
 
 # CrystalCanvas
 
-**High-performance crystal structure modeling, volumetric visualization, and DFT/MD file preparation — in a native desktop app.**
+**A next-generation, open-source crystal structure modeler — built for the GPU era.**
 
-CrystalCanvas is an open-source desktop GUI application for computational materials science, condensed matter physics, and quantum chemistry. It combines a native-first architecture (Rust + wgpu + C++) with modern AI-powered workflows to deliver interactive 3D crystal modeling, publication-quality volumetric rendering, and seamless DFT/MD integration — all in a single, memory-safe application.
+Legacy tools like VESTA and XCrySDen were pioneering in their time, but remain bound to single-threaded CPU rendering, decades-old GUI toolkits, and closed or stagnant codebases. CrystalCanvas is designed from scratch to close that gap: a **Rust + wgpu + C++** native stack delivers real-time GPU-accelerated isosurface extraction and volume raycasting, a modern React/Tauri interface replaces 2000s-era widget UIs, and an AI-assisted command bus lets you manipulate structures with natural language — capabilities no existing crystallographic tool offers. From interactive 3D modeling and publication-quality volumetric rendering to Brillouin Zone visualization, Wannier tight-binding overlays, and one-click DFT/MD file export, CrystalCanvas unifies the entire pre-computation workflow in a single, memory-safe application.
 
 > **Current Release**: `v0.5.0` · Rust 15.5k LOC · TypeScript 3.9k LOC · C++ 737 LOC · 7 WGSL shaders
 
