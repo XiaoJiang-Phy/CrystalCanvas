@@ -59,6 +59,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                                 <th className="px-2 py-1.5 text-right text-xs">x</th>
                                 <th className="px-2 py-1.5 text-right text-xs">y</th>
                                 <th className="px-2 py-1.5 text-right text-xs">z</th>
+                                <th className="px-2 py-1.5 text-right text-xs">Occ.</th>
                                 <th className="px-2 py-1.5 text-center text-xs">Color</th>
                             </tr>
                         </thead>
@@ -71,6 +72,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                                     x={crystalState.fract_x[i].toFixed(2)}
                                     y={crystalState.fract_y[i].toFixed(2)}
                                     z={crystalState.fract_z[i].toFixed(2)}
+                                    occ={crystalState.occupancies[i].toFixed(2)}
                                     isSelected={selectedAtoms.includes(i)}
                                     onClick={(e) => {
                                         if (e.shiftKey) {
@@ -168,11 +170,12 @@ interface AtomRowProps {
     x: string;
     y: string;
     z: string;
+    occ: string;
     isSelected: boolean;
     onClick: (e: React.MouseEvent) => void;
 }
 
-const AtomRow: React.FC<AtomRowProps> = ({ id, element, x, y, z, isSelected, onClick }) => {
+const AtomRow: React.FC<AtomRowProps> = ({ id, element, x, y, z, occ, isSelected, onClick }) => {
     const hexColor = getJmolColor(element);
     return (
         <tr
@@ -189,6 +192,7 @@ const AtomRow: React.FC<AtomRowProps> = ({ id, element, x, y, z, isSelected, onC
             <td className="px-2 py-1.5 tabular-nums text-right font-mono">{x}</td>
             <td className="px-2 py-1.5 tabular-nums text-right font-mono">{y}</td>
             <td className="px-2 py-1.5 tabular-nums text-right font-mono">{z}</td>
+            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{occ}</td>
             <td className="px-2 py-1.5">
                 <div
                     className="w-3 h-3 rounded-full shadow-sm mx-auto border border-black/10 dark:border-white/10"

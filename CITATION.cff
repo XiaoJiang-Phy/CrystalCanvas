@@ -5,8 +5,8 @@ abstract: "A next-generation, open-source desktop application for crystal struct
 authors:
   - given-names: Xiao
     family-names: Jiang
-version: "0.5.0"
-date-released: "2026-04-11"
+version: "0.6.0"
+date-released: "2026-04-14"
 license:
   - MIT
   - Apache-2.0

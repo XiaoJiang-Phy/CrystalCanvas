@@ -1,6 +1,6 @@
 # CrystalCanvas IPC Command Reference
 
-> Version: v0.5.0 | Updated: 2026-04-12
+> Version: v0.6.0 | Updated: 2026-04-14
 
 Complete reference for all `#[tauri::command]` endpoints in `commands.rs`. Every command listed here is registered in `main.rs` via `tauri::generate_handler![]` and callable from the React/TypeScript frontend via `invoke()`.
 
@@ -784,4 +784,4 @@ async function onClick(e: MouseEvent) {
 
 ---
 
-*CrystalCanvas v0.5.0 — Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
+*CrystalCanvas v0.6.0 — Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*

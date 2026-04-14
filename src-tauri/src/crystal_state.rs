@@ -4,7 +4,7 @@
 
 use crate::ffi;
 use crate::renderer::instance::covalent_radius;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 /// Error returned when trying to add an overlapping atom
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +39,23 @@ pub struct BondAnalysis {
     pub bonds: Vec<BondInfo>,
     pub coordination: Vec<CoordinationInfo>,
     pub threshold_factor: f64,
+}
+
+/// Type of measurement annotation
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum MeasurementKind {
+    Distance,
+    Angle,
+    Dihedral,
+}
+
+/// Measurement overlay payload for renderer/frontend
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MeasurementOverlay {
+    pub indices: Vec<usize>,
+    pub kind: MeasurementKind,
+    pub value: f64,               // Angstroms or degrees
+    pub label_position: [f32; 3], // Cartesian midpoint
 }
 
 /// The central crystal structure state, holding all atom data in SoA layout.
@@ -91,6 +108,7 @@ pub struct CrystalState {
     pub bz_cache: Option<(crate::brillouin_zone::BrillouinZone, crate::kpath::KPath)>,
     #[serde(skip)]
     pub wannier_overlay: Option<crate::wannier::WannierOverlay>,
+    pub measurements: Vec<MeasurementOverlay>,
 }
 
 impl Default for CrystalState {
@@ -125,6 +143,7 @@ impl Default for CrystalState {
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
+            measurements: Vec::new(),
         }
     }
 }
@@ -224,6 +243,7 @@ impl CrystalState {
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
+            measurements: Vec::new(),
         };
 
         state.fractional_to_cartesian();
@@ -820,6 +840,7 @@ impl CrystalState {
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
+            measurements: Vec::new(),
         };
 
         for i in 0..n_actual_usize {
@@ -1022,6 +1043,7 @@ impl CrystalState {
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
+            measurements: Vec::new(),
         };
 
         for i in 0..n_new_usize {
@@ -1349,6 +1371,107 @@ impl CrystalState {
             ([v1[0], v1[1]], [v2[0], v2[1]])
         }
     }
+
+    pub fn measure_distance(&self, i: usize, j: usize) -> Result<f64, String> {
+        if i >= self.cart_positions.len() || j >= self.cart_positions.len() {
+            return Err("Atom index out of bounds".to_string());
+        }
+        let pi = self.cart_positions[i];
+        let pj = self.cart_positions[j];
+        let dx = (pi[0] as f64) - (pj[0] as f64);
+        let dy = (pi[1] as f64) - (pj[1] as f64);
+        let dz = (pi[2] as f64) - (pj[2] as f64);
+        Ok((dx * dx + dy * dy + dz * dz).sqrt())
+    }
+
+    pub fn measure_angle(&self, i: usize, j: usize, k: usize) -> Result<f64, String> {
+        if i >= self.cart_positions.len() || j >= self.cart_positions.len() || k >= self.cart_positions.len() {
+            return Err("Atom index out of bounds".to_string());
+        }
+        let pi = self.cart_positions[i];
+        let pj = self.cart_positions[j];
+        let pk = self.cart_positions[k];
+        
+        let v1 = glam::DVec3::new((pi[0] as f64) - (pj[0] as f64), (pi[1] as f64) - (pj[1] as f64), (pi[2] as f64) - (pj[2] as f64)).normalize_or_zero();
+        let v2 = glam::DVec3::new((pk[0] as f64) - (pj[0] as f64), (pk[1] as f64) - (pj[1] as f64), (pk[2] as f64) - (pj[2] as f64)).normalize_or_zero();
+        
+        let dot = v1.dot(v2).clamp(-1.0, 1.0);
+        Ok(dot.acos().to_degrees())
+    }
+
+    pub fn measure_dihedral(&self, i: usize, j: usize, k: usize, l: usize) -> Result<f64, String> {
+        if i >= self.cart_positions.len() || j >= self.cart_positions.len() 
+            || k >= self.cart_positions.len() || l >= self.cart_positions.len() {
+            return Err("Atom index out of bounds".to_string());
+        }
+        let pi = self.cart_positions[i];
+        let pj = self.cart_positions[j];
+        let pk = self.cart_positions[k];
+        let pl = self.cart_positions[l];
+        
+        let b1 = glam::DVec3::new((pj[0] as f64) - (pi[0] as f64), (pj[1] as f64) - (pi[1] as f64), (pj[2] as f64) - (pi[2] as f64));
+        let b2 = glam::DVec3::new((pk[0] as f64) - (pj[0] as f64), (pk[1] as f64) - (pj[1] as f64), (pk[2] as f64) - (pj[2] as f64));
+        let b3 = glam::DVec3::new((pl[0] as f64) - (pk[0] as f64), (pl[1] as f64) - (pk[1] as f64), (pl[2] as f64) - (pk[2] as f64));
+        
+        let n1 = b1.cross(b2).normalize_or_zero();
+        let n2 = b2.cross(b3).normalize_or_zero();
+        let m = n1.cross(b2.normalize_or_zero());
+        
+        let x = n1.dot(n2);
+        let y = m.dot(n2);
+        Ok(y.atan2(x).to_degrees())
+    }
+
+    pub fn add_measurement(&mut self, indices: &[usize]) -> Result<MeasurementOverlay, String> {
+        let (kind, value, pos) = match indices.len() {
+            2 => {
+                let d = self.measure_distance(indices[0], indices[1])?;
+                let pi = glam::Vec3::from_array(self.cart_positions[indices[0]]);
+                let pj = glam::Vec3::from_array(self.cart_positions[indices[1]]);
+                (MeasurementKind::Distance, d, ((pi + pj) * 0.5).into())
+            }
+            3 => {
+                let a = self.measure_angle(indices[0], indices[1], indices[2])?;
+                let p0 = glam::Vec3::from_array(self.cart_positions[indices[0]]);
+                let p1 = glam::Vec3::from_array(self.cart_positions[indices[1]]);
+                let p2 = glam::Vec3::from_array(self.cart_positions[indices[2]]);
+                // Place label slightly displaced from the central vertex along the bisector
+                let v1 = (p0 - p1).normalize_or_zero();
+                let v2 = (p2 - p1).normalize_or_zero();
+                let mut bisector = (v1 + v2).normalize_or_zero();
+                if bisector.length_squared() < 1e-6 {
+                    // Fallback for 180 degree angle (collinear)
+                    bisector = glam::Vec3::new(v1.y, -v1.x, 0.0); // Arbitrary orthogonal vector
+                    if bisector.length_squared() < 1e-6 {
+                        bisector = glam::Vec3::new(0.0, 0.0, 1.0);
+                    }
+                    bisector = bisector.normalize_or_zero();
+                }
+                (MeasurementKind::Angle, a, (p1 + bisector * 1.5).into())
+            }
+            4 => {
+                let d = self.measure_dihedral(indices[0], indices[1], indices[2], indices[3])?;
+                let pj = glam::Vec3::from_array(self.cart_positions[indices[1]]);
+                let pk = glam::Vec3::from_array(self.cart_positions[indices[2]]);
+                // Midpoint of central bond
+                (MeasurementKind::Dihedral, d, ((pj + pk) * 0.5).into())
+            }
+            _ => return Err("Measurement must contain 2, 3, or 4 atoms".to_string()),
+        };
+
+        let overlay = MeasurementOverlay {
+            indices: indices.to_vec(),
+            kind,
+            value,
+            label_position: pos,
+        };
+        self.measurements.push(overlay.clone());
+        Ok(overlay)
+    }
+
+    pub fn clear_measurements(&mut self) {
+        self.measurements.clear();
+    }
 }
 
 /// Classify polyhedron type from coordination number.
@@ -1476,6 +1599,7 @@ mod tests {
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
+            measurements: Vec::new(),
         };
         state.fractional_to_cartesian();
         state
@@ -1580,5 +1704,112 @@ mod tests {
         // mean is 2.0, |d - d_mean| is 0.1 for all
         // Delta = (1/6) * (6 * 0.1 / 2.0) = 0.05
         assert!((delta_distorted - 0.05).abs() < 1e-10, "Distortion should be exactly 0.05");
+    }
+
+    #[test]
+    fn test_distance_measurement() {
+        let mut cs = CrystalState::default();
+        // T-1 & T-6: Exactly representable f32 coordinates and tight precision
+        cs.cart_positions = vec![
+            [1.0, 2.0, 3.0],
+            [4.5, -0.5, 1.5],
+        ];
+        
+        let dist = cs.measure_distance(0, 1).unwrap();
+        // dx=3.5, dy=-2.5, dz=-1.5. sum_sq = 12.25 + 6.25 + 2.25 = 20.75
+        let expected = 20.75f64.sqrt();
+        assert!((dist - expected).abs() < 1e-12, "Distance precision failure on bit-exact coords");
+        
+        // Zero distance
+        let dist0 = cs.measure_distance(0, 0).unwrap();
+        assert!(dist0.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_angle_measurement() {
+        let mut cs = CrystalState::default();
+        // T-2: Non-special angle (60 degrees)
+        let sqrt3_2 = (3.0f32.sqrt() / 2.0) as f32;
+        cs.cart_positions = vec![
+            [1.0, 0.0, 0.0],       // 0: i
+            [0.0, 0.0, 0.0],       // 1: j (vertex)
+            [0.5, sqrt3_2, 0.0],   // 2: k (60 deg from i)
+            [0.0, 0.0, 0.0],       // 3: degenerate overlapping vertex
+        ];
+        
+        let angle60 = cs.measure_angle(0, 1, 2).unwrap();
+        assert!((angle60 - 60.0).abs() < 1e-5, "Angle precision failure on 60 degree case");
+        
+        // Collinear 180
+        cs.cart_positions.push([-1.0, 0.0, 0.0]);
+        let angle180 = cs.measure_angle(0, 1, 4).unwrap();
+        assert!((angle180 - 180.0).abs() < 1e-5);
+
+        // T-5: Boundary safety
+        let angle_degen = cs.measure_angle(0, 1, 3).unwrap();
+        assert!(angle_degen.is_finite());
+    }
+
+    #[test]
+    fn test_dihedral_measurement() {
+        let mut cs = CrystalState::default();
+        // T-3: Sign-sensitive check. i-j-k-l twist.
+        // i: (1,1,0), j: (0,0,0), k: (0,0,1), l: (1,0,1)
+        // This configuration has a specific 45 degree twist.
+        cs.cart_positions = vec![
+            [1.0, 1.0, 0.0], // 0: i
+            [0.0, 0.0, 0.0], // 1: j
+            [0.0, 0.0, 1.0], // 2: k
+            [1.0, 0.0, 1.0], // 3: l
+        ];
+        
+        let dh = cs.measure_dihedral(0, 1, 2, 3).unwrap();
+        // Hand calculate: b1=(-1,-1,0), b2=(0,0,1), b3=(1,0,0)
+        // n1 = b1 x b2 = (-1, 1, 0), n2 = b2 x b3 = (0, 1, 0)
+        // cos(phi) = n1.n2 / (|n1||n2|) = 1 / sqrt(2) -> 45 deg
+        // Verify exact sign (+45.0)
+        assert!((dh - 45.0).abs() < 1e-5, "Dihedral sign or value failure: expected +45.0, got {}", dh);
+        
+        // Breaker: Collinear backbone (j, k, l collinear)
+        cs.cart_positions.push([0.0, 0.0, 2.0]); // 4: k'
+        cs.cart_positions.push([0.0, 0.0, 3.0]); // 5: l'
+        let dh_degen = cs.measure_dihedral(0, 1, 4, 5).unwrap();
+        assert!(dh_degen.is_finite());
+    }
+
+    #[test]
+    fn test_add_measurement_logic() {
+        let mut cs = CrystalState::default();
+        // T-4: Verify label positions and overlay construction
+        cs.cart_positions = vec![
+            [0.0, 0.0, 0.0], // 0
+            [2.0, 0.0, 0.0], // 1
+            [2.0, 2.0, 0.0], // 2
+        ];
+
+        // Distance label at midpoint
+        let m2 = cs.add_measurement(&[0, 1]).unwrap();
+        assert_eq!(m2.kind, MeasurementKind::Distance);
+        assert!((m2.label_position[0] - 1.0).abs() < 1e-5);
+        assert!(m2.label_position[1].abs() < 1e-5);
+
+        // Angle label displacement
+        let m3 = cs.add_measurement(&[0, 1, 2]).unwrap();
+        assert_eq!(m3.kind, MeasurementKind::Angle);
+        // vertex is (2,0,0). v1=(-1,0,0), v2=(0,1,0). bisector=(-1,1,0)/sqrt(2)
+        // pos = vertex + bisector * 1.5
+        let expected_x = 2.0 - 1.5 / 2.0f32.sqrt();
+        let expected_y = 0.0 + 1.5 / 2.0f32.sqrt();
+        assert!((m3.label_position[0] - expected_x).abs() < 1e-5);
+        assert!((m3.label_position[1] - expected_y).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_measure_bounds_and_empty() {
+        // T-5: Empty and OOB safety
+        let cs = CrystalState::default();
+        assert!(cs.measure_distance(0, 0).is_err());
+        assert!(cs.measure_angle(0, 1, 2).is_err());
+        assert!(cs.measure_dihedral(0, 1, 2, 3).is_err());
     }
 }

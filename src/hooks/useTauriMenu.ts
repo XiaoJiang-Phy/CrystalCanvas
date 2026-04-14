@@ -131,6 +131,21 @@ export function useTauriMenu({
             }
         }).then(f => unlistenMenu = f).catch(console.warn);
 
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+            
+            if (cmdOrCtrl && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    safeInvoke('redo').then(onStateChange).catch(console.error);
+                } else {
+                    safeInvoke('undo').then(onStateChange).catch(console.error);
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+
         safeListen<{ is_perspective: boolean }>('view_projection_changed', (event) => {
             setIsPerspective(event.payload.is_perspective);
         }).then(f => unlistenProjection = f).catch(console.warn);
@@ -138,6 +153,7 @@ export function useTauriMenu({
         return () => {
             unlistenMenu();
             unlistenProjection();
+            window.removeEventListener('keydown', handleKeyDown);
         };
     }, [
         setShowAssistant, setIsSettingsOpen, setIsExportImageOpen,

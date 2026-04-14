@@ -1,6 +1,6 @@
 # GPU Shader Reference
 
-> Version: v0.5.0 | Updated: 2026-04-12
+> Version: v0.6.0 | Updated: 2026-04-14
 
 CrystalCanvas uses a pure WebGPU (`wgpu`) rendering pipeline with all shaders written in WGSL and validated through `naga`. This document catalogs every shader file, its pipeline stage, bind group layout, and rendering behavior.
 
