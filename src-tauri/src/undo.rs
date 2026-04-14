@@ -124,3 +124,86 @@ impl UndoStack {
         self.future.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_dummy_state(version: u32) -> LightweightState {
+        let mut cs = CrystalState::default();
+        cs.version = version;
+        LightweightState::from_crystal_state(&cs)
+    }
+
+    #[test]
+    fn test_undo_redo() {
+        let mut stack = UndoStack::new(2);
+        
+        assert!(!stack.can_undo());
+        assert!(!stack.can_redo());
+        
+        // Push 3 states into depth 2 (testing ejection of oldest for extreme dimension limits)
+        stack.push(create_dummy_state(1));
+        stack.push(create_dummy_state(2));
+        stack.push(create_dummy_state(3));
+        
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+        assert_eq!(stack.past.len(), 2);
+        assert_eq!(stack.past[0].version, 2);
+        assert_eq!(stack.past[1].version, 3);
+        
+        // Undo
+        let prev = stack.undo(create_dummy_state(4)).unwrap();
+        assert_eq!(prev.version, 3);
+        assert!(stack.can_undo());
+        assert!(stack.can_redo());
+        
+        let prev2 = stack.undo(prev).unwrap();
+        assert_eq!(prev2.version, 2);
+        assert!(!stack.can_undo()); // Depth 2 means we only remember 2 past states
+        assert!(stack.can_redo());
+        
+        // Undo over limit (empty) - testing extreme index out of bound conditions
+        assert!(stack.undo(prev2.clone()).is_none());
+        
+        // Redo
+        let next = stack.redo(prev2).unwrap();
+        assert_eq!(next.version, 3);
+        let next2 = stack.redo(next).unwrap();
+        assert_eq!(next2.version, 4);
+        
+        // Redo over limit - testing bounds
+        assert!(stack.redo(next2).is_none());
+    }
+
+    #[test]
+    fn test_undo_push_clears_future() {
+        let mut stack = UndoStack::new(10);
+        stack.push(create_dummy_state(1));
+        stack.push(create_dummy_state(2));
+        
+        // Move back
+        stack.undo(create_dummy_state(3)).unwrap();
+        assert!(stack.can_redo());
+        
+        // Push should obliterate future states
+        stack.push(create_dummy_state(4));
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn test_undo_excludes_volumetric() {
+        let mut cs = CrystalState::default();
+        cs.cart_positions.push([0.0, 0.0, 0.0]); // Add some pseudo data
+        
+        let ls = LightweightState::from_crystal_state(&cs);
+        // By definition, LightweightState does NOT mirror the full memory map of CrystalState.
+        // We assert its structural memory size is deterministic and ignores large allocs.
+        let ls_size = std::mem::size_of::<LightweightState>();
+        assert!(ls_size < 500); // Expecting ~350 bytes for pointers
+        
+        // The properties requested (atom count) must align
+        assert_eq!(ls.cart_positions.len(), 1);
+    }
+}

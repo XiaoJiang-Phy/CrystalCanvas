@@ -40,6 +40,10 @@ fn make_fcc_al_state() -> CrystalState {
         intrinsic_sites: 4,
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
+        is_2d: false,
+        vacuum_axis: None,
+        wannier_overlay: None,
     }
 }
 
@@ -67,6 +71,10 @@ fn make_sc_state(a: f64) -> CrystalState {
         intrinsic_sites: 1,
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
+        is_2d: false,
+        vacuum_axis: None,
+        wannier_overlay: None,
     }
 }
 
@@ -302,6 +310,10 @@ fn make_nacl_state() -> CrystalState {
         intrinsic_sites: 8,
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
+        is_2d: false,
+        vacuum_axis: None,
+        wannier_overlay: None,
     }
 }
 
