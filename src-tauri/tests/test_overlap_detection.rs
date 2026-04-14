@@ -42,6 +42,10 @@ fn make_test_state_with_atom_at_origin() -> CrystalState {
         intrinsic_sites: 0,
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
+        is_2d: false,
+        vacuum_axis: None,
+        wannier_overlay: None,
     };
     state.try_add_atom("O", 8, [0.0, 0.0, 0.0]).unwrap();
     state.version = 1; // Reset to 1 for tests tracking version increment
@@ -75,6 +79,10 @@ fn empty_cubic(a: f64) -> CrystalState {
         intrinsic_sites: 0,
         selected_atoms: vec![],
         volumetric_data: None,
+        bz_cache: None,
+        is_2d: false,
+        vacuum_axis: None,
+        wannier_overlay: None,
     }
 }
 
