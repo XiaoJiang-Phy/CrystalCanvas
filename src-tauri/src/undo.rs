@@ -33,6 +33,7 @@ pub struct LightweightState {
     pub cart_positions: Vec<[f32; 3]>,
     
     pub selected_atoms: Vec<usize>,
+    pub measurements: Vec<crate::crystal_state::MeasurementOverlay>,
 }
 
 impl LightweightState {
@@ -63,6 +64,7 @@ impl LightweightState {
             cart_positions: cs.cart_positions.clone(),
             
             selected_atoms: cs.selected_atoms.clone(),
+            measurements: cs.measurements.clone(),
         }
     }
 }

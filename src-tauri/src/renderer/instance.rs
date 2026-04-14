@@ -405,6 +405,56 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
     lines
 }
 
+/// Build lines for Measurement overlays (distance, angles).
+pub fn build_measurement_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVertex> {
+    let mut lines = Vec::new();
+    let color = [1.0, 0.4, 0.0, 0.9]; // Orange, alpha=0.9 triggers stipple effect in shader
+
+    let n_atoms = cs.cart_positions.len();
+
+    for m in &cs.measurements {
+        match m.kind {
+            crate::crystal_state::MeasurementKind::Distance => {
+                if m.indices.len() == 2 && m.indices.iter().all(|&i| i < n_atoms) {
+                    let p1 = cs.cart_positions[m.indices[0]];
+                    let p2 = cs.cart_positions[m.indices[1]];
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p2, color });
+                }
+            }
+            crate::crystal_state::MeasurementKind::Angle => {
+                if m.indices.len() == 3 && m.indices.iter().all(|&i| i < n_atoms) {
+                    // Lines from center (index 1) to both ends (index 0, index 2)
+                    let p0 = cs.cart_positions[m.indices[0]];
+                    let p1 = cs.cart_positions[m.indices[1]];
+                    let p2 = cs.cart_positions[m.indices[2]];
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p0, color });
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p2, color });
+                }
+            }
+            crate::crystal_state::MeasurementKind::Dihedral => {
+                if m.indices.len() == 4 && m.indices.iter().all(|&i| i < n_atoms) {
+                    // Lines connecting the four atoms in sequence
+                    let p0 = cs.cart_positions[m.indices[0]];
+                    let p1 = cs.cart_positions[m.indices[1]];
+                    let p2 = cs.cart_positions[m.indices[2]];
+                    let p3 = cs.cart_positions[m.indices[3]];
+                    lines.push(LineVertex { position: p0, color });
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p2, color });
+                    lines.push(LineVertex { position: p2, color });
+                    lines.push(LineVertex { position: p3, color });
+                }
+            }
+        }
+    }
+    
+    lines
+}
+
 /// Build chemical bond instances based on distance, for thick cylinder rendering.
 pub fn build_bond_instances(
     cs: &crate::crystal_state::CrystalState,

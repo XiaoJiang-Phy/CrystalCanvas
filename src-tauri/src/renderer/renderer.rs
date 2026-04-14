@@ -44,6 +44,10 @@ pub struct Renderer {
     line_pipeline: wgpu::RenderPipeline,
     cell_line_buffer: wgpu::Buffer,
     cell_line_count: u32,
+    
+    // Measurement lines
+    measurement_line_buffer: wgpu::Buffer,
+    measurement_line_count: u32,
 
     // Thick Cylinder Bonding
     bond_pipeline: wgpu::RenderPipeline,
@@ -166,6 +170,13 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&dummy_line),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
+        let measurement_line_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Measurement Line Buffer"),
+                contents: bytemuck::cast_slice(&dummy_line),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
         let dummy_bond = [crate::renderer::instance::BondInstance {
             start: [0.0, 0.0, 0.0],
             radius: 0.0,
@@ -214,6 +225,8 @@ impl Renderer {
             line_pipeline,
             cell_line_buffer,
             cell_line_count: 0,
+            measurement_line_buffer,
+            measurement_line_count: 0,
             bond_pipeline,
             bond_instance_buffer,
             bond_instance_count: 0,
@@ -307,6 +320,19 @@ impl Renderer {
 
         let bond_instances = crate::renderer::instance::build_bond_instances(state, settings, &state.selected_atoms);
         self.update_bonds(&bond_instances);
+
+        let measurement_lines = crate::renderer::instance::build_measurement_lines(state);
+        self.measurement_line_count = measurement_lines.len() as u32;
+        if self.measurement_line_count > 0 {
+            self.measurement_line_buffer =
+                self.gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Measurement Line Buffer"),
+                        contents: bytemuck::cast_slice(&measurement_lines),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    });
+        }
     }
 
     /// Update actual bond cylinder instances.
@@ -441,6 +467,13 @@ impl Renderer {
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
                 pass.draw(0..self.cell_line_count, 0..1);
+            }
+
+            if self.measurement_line_count > 0 {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.measurement_line_buffer.slice(..));
+                pass.draw(0..self.measurement_line_count, 0..1);
             }
 
             // Bond cylinders
@@ -656,6 +689,13 @@ impl Renderer {
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
                 pass.draw(0..self.cell_line_count, 0..1);
+            }
+
+            if self.measurement_line_count > 0 {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.measurement_line_buffer.slice(..));
+                pass.draw(0..self.measurement_line_count, 0..1);
             }
 
             if self.show_bonds && self.bond_instance_count > 0 {
