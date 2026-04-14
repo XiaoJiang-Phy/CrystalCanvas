@@ -44,6 +44,7 @@ fn make_fcc_al_state() -> CrystalState {
         is_2d: false,
         vacuum_axis: None,
         wannier_overlay: None,
+        measurements: vec![],
     }
 }
 
@@ -75,6 +76,7 @@ fn make_sc_state(a: f64) -> CrystalState {
         is_2d: false,
         vacuum_axis: None,
         wannier_overlay: None,
+        measurements: vec![],
     }
 }
 
@@ -314,6 +316,7 @@ fn make_nacl_state() -> CrystalState {
         is_2d: false,
         vacuum_axis: None,
         wannier_overlay: None,
+        measurements: vec![],
     }
 }
 

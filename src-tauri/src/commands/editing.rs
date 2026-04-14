@@ -205,6 +205,7 @@ pub fn undo(
         cs.atomic_numbers = prev_state.atomic_numbers;
         cs.cart_positions = prev_state.cart_positions;
         cs.selected_atoms = prev_state.selected_atoms;
+        cs.measurements = prev_state.measurements;
         
         cs.version += 1;
         let can_undo = u_stack.can_undo();
@@ -265,6 +266,7 @@ pub fn redo(
         cs.atomic_numbers = next_state.atomic_numbers;
         cs.cart_positions = next_state.cart_positions;
         cs.selected_atoms = next_state.selected_atoms;
+        cs.measurements = next_state.measurements;
         
         cs.version += 1;
         let can_undo = u_stack.can_undo();

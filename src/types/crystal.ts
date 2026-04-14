@@ -36,6 +36,17 @@ export interface CrystalState {
     // State metadata
     version: number; // Incremented on every modification
     intrinsic_sites: number; // True atom count before boundary mirroring
+
+    measurements: MeasurementOverlay[];
+}
+
+export type MeasurementKind = 'Distance' | 'Angle' | 'Dihedral';
+
+export interface MeasurementOverlay {
+    indices: number[];
+    kind: MeasurementKind;
+    value: number;
+    label_position: [number, number, number];
 }
 
 /**

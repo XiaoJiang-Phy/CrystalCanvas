@@ -209,6 +209,9 @@ function App() {
                             }}
                             onBondCountUpdate={setBondCount}
                             onActivePhononModeUpdate={setActivePhononMode}
+                            onStructureUpdate={fetch_crystal_state}
+                            interactionMode={interactionMode}
+                            setInteractionMode={setInteractionMode}
                         />
                     </div>
 
@@ -228,6 +231,8 @@ function App() {
                     crystalState={crystalState}
                     bondCount={bondCount}
                     activePhononMode={activePhononMode}
+                    selectedCount={selectedAtoms.length}
+                    interactionMode={interactionMode}
                 />
 
                 {/* Right-Click Context Menu */}

@@ -294,3 +294,98 @@ pub fn set_phonon_phase(
 
     Ok(())
 }
+
+#[tauri::command]
+pub fn add_measurement(
+    indices: Vec<usize>,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
+) -> Result<crate::crystal_state::MeasurementOverlay, String> {
+    let mut measurement = None;
+    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        measurement = Some(cs.add_measurement(&indices)?);
+        Ok(())
+    })?;
+    
+    measurement.ok_or_else(|| "Failed to get measurement".to_string())
+}
+
+#[tauri::command]
+pub fn clear_measurements(
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
+) -> Result<(), String> {
+    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        cs.clear_measurements();
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_measurements(
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> Result<Vec<crate::crystal_state::MeasurementOverlay>, String> {
+    let cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+    Ok(cs.measurements.clone())
+}
+
+#[derive(serde::Serialize)]
+pub struct MeasurementLabelPos {
+    pub label: String,
+    pub x: f32,
+    pub y: f32,
+}
+
+#[tauri::command]
+pub fn get_measurement_labels_screen(
+    width: f32,
+    height: f32,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> Result<Vec<MeasurementLabelPos>, String> {
+    let cs = crystal_state.lock().map_err(|e| e.to_string())?;
+    let renderer = renderer_state.lock().map_err(|e| e.to_string())?;
+
+    let vp_matrix = renderer.camera.build_view_projection_matrix();
+
+    let mut positions = Vec::new();
+
+    for m in &cs.measurements {
+        let pos_3d = glam::Vec3::from_array([
+            m.label_position[0],
+            m.label_position[1],
+            m.label_position[2],
+        ]);
+        
+        let clip = vp_matrix * pos_3d.extend(1.0);
+        
+        // Z-clipping check
+        if clip.w > 0.0 {
+            let ndc_x = clip.x / clip.w;
+            let ndc_y = clip.y / clip.w;
+            
+            // Render only if roughly within viewport
+            if ndc_x >= -1.2 && ndc_x <= 1.2 && ndc_y >= -1.2 && ndc_y <= 1.2 {
+                let text = match m.kind {
+                    crate::crystal_state::MeasurementKind::Distance => format!("{:.3} Å", m.value),
+                    _ => format!("{:.1}°", m.value),
+                };
+                positions.push(MeasurementLabelPos {
+                    label: text,
+                    // Convert NDC to screen Space (Y flips)
+                    x: (ndc_x + 1.0) / 2.0 * width,
+                    y: (1.0 - ndc_y) / 2.0 * height,
+                });
+            }
+        }
+    }
+
+    Ok(positions)
+}
