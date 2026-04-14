@@ -33,6 +33,10 @@ pub struct Renderer {
     // Instance data
     instance_buffer: wgpu::Buffer,
     instance_count: u32,
+    
+    transparent_pipeline: wgpu::RenderPipeline,
+    transparent_instance_buffer: wgpu::Buffer,
+    transparent_instance_count: u32,
 
     // Depth buffers (dual-pass architecture)
     opaque_depth_texture: wgpu::Texture,
@@ -108,6 +112,12 @@ impl Renderer {
         // Pipeline
         let (render_pipeline, camera_bind_group_layout) =
             pipeline::create_render_pipeline(&gpu.device, gpu.surface_format());
+            
+        let transparent_pipeline = pipeline::create_transparent_atom_pipeline(
+            &gpu.device,
+            gpu.surface_format(),
+            &camera_bind_group_layout,
+        );
 
         let line_pipeline = pipeline::create_line_pipeline(
             &gpu.device,
@@ -141,6 +151,14 @@ impl Renderer {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&dummy_instance),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+            
+        let transparent_instance_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Transparent Instance Buffer"),
                 contents: bytemuck::cast_slice(&dummy_instance),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
@@ -218,6 +236,9 @@ impl Renderer {
             render_pipeline,
             instance_buffer,
             instance_count: 0,
+            transparent_pipeline,
+            transparent_instance_buffer,
+            transparent_instance_count: 0,
             opaque_depth_texture,
             opaque_depth_view,
             transparent_depth_texture,
@@ -276,26 +297,46 @@ impl Renderer {
 
     /// Upload new atom instance data to the GPU (full rebuild).
     pub fn update_atoms(&mut self, instances: &[AtomInstance]) {
-        self.instance_count = instances.len() as u32;
-
         if instances.is_empty() {
+            self.instance_count = 0;
+            self.transparent_instance_count = 0;
             return;
         }
 
-        // Recreate the instance buffer with new data
-        self.instance_buffer =
-            self.gpu
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Instance Buffer"),
-                    contents: bytemuck::cast_slice(instances),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                });
+        let mut opaque = Vec::with_capacity(instances.len());
+        let mut transparent = Vec::new(); // Usually sparse, fast append
+
+        for inst in instances {
+            if inst.color[3] >= 0.999 {
+                opaque.push(*inst);
+            } else {
+                transparent.push(*inst);
+            }
+        }
+
+        self.instance_count = opaque.len() as u32;
+        self.transparent_instance_count = transparent.len() as u32;
+
+        if self.instance_count > 0 {
+            self.instance_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&opaque),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        }
+        
+        if self.transparent_instance_count > 0 {
+            self.transparent_instance_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Transparent Instance Buffer"),
+                contents: bytemuck::cast_slice(&transparent),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        }
 
         log::debug!(
-            "Instance buffer updated: {} atoms, {} bytes",
+            "Instance buffers updated: {} opaque, {} transparent",
             self.instance_count,
-            std::mem::size_of_val(instances)
+            self.transparent_instance_count
         );
     }
 
@@ -496,7 +537,8 @@ impl Renderer {
         // ═══ Depth copy: opaque → transparent (for Pass 2 depth test) ════
         let needs_transparent_pass = 
             (self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both)) ||
-            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both));
+            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both)) ||
+            self.transparent_instance_count > 0;
 
         if needs_transparent_pass {
             encoder.copy_texture_to_texture(
@@ -550,11 +592,19 @@ impl Renderer {
                     }
                 }
 
-                // Isosurface LAST (semi-transparent outer envelope)
+                // Isosurface (semi-transparent outer envelope)
                 if self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both) {
                     if let Some(iso_pipe) = &self.isosurface_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
+                }
+                
+                // Translucent atoms last
+                if self.transparent_instance_count > 0 {
+                    pass.set_pipeline(&self.transparent_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.transparent_instance_buffer.slice(..));
+                    pass.draw(0..6, 0..self.transparent_instance_count);
                 }
             }
         }
@@ -716,7 +766,8 @@ impl Renderer {
         // ═══ Offscreen Pass 2: Transparent ═══
         let needs_transparent = 
             (self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both)) ||
-            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both));
+            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both)) ||
+            self.transparent_instance_count > 0;
 
         if needs_transparent {
             encoder.copy_texture_to_texture(
@@ -768,6 +819,13 @@ impl Renderer {
                     if let Some(iso_pipe) = &self.isosurface_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
+                }
+
+                if self.transparent_instance_count > 0 {
+                    pass.set_pipeline(&self.transparent_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.transparent_instance_buffer.slice(..));
+                    pass.draw(0..6, 0..self.transparent_instance_count);
                 }
             }
         }

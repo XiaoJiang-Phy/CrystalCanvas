@@ -355,6 +355,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 &state.cart_positions,
                                 &state.atomic_numbers,
                                 &state.elements,
+                                &state.occupancies,
                                 &settings,
                                 &state.selected_atoms,
                             );
