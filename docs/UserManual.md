@@ -1,4 +1,4 @@
-# CrystalCanvas User Manual (v0.5)
+# CrystalCanvas User Manual (v0.6)
 
 Welcome to **CrystalCanvas**, an open-source, high-performance desktop application for computational materials science and condensed matter physics. CrystalCanvas provides a fluid native experience for building, transforming, analyzing, and exporting complex crystalline geometries.
 
@@ -228,4 +228,4 @@ The LLM presents a JSON command card. Click **Execute** to approve the operation
 
 ---
 
-*CrystalCanvas v0.5.0 — Copyright © 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
+*CrystalCanvas v0.6.0 — Copyright © 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*

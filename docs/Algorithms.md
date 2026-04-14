@@ -1,6 +1,6 @@
 # CrystalCanvas Algorithms & References
 
-> Version: v0.5.0 | Updated: 2026-04-12
+> Version: v0.6.0 | Updated: 2026-04-14
 
 Mathematical formulations and implementation details for core algorithms. Each section cross-references the exact source files.
 
@@ -227,4 +227,4 @@ Bonds are rendered as cylinders using `bond_cylinder.wgsl` — a geometry shader
 
 ---
 
-*CrystalCanvas v0.5.0 — Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
+*CrystalCanvas v0.6.0 — Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*

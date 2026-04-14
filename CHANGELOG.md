@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-14
+
+### Added
+- **Measurement Tool**: Interactive distance, angle, and dihedral angle measurements.
+  - Auto-detects 2/3/4 selected atoms and computes exact distances ($|P_i - P_j|$) or angles.
+  - Generates persistent rendering of dashed lines with measurement results placed via coordinate projection.
+- **Undo / Redo Stack**: Action historical tracing and state rollback via keyboard (`Cmd+Z` / `Cmd+Shift+Z`).
+  - Utilizes a `LightweightState` data structure, storing only crystallographic boundaries and atoms (excluding large volumetric matrices).
+  - Configurable boundaries to limit maximum depth (20 steps) and control memory footprint.
+- **Fractional Occupancy Visualization**: Fractional atom occupancies interpreted visually.
+  - Renders transparency in 3D Impostor spheres utilizing non-linear opacity scaling ($\alpha = \text{occ}^{0.6}$).
+  - `Atom Management` table now features an `Occ.` column for precision readout of input files (.cif).
+
+### Changed
+- **Architectural Refactor (StateTransaction)**: Command operations rewritten onto a strict transaction pipeline (`with_state_update`) for absolute stability.
+  - Resolves lock contention risk during concurrent rendering invocations.
+  - Splits the single `commands.rs` monolith into 7 domain-specific operation modules.
+- **Modular Frontend UI**: Disassembled the monolithic `RightSidebar` container into separated `lazy()` loading panels to drastically reduce initial parsing overhead.
+
 ## [0.5.0] - 2026-04-11
 
 ### Added

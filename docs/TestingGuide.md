@@ -1,6 +1,6 @@
 # CrystalCanvas Testing & TDD Guide
 
-> Version: v0.5.0 | Updated: 2026-04-12
+> Version: v0.6.0 | Updated: 2026-04-14
 
 ---
 
