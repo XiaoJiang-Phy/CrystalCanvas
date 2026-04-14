@@ -612,6 +612,7 @@ fn main() {
             app.manage(std::sync::Mutex::new(loaded_settings));
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
             app.manage(commands::BaseCrystalState(std::sync::Mutex::new(None)));
+            app.manage(std::sync::Mutex::new(crate::undo::UndoStack::new(20)));
 
 
             // --- Menu Construction ---
@@ -686,7 +687,9 @@ fn main() {
             commands::set_wannier_orbital,
             commands::toggle_wannier_onsite,
             commands::toggle_hopping_display,
-            commands::clear_wannier
+            commands::clear_wannier,
+            commands::undo,
+            commands::redo
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
