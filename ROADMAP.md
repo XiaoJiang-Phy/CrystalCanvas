@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-04-11 | Development Baseline: macOS (Intel + Apple Silicon)
+> Updated 2026-04-14 | Development Baseline: macOS (Intel + Apple Silicon)
 
 ---
 
@@ -13,17 +13,11 @@
 | **v0.3.0** | 2026-04-09 | Volumetric pipeline (CHGCAR/Cube/XSF), GPU Marching Cubes, volume raycasting, 10 colormaps |
 | **v0.4.0** | 2026-04-10 | 3D/2D Brillouin Zone, k-path generator (14+5 Bravais types), cell standardization (Niggli/Primitive/Conventional) |
 | **v0.5.0** | 2026-04-11 | Wannier tight-binding visualizer, icon toolbar UI redesign |
+| **v0.6.0** | 2026-04-14 | Measurement tool, Undo/Redo stack, fractional occupancy, modular architecture refactor |
 
 ---
 
 ## Planned Releases
-
-### v0.6.0 — UX Foundation & Precision Tools
-
-- **Distance / angle measurement**: Select 2 atoms for distance, 3 for bond angle, 4 for dihedral angle. Persistent overlay annotations.
-- **Undo / redo stack**: Bounded snapshot ring buffer with `Cmd+Z` / `Cmd+Shift+Z`.
-- **Partial occupancy visualization**: Map crystallographic `occupancy` to atom transparency for disordered site display.
-- **Architecture refactor**: Split monolithic command module into domain-specific sub-modules, extract unified state transaction helper.
 
 ### v0.7.0 — Condensed Matter Core
 

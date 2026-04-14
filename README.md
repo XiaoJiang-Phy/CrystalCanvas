@@ -8,13 +8,13 @@
 
 Legacy tools like VESTA and XCrySDen were pioneering in their time, but remain bound to single-threaded CPU rendering, decades-old GUI toolkits, and closed or stagnant codebases. CrystalCanvas is designed from scratch to close that gap: a **Rust + wgpu + C++** native stack delivers real-time GPU-accelerated isosurface extraction and volume raycasting, a modern React/Tauri interface replaces 2000s-era widget UIs, and an AI-assisted command bus lets you manipulate structures with natural language — capabilities no existing crystallographic tool offers. From interactive 3D modeling and publication-quality volumetric rendering to Brillouin Zone visualization, Wannier tight-binding overlays, and one-click DFT/MD file export, CrystalCanvas unifies the entire pre-computation workflow in a single, memory-safe application.
 
-> **Current Release**: `v0.5.0` · Rust 15.5k LOC · TypeScript 3.9k LOC · C++ 737 LOC · 7 WGSL shaders
+> **Current Release**: `v0.6.0` · Rust 15.5k LOC · TypeScript 3.9k LOC · C++ 737 LOC · 7 WGSL shaders
 
 ---
 
 ## 📥 Download & Installation
 
-[![Download for macOS](https://img.shields.io/badge/Download_v0.5.0-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
+[![Download for macOS](https://img.shields.io/badge/Download_v0.6.0-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
 
 > [!WARNING]
 > **Important Note for macOS Users (Unverified Developer)**
@@ -68,12 +68,12 @@ Legacy tools like VESTA and XCrySDen were pioneering in their time, but remain b
 | **v0.3.0** | Volumetric rendering (GPU Marching Cubes, volume raycasting, 10 colormaps) |
 | **v0.4.0** | 3D/2D Brillouin Zone, cell standardization (Niggli/Primitive/Conventional) |
 | **v0.5.0** | Wannier tight-binding visualizer, icon toolbar UI redesign |
+| **v0.6.0** | Distance/angle measurement, undo/redo stack, partial occupancy, commands.rs refactor |
 
 ### Planned
 
 | Version | Target | Key Features |
 |---|---|---|
-| **v0.6.0** | UX Foundation | Distance/angle measurement, undo/redo stack, partial occupancy visualization, `commands.rs` refactor |
 | **v0.7.0** | CMP Core | In-GUI charge density difference ($\Delta\rho$), collinear magnetic moments ($m_z$), MSAA anti-aliasing |
 | **v0.8.0** | Reciprocal Physics | 3D Fermi surface viewer (`.bxsf`), non-collinear magnetism |
 | **v0.9.0+** | Flagship | Moiré superlattice generator (twistronics), high-quality rendering engine (SSAO), symmetry element overlay |

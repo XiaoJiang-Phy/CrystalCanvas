@@ -1,6 +1,6 @@
 # CrystalCanvas Developer Guide
 
-> Version: v0.5.0 | Updated: 2026-04-12
+> Version: v0.6.0 | Updated: 2026-04-14
 
 This guide provides technical details for developers who want to understand, modify, or extend CrystalCanvas. For end-user instructions, see [UserManual.md](UserManual.md).
 
@@ -48,7 +48,9 @@ L1: C++ Kernel                          (Physics & Math Engine)
 ```
 src-tauri/src/
 ├── main.rs              # Tauri entry point, native menu, render loop
-├── commands.rs          # All Tauri IPC command handlers (~2500 LOC)
+├── commands/            # Tauri IPC command handlers (split by domain)
+├── transaction.rs       # Central state mutation and lock manager
+├── undo.rs              # Memory-efficient historical stack
 ├── crystal_state.rs     # CrystalState struct (SSoT) and SoA layout
 ├── settings.rs          # AppSettings (atom_scale, bond_tolerance, colors)
 ├── volumetric.rs        # VolumetricData struct (3D scalar fields)
@@ -547,4 +549,4 @@ State changes and asynchronous results are communicated back via events:
 
 ---
 
-*CrystalCanvas v0.5.0 — Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
+*CrystalCanvas v0.6.0 — Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
