@@ -26,6 +26,8 @@ export function useCameraInteraction({
         const el = viewportRef.current;
         if (!el) return;
 
+        console.warn(`[CameraInteraction] Effect registered. mode=${interactionMode}`);
+
         const onPointerDown = (e: PointerEvent) => {
             if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
             if (e.button === 2) {
@@ -33,6 +35,7 @@ export function useCameraInteraction({
                 return;
             }
 
+            console.warn(`[CameraInteraction] pointerDown btn=${e.button} mode=${interactionMode}`);
             pointerDownPos.current = { x: e.clientX, y: e.clientY };
 
             if (interactionMode === 'rotate' || interactionMode === 'move' || e.button === 1) {
@@ -60,46 +63,55 @@ export function useCameraInteraction({
         };
 
         const onPointerUp = (e: PointerEvent) => {
+            console.warn(`[CameraInteraction] pointerUp btn=${e.button} mode=${interactionMode} isDrag=${isDraggingCamera.current}`);
             if (isDraggingCamera.current) {
                 isDraggingCamera.current = false;
                 el.releasePointerCapture(e.pointerId);
             }
-            if (e.button === 0 && interactionMode === 'select') {
+            const willPick = e.button === 0 && (interactionMode === 'select' || interactionMode === 'measure');
+            console.warn(`[CameraInteraction] willPick=${willPick}`);
+            if (willPick) {
                 const ddx = Math.abs(e.clientX - pointerDownPos.current.x);
                 const ddy = Math.abs(e.clientY - pointerDownPos.current.y);
+                console.warn(`[CameraInteraction] drag delta: ddx=${ddx} ddy=${ddy}`);
                 if (ddx < 5 && ddy < 5) {
                     const rect = el.getBoundingClientRect();
                     const dpr = window.devicePixelRatio || 1;
                     const x = (e.clientX - rect.left) * dpr;
                     const y = (e.clientY - rect.top) * dpr;
+                    console.warn(`[CameraInteraction] calling pick_atom x=${x} y=${y} W=${rect.width * dpr} H=${rect.height * dpr}`);
                     safeInvoke<number | null>('pick_atom', {
                         x, y,
                         screenW: rect.width * dpr,
                         screenH: rect.height * dpr
                     }).then((idx) => {
-                        console.log("pick_atom returned:", idx, "at", { x, y });
+                        console.warn("[CameraInteraction] pick_atom returned:", idx);
                         updateSelection(prev => {
                             let newSel = [...prev];
                             if (idx !== null && idx !== undefined) {
-                                if (e.shiftKey) {
+                                if (e.shiftKey || interactionMode === 'measure') {
                                     if (newSel.includes(idx)) {
-                                        newSel = newSel.filter(i => i !== idx); // Toggle off
+                                        newSel = newSel.filter(i => i !== idx);
                                     } else {
-                                        newSel.push(idx); // Toggle on
+                                        newSel.push(idx);
+                                        if (interactionMode === 'measure' && newSel.length > 4) {
+                                            newSel.shift();
+                                        }
                                     }
                                 } else {
-                                    newSel = [idx]; // Single selection replaces all
+                                    newSel = [idx];
                                 }
                             } else {
-                                if (!e.shiftKey) {
-                                    newSel = []; // Clicking empty space clears selection unless shift is held
+                                if (!e.shiftKey && interactionMode !== 'measure') {
+                                    newSel = [];
                                 }
                             }
+                            console.warn("[CameraInteraction] newSel:", newSel);
                             safeInvoke('update_selection', { indices: newSel }).catch(console.error);
                             return newSel;
                         });
                     }).catch((err) => {
-                        console.error("pick_atom error:", err);
+                        console.error("[CameraInteraction] pick_atom ERROR:", err);
                     });
                 }
             }

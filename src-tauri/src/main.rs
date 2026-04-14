@@ -355,6 +355,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 &state.cart_positions,
                                 &state.atomic_numbers,
                                 &state.elements,
+                                &state.occupancies,
                                 &settings,
                                 &state.selected_atoms,
                             );
@@ -612,6 +613,7 @@ fn main() {
             app.manage(std::sync::Mutex::new(loaded_settings));
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
             app.manage(commands::BaseCrystalState(std::sync::Mutex::new(None)));
+            app.manage(std::sync::Mutex::new(crate::undo::UndoStack::new(20)));
 
 
             // --- Menu Construction ---
@@ -663,6 +665,10 @@ fn main() {
             commands::update_lattice_params,
             commands::export_image,
             commands::shift_termination,
+            commands::add_measurement,
+            commands::clear_measurements,
+            commands::get_measurements,
+            commands::get_measurement_labels_screen,
             commands::load_volumetric_file,
             commands::set_isovalue,
             commands::set_isosurface_color,
@@ -686,7 +692,9 @@ fn main() {
             commands::set_wannier_orbital,
             commands::toggle_wannier_onsite,
             commands::toggle_hopping_display,
-            commands::clear_wannier
+            commands::clear_wannier,
+            commands::undo,
+            commands::redo
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

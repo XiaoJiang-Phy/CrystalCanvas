@@ -208,6 +208,7 @@ pub fn build_atoms_with_ghosts_displaced(
         cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
+        &cs.occupancies,
         settings,
         &cs.selected_atoms,
     );

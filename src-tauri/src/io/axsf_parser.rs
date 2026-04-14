@@ -234,6 +234,7 @@ pub fn parse_axsf(path: &str) -> Result<(CrystalState, PhononData), String> {
         volumetric_data: None,
         bz_cache: None,
         wannier_overlay: None,
+        measurements: Vec::new(),
     };
 
     state.fractional_to_cartesian();

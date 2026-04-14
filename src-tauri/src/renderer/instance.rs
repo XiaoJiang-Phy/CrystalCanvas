@@ -248,6 +248,7 @@ pub fn build_instance_data(
     cart_positions: &[[f32; 3]],
     atomic_numbers: &[u8],
     element_symbols: &[String],
+    occupancies: &[f64],
     settings: &crate::settings::AppSettings,
     selected_atoms: &[usize],
 ) -> Vec<AtomInstance> {
@@ -258,6 +259,10 @@ pub fn build_instance_data(
         if let Some(custom_color) = settings.custom_atom_colors.get(&element_symbols[i]) {
             color = *custom_color;
         }
+        
+        let occ = occupancies.get(i).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+        let alpha = occ.powf(0.6) as f32;
+        
         instances.push(AtomInstance {
             position: cart_positions[i],
             radius: {
@@ -269,9 +274,9 @@ pub fn build_instance_data(
             },
             color: if selected_atoms.contains(&i) {
                 // Highlight: mix with bright cyan
-                [color[0] * 0.4, color[1] * 0.8 + 0.4, color[2] * 0.8 + 0.8, 1.0]
+                [color[0] * 0.4, color[1] * 0.8 + 0.4, color[2] * 0.8 + 0.8, alpha]
             } else {
-                color
+                [color[0], color[1], color[2], alpha]
             },
         });
     }
@@ -405,6 +410,56 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
     lines
 }
 
+/// Build lines for Measurement overlays (distance, angles).
+pub fn build_measurement_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVertex> {
+    let mut lines = Vec::new();
+    let color = [1.0, 0.4, 0.0, 0.9]; // Orange, alpha=0.9 triggers stipple effect in shader
+
+    let n_atoms = cs.cart_positions.len();
+
+    for m in &cs.measurements {
+        match m.kind {
+            crate::crystal_state::MeasurementKind::Distance => {
+                if m.indices.len() == 2 && m.indices.iter().all(|&i| i < n_atoms) {
+                    let p1 = cs.cart_positions[m.indices[0]];
+                    let p2 = cs.cart_positions[m.indices[1]];
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p2, color });
+                }
+            }
+            crate::crystal_state::MeasurementKind::Angle => {
+                if m.indices.len() == 3 && m.indices.iter().all(|&i| i < n_atoms) {
+                    // Lines from center (index 1) to both ends (index 0, index 2)
+                    let p0 = cs.cart_positions[m.indices[0]];
+                    let p1 = cs.cart_positions[m.indices[1]];
+                    let p2 = cs.cart_positions[m.indices[2]];
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p0, color });
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p2, color });
+                }
+            }
+            crate::crystal_state::MeasurementKind::Dihedral => {
+                if m.indices.len() == 4 && m.indices.iter().all(|&i| i < n_atoms) {
+                    // Lines connecting the four atoms in sequence
+                    let p0 = cs.cart_positions[m.indices[0]];
+                    let p1 = cs.cart_positions[m.indices[1]];
+                    let p2 = cs.cart_positions[m.indices[2]];
+                    let p3 = cs.cart_positions[m.indices[3]];
+                    lines.push(LineVertex { position: p0, color });
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p1, color });
+                    lines.push(LineVertex { position: p2, color });
+                    lines.push(LineVertex { position: p2, color });
+                    lines.push(LineVertex { position: p3, color });
+                }
+            }
+        }
+    }
+    
+    lines
+}
+
 /// Build chemical bond instances based on distance, for thick cylinder rendering.
 pub fn build_bond_instances(
     cs: &crate::crystal_state::CrystalState,
@@ -533,5 +588,32 @@ mod tests {
 
         // frac = 2.0/4.0 = 0.5 → radius 0.02 + 0.03 = 0.05
         assert!((instances[0].radius - 0.05).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_partial_occupancy() {
+        let cart_positions = vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]];
+        let atomic_numbers = vec![11, 17];
+        let element_symbols = vec!["Na".to_string(), "Cl".to_string()];
+        let occupancies = vec![1.0, 0.5];
+        let settings = crate::settings::AppSettings::default();
+        let selected_atoms = vec![];
+
+        let instances = build_instance_data(
+            &cart_positions,
+            &atomic_numbers,
+            &element_symbols,
+            &occupancies,
+            &settings,
+            &selected_atoms,
+        );
+
+        assert_eq!(instances.len(), 2);
+        // occ = 1.0 -> alpha = 1.0
+        assert!((instances[0].color[3] - 1.0).abs() < 1e-4);
+        
+        // occ = 0.5 -> alpha = 0.5^0.6 ~ 0.65975
+        let expected_alpha = 0.5f64.powf(0.6) as f32;
+        assert!((instances[1].color[3] - expected_alpha).abs() < 1e-4);
     }
 }

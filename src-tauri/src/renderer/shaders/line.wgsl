@@ -28,5 +28,12 @@ fn vs_main(model: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if in.color.a < 0.99 {
+        let pattern = u32(in.clip_position.x + in.clip_position.y) % 12;
+        if pattern < 6 {
+            discard;
+        }
+        return vec4<f32>(in.color.xyz, 1.0);
+    }
     return in.color;
 }
