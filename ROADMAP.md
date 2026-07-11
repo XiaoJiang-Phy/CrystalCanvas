@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-04-14 | Development Baseline: macOS (Intel + Apple Silicon)
+> Updated 2026-07-11 | Current Release: v0.6.0 | Development Baseline: macOS (Intel + Apple Silicon)
 
 ---
 
@@ -19,23 +19,43 @@
 
 ## Planned Releases
 
+### v0.6.1 — Correctness & Contract Hardening
+
+**Current focus:** strengthen the foundations before adding new scientific features.
+
+- **Verified frontend–backend contract**: Centralize Tauri commands and events behind typed TypeScript bindings, with automatic command-registration and payload checks.
+- **Physical/render state separation**: Keep only intrinsic atoms in the authoritative Rust state; generate periodic boundary images and Wannier ghost atoms as renderer-derived instances mapped back to their source atoms.
+- **Deterministic transactions**: Make the transaction layer solely responsible for undo snapshots and one version increment per successful mutation.
+- **Physical input validation**: Reject invalid or singular lattice parameters, invalid atom indices, unknown enum values, and ordinary structures with inter-atomic distances below $0.5\ \text{Å}$.
+- **Single state-sync path**: Remove duplicate full-state refreshes after committed mutations.
+
+### v0.6.2 — Interaction & Geometry Hardening
+
+- **Atom drag sessions**: Coalesce pointer-rate updates into one validated commit and one undo entry.
+- **Backend-driven phonon animation**: Advance animation phase in Rust or WGSL instead of issuing per-frame frontend IPC calls.
+- **Unconventional slab regression suite**: Cover large, negative, mixed, and non-coprime Miller indices across cubic, FCC, BCC, hexagonal, and oblique cells.
+- **Evidence-based profiling**: Characterize state serialization, scene rebuild, GPU upload, picking, and animation at 500–10,000 intrinsic atoms before introducing delta protocols or dirty ranges.
+
 ### v0.7.0 — Condensed Matter Core
 
-- **Charge density difference**: Load two CHGCAR files and compute element-wise subtraction in-app. Result rendered via the existing signed isosurface pipeline (red/blue dual-color).
-- **Collinear magnetic moments**: Parse VASP `MAGMOM` tags and render spin-up/down arrows on atomic sites.
-- **MSAA anti-aliasing**: 4x MSAA for improved screenshot quality.
+- **Charge-density linear combinations**: Compute validated combinations such as $\Delta\rho=\rho_{\mathrm{total}}-\rho_{\mathrm{substrate}}-\rho_{\mathrm{adsorbate}}$ after checking grid, lattice, origin, normalization, and units. Reuse the signed isosurface pipeline.
+- **Collinear magnetic moments**: Parse supplied moments from VASP/QE inputs or outputs, render spin-up/down arrows, and validate atom count and magnetic symmetry before classification claims.
+- **Publication export quality**: Add capability-checked 4x MSAA with a predictable fallback path.
 
 ### v0.8.0 — Reciprocal-Space Physics
 
-- **3D Fermi surface viewer**: Parse Wannier90 `.bxsf` files, extract isosurfaces at the Fermi level via GPU Marching Cubes, render inside the Brillouin Zone wireframe.
-- **Non-collinear magnetism**: Full 3D magnetic moment arrows with arbitrary orientation.
+- **3D Fermi-surface viewer**: Parse `.bxsf` band grids, keep reciprocal-space units and camera state isolated from real space, extract $E_n(\mathbf{k})=E_F$ surfaces, and clip them to the selected Brillouin Zone.
+- **Non-collinear magnetism**: Render supplied $\mathbf{m}=(m_x,m_y,m_z)$ vectors and use MagSpglib-compatible validation before magnetic-symmetry classification.
+- **Topological-workflow guardrails**: Do not treat a visualization k-path as sufficient for topological classification; such workflows require all relevant high-symmetry points and, for centrosymmetric systems, parity information at all eight TRIM points.
 
 ### v0.9.0+ — Flagship Features & Scalability
 
-- **Moire superlattice generator**: Commensurate angle search for twisted bilayer systems (graphene, h-BN, TMDs) based on coincidence site lattice theory.
+- **Moiré superlattice generator**: Commensurate angle search for twisted bilayer systems (graphene, h-BN, TMDs), with residual-strain and atom-count reporting.
 - **High-quality rendering engine**: SSAO, soft shadows, tiled rendering for 4K+ export.
 - **Symmetry element overlay**: Render rotation axes, mirror planes, and inversion centers.
-- **Julia / Python IPC bridge**: Shared memory interface for external scripts to drive the 3D viewport.
+- **Julia / Python bridge**: Expose a versioned, explicit column-major data contract for external scripts.
+
+Large-scale features remain gated on measured 10,000-atom performance. Spatial indexes, dirty GPU ranges, and delta snapshots will be introduced only if profiling shows that the simpler full-rebuild strategy exceeds its budget.
 
 ---
 
