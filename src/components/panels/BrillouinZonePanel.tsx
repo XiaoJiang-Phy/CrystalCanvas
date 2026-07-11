@@ -13,7 +13,7 @@ export default function BrillouinZonePanel({}: PanelProps) {
         const w = window.innerWidth;
         const h = window.innerHeight;
         try {
-            const labels = await safeInvoke<{label: string, x: number, y: number}[]>('get_bz_label_positions', { width: w, height: h });
+            const labels = await safeInvoke('get_bz_label_positions', { width: w, height: h });
             if (labels) setBzLabels(labels);
         } catch (_e: any) {
             setBzLabels([]);
@@ -21,7 +21,7 @@ export default function BrillouinZonePanel({}: PanelProps) {
     }, []);
 
     const handle_compute_bz = () => {
-        safeInvoke<BzInfo>('compute_brillouin_zone')
+        safeInvoke('compute_brillouin_zone')
             .then(res => {
                 if (res) {
                     setBzInfo(res);
@@ -111,7 +111,7 @@ export default function BrillouinZonePanel({}: PanelProps) {
                         const npoints = parseInt(nEl?.value) || 20;
                         const fmt = fmtEl?.value || 'qe';
                         try {
-                            const res = await safeInvoke<{qe: string, vasp: string}>('generate_kpath_text', { npoints });
+                            const res = await safeInvoke('generate_kpath_text', { npoints });
                             if (!res) return;
                             const text = fmt === 'qe' ? res.qe : res.vasp;
                             const preEl = document.getElementById('kpath-preview');
@@ -122,7 +122,7 @@ export default function BrillouinZonePanel({}: PanelProps) {
                                 defaultPath: defaultName
                             });
                             if (savePath) {
-                                await safeInvoke('save_text_file', { path: savePath, content: text });
+                                await safeInvoke('write_text_file', { path: savePath, content: text });
                             }
                         } catch (e: any) {
                             alert(String(e));

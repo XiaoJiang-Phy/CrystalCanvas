@@ -112,6 +112,9 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
 
         let re: f64 = tokens[5].parse().map_err(|_| format!("Line {}: invalid Re(t)", ln))?;
         let im: f64 = tokens[6].parse().map_err(|_| format!("Line {}: invalid Im(t)", ln))?;
+        if !re.is_finite() || !im.is_finite() {
+            return Err(format!("Line {}: hopping components must be finite", ln));
+        }
 
         let rpt_idx = hoppings.len() / (num_wann * num_wann);
 
@@ -120,6 +123,9 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
         }
 
         let t_mag = (re * re + im * im).sqrt();
+        if !t_mag.is_finite() {
+            return Err(format!("Line {}: hopping magnitude is not finite", ln));
+        }
         if t_mag > t_max {
             t_max = t_mag;
         }
@@ -170,6 +176,7 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_wannier_hr_parse_graphene() {
@@ -189,5 +196,14 @@ mod tests {
         assert!((data.t_max - 2.7058).abs() < 1e-4, "t_max={}", data.t_max);
         assert_eq!(data.hoppings[3].r_vec, [0, 0, 0]);
         assert!((data.hoppings[3].re - (-0.2814)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_wannier_hr_rejects_non_finite_hopping_components() {
+        for component in ["NaN", "inf", "-inf"] {
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            writeln!(file, "generated\n1\n1\n1\n0 0 0 1 1 {} 0", component).unwrap();
+            assert!(parse_wannier_hr(file.path().to_str().unwrap()).is_err());
+        }
     }
 }

@@ -62,7 +62,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         }
 
         try {
-            const hasKey = await safeInvoke<boolean>('check_api_key_status', { providerType: newProvider });
+            const hasKey = await safeInvoke('check_api_key_status', { providerType: newProvider });
             setApiKey(hasKey ? '********' : '');
         } catch {
             setApiKey('');
@@ -102,7 +102,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         setLoading(true);
 
         try {
-            const rawResponse = await safeInvoke<string>('llm_chat', { userMessage: userMsg.text, selectedIndices: null });
+            const rawResponse = await safeInvoke('llm_chat', { userMessage: userMsg.text, selectedIndices: null });
             const response = rawResponse || '';
 
             let cleanResponse = response;

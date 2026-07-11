@@ -64,7 +64,7 @@ function App() {
 
     const fetch_crystal_state = useCallback(async () => {
         try {
-            const state = await safeInvoke<CrystalState>('get_crystal_state');
+            const state = await safeInvoke('get_crystal_state');
             if (state) setCrystalState(state);
         } catch (e) {
             console.error(e);

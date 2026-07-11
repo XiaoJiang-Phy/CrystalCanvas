@@ -1,0 +1,1359 @@
+{
+  "backend_commands": [
+    "add_atom",
+    "add_measurement",
+    "apply_cell_standardize",
+    "apply_niggli_reduce",
+    "apply_slab",
+    "apply_supercell",
+    "check_api_key_status",
+    "clear_measurements",
+    "clear_wannier",
+    "compute_brillouin_zone",
+    "delete_atoms",
+    "export_file",
+    "export_image",
+    "generate_kpath_text",
+    "get_bond_analysis",
+    "get_bz_label_positions",
+    "get_crystal_state",
+    "get_kpath_info",
+    "get_measurement_labels_screen",
+    "get_measurements",
+    "get_settings",
+    "get_volumetric_info",
+    "llm_chat",
+    "llm_configure",
+    "llm_execute_command",
+    "load_axsf_phonon",
+    "load_cif_file",
+    "load_phonon",
+    "load_phonon_interactive",
+    "load_volumetric_file",
+    "load_wannier_hr",
+    "pan_camera",
+    "pick_atom",
+    "preview_slab",
+    "preview_supercell",
+    "redo",
+    "reset_camera",
+    "restore_unitcell",
+    "rotate_camera",
+    "set_bz_scale",
+    "set_camera_projection",
+    "set_camera_view_axis",
+    "set_isosurface_color",
+    "set_isosurface_opacity",
+    "set_isosurface_sign_mode",
+    "set_isovalue",
+    "set_phonon_mode",
+    "set_phonon_phase",
+    "set_render_flags",
+    "set_volume_colormap",
+    "set_volume_density_cutoff",
+    "set_volume_opacity_range",
+    "set_volume_render_mode",
+    "set_wannier_orbital",
+    "set_wannier_r_shell",
+    "set_wannier_t_min",
+    "shift_termination",
+    "substitute_atoms",
+    "toggle_bz_display",
+    "toggle_hopping_display",
+    "toggle_wannier_onsite",
+    "translate_atoms_screen",
+    "undo",
+    "update_lattice_params",
+    "update_selection",
+    "update_settings",
+    "update_viewport_size",
+    "write_text_file",
+    "zoom_camera"
+  ],
+  "backend_command_args": {
+    "add_atom": [
+      "atomicNumber",
+      "elementSymbol",
+      "fractPos"
+    ],
+    "add_measurement": [
+      "indices"
+    ],
+    "apply_cell_standardize": [
+      "toPrimitive"
+    ],
+    "apply_niggli_reduce": [],
+    "apply_slab": [
+      "layers",
+      "miller",
+      "vacuumA"
+    ],
+    "apply_supercell": [
+      "matrix"
+    ],
+    "check_api_key_status": [
+      "providerType"
+    ],
+    "clear_measurements": [],
+    "clear_wannier": [],
+    "compute_brillouin_zone": [],
+    "delete_atoms": [
+      "indices"
+    ],
+    "export_file": [
+      "format",
+      "path"
+    ],
+    "export_image": [
+      "bgMode",
+      "height",
+      "path",
+      "width"
+    ],
+    "generate_kpath_text": [
+      "npoints"
+    ],
+    "get_bond_analysis": [
+      "thresholdFactor"
+    ],
+    "get_bz_label_positions": [
+      "height",
+      "width"
+    ],
+    "get_crystal_state": [],
+    "get_kpath_info": [],
+    "get_measurement_labels_screen": [
+      "height",
+      "width"
+    ],
+    "get_measurements": [],
+    "get_settings": [],
+    "get_volumetric_info": [],
+    "llm_chat": [
+      "selectedIndices",
+      "userMessage"
+    ],
+    "llm_configure": [
+      "apiKey",
+      "model",
+      "providerType"
+    ],
+    "llm_execute_command": [
+      "commandJson"
+    ],
+    "load_axsf_phonon": [
+      "path"
+    ],
+    "load_cif_file": [
+      "path"
+    ],
+    "load_phonon": [
+      "path"
+    ],
+    "load_phonon_interactive": [
+      "modes",
+      "scfIn",
+      "scfOut"
+    ],
+    "load_volumetric_file": [
+      "path"
+    ],
+    "load_wannier_hr": [
+      "path"
+    ],
+    "pan_camera": [
+      "dx",
+      "dy"
+    ],
+    "pick_atom": [
+      "screenH",
+      "screenW",
+      "x",
+      "y"
+    ],
+    "preview_slab": [
+      "layers",
+      "miller",
+      "vacuumA"
+    ],
+    "preview_supercell": [
+      "expansion"
+    ],
+    "redo": [],
+    "reset_camera": [],
+    "restore_unitcell": [],
+    "rotate_camera": [
+      "dx",
+      "dy"
+    ],
+    "set_bz_scale": [
+      "scale"
+    ],
+    "set_camera_projection": [
+      "isPerspective"
+    ],
+    "set_camera_view_axis": [
+      "axis"
+    ],
+    "set_isosurface_color": [
+      "color"
+    ],
+    "set_isosurface_opacity": [
+      "opacity"
+    ],
+    "set_isosurface_sign_mode": [
+      "mode"
+    ],
+    "set_isovalue": [
+      "value"
+    ],
+    "set_phonon_mode": [
+      "modeIndex"
+    ],
+    "set_phonon_phase": [
+      "amplitude",
+      "phase"
+    ],
+    "set_render_flags": [
+      "showBonds",
+      "showCell"
+    ],
+    "set_volume_colormap": [
+      "mode"
+    ],
+    "set_volume_density_cutoff": [
+      "cutoff"
+    ],
+    "set_volume_opacity_range": [
+      "max",
+      "min",
+      "opacityScale"
+    ],
+    "set_volume_render_mode": [
+      "mode"
+    ],
+    "set_wannier_orbital": [
+      "active",
+      "orbIdx"
+    ],
+    "set_wannier_r_shell": [
+      "active",
+      "shellIdx"
+    ],
+    "set_wannier_t_min": [
+      "tMin"
+    ],
+    "shift_termination": [
+      "layerToleranceA",
+      "targetLayerIdx"
+    ],
+    "substitute_atoms": [
+      "indices",
+      "newAtomicNumber",
+      "newElementSymbol"
+    ],
+    "toggle_bz_display": [
+      "show"
+    ],
+    "toggle_hopping_display": [
+      "show"
+    ],
+    "toggle_wannier_onsite": [
+      "show"
+    ],
+    "translate_atoms_screen": [
+      "dx",
+      "dy",
+      "indices"
+    ],
+    "undo": [],
+    "update_lattice_params": [
+      "a",
+      "alpha",
+      "b",
+      "beta",
+      "c",
+      "gamma"
+    ],
+    "update_selection": [
+      "indices"
+    ],
+    "update_settings": [
+      "newSettings"
+    ],
+    "update_viewport_size": [
+      "height",
+      "width"
+    ],
+    "write_text_file": [
+      "content",
+      "path"
+    ],
+    "zoom_camera": [
+      "delta"
+    ]
+  },
+  "missing_backend_command_argument_schemas": [],
+  "backend_events": {
+    "menu-action": [
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs"
+    ],
+    "state_changed": [
+      "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/file_io.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/transaction.rs"
+    ],
+    "undo_stack_changed": [
+      "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/file_io.rs",
+      "src-tauri/src/transaction.rs"
+    ],
+    "view_projection_changed": [
+      "src-tauri/src/commands/viewport.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/main.rs"
+    ],
+    "volumetric_loaded": [
+      "src-tauri/src/commands/file_io.rs",
+      "src-tauri/src/commands/volumetric.rs"
+    ]
+  },
+  "classification": {
+    "add_atom": "committed_mutation",
+    "add_measurement": "committed_mutation",
+    "apply_cell_standardize": "committed_mutation",
+    "apply_niggli_reduce": "committed_mutation",
+    "apply_slab": "committed_mutation",
+    "apply_supercell": "committed_mutation",
+    "check_api_key_status": "read",
+    "clear_measurements": "committed_mutation",
+    "clear_wannier": "renderer_only",
+    "compute_brillouin_zone": "renderer_only",
+    "delete_atoms": "committed_mutation",
+    "export_file": "external_io",
+    "export_image": "external_io",
+    "generate_kpath_text": "read",
+    "get_bond_analysis": "read",
+    "get_bz_label_positions": "read",
+    "get_crystal_state": "read",
+    "get_kpath_info": "read",
+    "get_measurement_labels_screen": "read",
+    "get_measurements": "read",
+    "get_settings": "read",
+    "get_volumetric_info": "read",
+    "llm_chat": "external_io",
+    "llm_configure": "external_io",
+    "llm_execute_command": "committed_mutation",
+    "load_axsf_phonon": "committed_mutation",
+    "load_cif_file": "committed_mutation",
+    "load_phonon": "committed_mutation",
+    "load_phonon_interactive": "committed_mutation",
+    "load_volumetric_file": "renderer_only",
+    "load_wannier_hr": "renderer_only",
+    "pan_camera": "high_frequency",
+    "pick_atom": "read",
+    "preview_slab": "read",
+    "preview_supercell": "read",
+    "redo": "committed_mutation",
+    "reset_camera": "renderer_only",
+    "restore_unitcell": "committed_mutation",
+    "rotate_camera": "high_frequency",
+    "set_bz_scale": "renderer_only",
+    "set_camera_projection": "renderer_only",
+    "set_camera_view_axis": "renderer_only",
+    "set_isosurface_color": "renderer_only",
+    "set_isosurface_opacity": "renderer_only",
+    "set_isosurface_sign_mode": "renderer_only",
+    "set_isovalue": "renderer_only",
+    "set_phonon_mode": "renderer_only",
+    "set_phonon_phase": "high_frequency",
+    "set_render_flags": "renderer_only",
+    "set_volume_colormap": "renderer_only",
+    "set_volume_density_cutoff": "renderer_only",
+    "set_volume_opacity_range": "renderer_only",
+    "set_volume_render_mode": "renderer_only",
+    "set_wannier_orbital": "renderer_only",
+    "set_wannier_r_shell": "renderer_only",
+    "set_wannier_t_min": "renderer_only",
+    "shift_termination": "committed_mutation",
+    "substitute_atoms": "committed_mutation",
+    "toggle_bz_display": "renderer_only",
+    "toggle_hopping_display": "renderer_only",
+    "toggle_wannier_onsite": "renderer_only",
+    "translate_atoms_screen": "high_frequency",
+    "undo": "committed_mutation",
+    "update_lattice_params": "committed_mutation",
+    "update_selection": "renderer_only",
+    "update_settings": "renderer_only",
+    "update_viewport_size": "renderer_only",
+    "write_text_file": "external_io",
+    "zoom_camera": "high_frequency"
+  },
+  "event_classification": {
+    "menu-action": "application_menu",
+    "state_changed": "state_sync",
+    "tauri://drag-drop": "native_window",
+    "tauri://drag-enter": "native_window",
+    "tauri://drag-leave": "native_window",
+    "tauri://file-drop": "native_window",
+    "tauri://file-drop-cancelled": "native_window",
+    "tauri://file-drop-hover": "native_window",
+    "undo_stack_changed": "state_sync",
+    "view_projection_changed": "renderer_sync",
+    "volumetric_loaded": "renderer_sync"
+  },
+  "frontend_command_calls": [
+    {
+      "command": "add_atom",
+      "file": "src/App.tsx",
+      "args": [
+        "atomicNumber",
+        "elementSymbol",
+        "fractPos"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "add_atom",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [
+        "atomicNumber",
+        "elementSymbol",
+        "fractPos"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "add_measurement",
+      "file": "src/components/panels/MeasurementPanel.tsx",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "apply_slab",
+      "file": "src/components/panels/SlabPanel.tsx",
+      "args": [
+        "layers",
+        "miller",
+        "vacuumA"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "apply_supercell",
+      "file": "src/components/panels/SupercellPanel.tsx",
+      "args": [
+        "matrix"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "check_api_key_status",
+      "file": "src/components/layout/LlmAssistant.tsx",
+      "args": [
+        "providerType"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "clear_measurements",
+      "file": "src/components/panels/MeasurementPanel.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "clear_wannier",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "compute_brillouin_zone",
+      "file": "src/components/panels/BrillouinZonePanel.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "delete_atoms",
+      "file": "src/components/panels/AtomOperationsPanel.tsx",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "delete_atoms",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "export_image",
+      "file": "src/components/layout/ExportImageModal.tsx",
+      "args": [
+        "bgMode",
+        "height",
+        "path",
+        "width"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "generate_kpath_text",
+      "file": "src/components/panels/BrillouinZonePanel.tsx",
+      "args": [
+        "npoints"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "get_bond_analysis",
+      "file": "src/components/panels/BondAnalysisPanel.tsx",
+      "args": [
+        "thresholdFactor"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "get_bz_label_positions",
+      "file": "src/components/panels/BrillouinZonePanel.tsx",
+      "args": [
+        "height",
+        "width"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "get_crystal_state",
+      "file": "src/App.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "get_crystal_state",
+      "file": "src/components/panels/AtomOperationsPanel.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "get_measurement_labels_screen",
+      "file": "src/components/panels/MeasurementPanel.tsx",
+      "args": [
+        "height",
+        "width"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "get_settings",
+      "file": "src/components/layout/SettingsModal.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "llm_chat",
+      "file": "src/components/layout/LlmAssistant.tsx",
+      "args": [
+        "selectedIndices",
+        "userMessage"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "llm_configure",
+      "file": "src/components/layout/LlmAssistant.tsx",
+      "args": [
+        "apiKey",
+        "model",
+        "providerType"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "llm_execute_command",
+      "file": "src/components/layout/LlmAssistant.tsx",
+      "args": [
+        "commandJson"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "load_axsf_phonon",
+      "file": "src/components/panels/PhononPanel.tsx",
+      "args": [
+        "path"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "load_cif_file",
+      "file": "src/hooks/useFileDrop.ts",
+      "args": [
+        "path"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "load_phonon_interactive",
+      "file": "src/components/panels/PhononPanel.tsx",
+      "args": [
+        "modes",
+        "scfIn",
+        "scfOut"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "load_volumetric_file",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "path"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "load_wannier_hr",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [
+        "path"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "pan_camera",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "dx",
+        "dy"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "pick_atom",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "screenH",
+        "screenW",
+        "x",
+        "y"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "redo",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "restore_unitcell",
+      "file": "src/components/panels/SupercellPanel.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "rotate_camera",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "dx",
+        "dy"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_projection",
+      "file": "src/App.tsx",
+      "args": [
+        "isPerspective"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/layout/TopNavBar.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/components/panels/SlabPanel.tsx",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_camera_view_axis",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [
+        "axis"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_isosurface_opacity",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "opacity"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_isosurface_sign_mode",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "mode"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_isosurface_sign_mode",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "mode"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_isovalue",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "value"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_isovalue",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "value"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_phonon_mode",
+      "file": "src/components/panels/PhononPanel.tsx",
+      "args": [
+        "modeIndex"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_phonon_phase",
+      "file": "src/components/panels/PhononPanel.tsx",
+      "args": [
+        "amplitude",
+        "phase"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_render_flags",
+      "file": "src/App.tsx",
+      "args": [
+        "showBonds",
+        "showCell"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_render_flags",
+      "file": "src/App.tsx",
+      "args": [
+        "showBonds",
+        "showCell"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_render_flags",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [
+        "showBonds",
+        "showCell"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_volume_colormap",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "mode"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_volume_density_cutoff",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "cutoff"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_volume_opacity_range",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "max",
+        "min",
+        "opacityScale"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_volume_render_mode",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "mode"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_volume_render_mode",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "mode"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_wannier_orbital",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [
+        "active",
+        "orbIdx"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_wannier_r_shell",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [
+        "active",
+        "shellIdx"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_wannier_t_min",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [
+        "tMin"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "substitute_atoms",
+      "file": "src/components/panels/AtomOperationsPanel.tsx",
+      "args": [
+        "indices",
+        "newAtomicNumber",
+        "newElementSymbol"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "substitute_atoms",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [
+        "indices",
+        "newAtomicNumber",
+        "newElementSymbol"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "toggle_bz_display",
+      "file": "src/components/panels/BrillouinZonePanel.tsx",
+      "args": [
+        "show"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "toggle_bz_display",
+      "file": "src/components/panels/BrillouinZonePanel.tsx",
+      "args": [
+        "show"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "toggle_hopping_display",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [
+        "show"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "toggle_wannier_onsite",
+      "file": "src/components/panels/WannierPanel.tsx",
+      "args": [
+        "show"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "translate_atoms_screen",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "dx",
+        "dy",
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "undo",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "update_lattice_params",
+      "file": "src/components/layout/LeftSidebar.tsx",
+      "args": [
+        "a",
+        "alpha",
+        "b",
+        "beta",
+        "c",
+        "gamma"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "update_selection",
+      "file": "src/App.tsx",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "update_selection",
+      "file": "src/App.tsx",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "update_selection",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "update_settings",
+      "file": "src/components/layout/SettingsModal.tsx",
+      "args": [
+        "newSettings"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "update_settings",
+      "file": "src/components/layout/SettingsModal.tsx",
+      "args": [
+        "newSettings"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "update_viewport_size",
+      "file": "src/App.tsx",
+      "args": [
+        "height",
+        "width"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "write_text_file",
+      "file": "src/components/panels/BrillouinZonePanel.tsx",
+      "args": [
+        "content",
+        "path"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "zoom_camera",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "delta"
+      ],
+      "response_type": null
+    }
+  ],
+  "frontend_commands": {
+    "add_atom": [
+      "src/App.tsx",
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "add_measurement": [
+      "src/components/panels/MeasurementPanel.tsx"
+    ],
+    "apply_slab": [
+      "src/components/panels/SlabPanel.tsx"
+    ],
+    "apply_supercell": [
+      "src/components/panels/SupercellPanel.tsx"
+    ],
+    "check_api_key_status": [
+      "src/components/layout/LlmAssistant.tsx"
+    ],
+    "clear_measurements": [
+      "src/components/panels/MeasurementPanel.tsx"
+    ],
+    "clear_wannier": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "compute_brillouin_zone": [
+      "src/components/panels/BrillouinZonePanel.tsx"
+    ],
+    "delete_atoms": [
+      "src/components/panels/AtomOperationsPanel.tsx",
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "export_image": [
+      "src/components/layout/ExportImageModal.tsx"
+    ],
+    "generate_kpath_text": [
+      "src/components/panels/BrillouinZonePanel.tsx"
+    ],
+    "get_bond_analysis": [
+      "src/components/panels/BondAnalysisPanel.tsx"
+    ],
+    "get_bz_label_positions": [
+      "src/components/panels/BrillouinZonePanel.tsx"
+    ],
+    "get_crystal_state": [
+      "src/App.tsx",
+      "src/components/panels/AtomOperationsPanel.tsx"
+    ],
+    "get_measurement_labels_screen": [
+      "src/components/panels/MeasurementPanel.tsx"
+    ],
+    "get_settings": [
+      "src/components/layout/SettingsModal.tsx"
+    ],
+    "llm_chat": [
+      "src/components/layout/LlmAssistant.tsx"
+    ],
+    "llm_configure": [
+      "src/components/layout/LlmAssistant.tsx"
+    ],
+    "llm_execute_command": [
+      "src/components/layout/LlmAssistant.tsx"
+    ],
+    "load_axsf_phonon": [
+      "src/components/panels/PhononPanel.tsx"
+    ],
+    "load_cif_file": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "load_phonon_interactive": [
+      "src/components/panels/PhononPanel.tsx"
+    ],
+    "load_volumetric_file": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "load_wannier_hr": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "pan_camera": [
+      "src/hooks/useCameraInteraction.ts"
+    ],
+    "pick_atom": [
+      "src/hooks/useCameraInteraction.ts"
+    ],
+    "redo": [
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "restore_unitcell": [
+      "src/components/panels/SupercellPanel.tsx"
+    ],
+    "rotate_camera": [
+      "src/hooks/useCameraInteraction.ts"
+    ],
+    "set_camera_projection": [
+      "src/App.tsx"
+    ],
+    "set_camera_view_axis": [
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/layout/TopNavBar.tsx",
+      "src/components/panels/SlabPanel.tsx",
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "set_isosurface_opacity": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_isosurface_sign_mode": [
+      "src/components/panels/VolumetricPanel.tsx",
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_isovalue": [
+      "src/components/panels/VolumetricPanel.tsx",
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_phonon_mode": [
+      "src/components/panels/PhononPanel.tsx"
+    ],
+    "set_phonon_phase": [
+      "src/components/panels/PhononPanel.tsx"
+    ],
+    "set_render_flags": [
+      "src/App.tsx",
+      "src/App.tsx",
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "set_volume_colormap": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_volume_density_cutoff": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_volume_opacity_range": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_volume_render_mode": [
+      "src/components/panels/VolumetricPanel.tsx",
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
+    "set_wannier_orbital": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "set_wannier_r_shell": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "set_wannier_t_min": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "substitute_atoms": [
+      "src/components/panels/AtomOperationsPanel.tsx",
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "toggle_bz_display": [
+      "src/components/panels/BrillouinZonePanel.tsx",
+      "src/components/panels/BrillouinZonePanel.tsx"
+    ],
+    "toggle_hopping_display": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "toggle_wannier_onsite": [
+      "src/components/panels/WannierPanel.tsx"
+    ],
+    "translate_atoms_screen": [
+      "src/hooks/useCameraInteraction.ts"
+    ],
+    "undo": [
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "update_lattice_params": [
+      "src/components/layout/LeftSidebar.tsx"
+    ],
+    "update_selection": [
+      "src/App.tsx",
+      "src/App.tsx",
+      "src/hooks/useCameraInteraction.ts"
+    ],
+    "update_settings": [
+      "src/components/layout/SettingsModal.tsx",
+      "src/components/layout/SettingsModal.tsx"
+    ],
+    "update_viewport_size": [
+      "src/App.tsx"
+    ],
+    "write_text_file": [
+      "src/components/panels/BrillouinZonePanel.tsx"
+    ],
+    "zoom_camera": [
+      "src/hooks/useCameraInteraction.ts"
+    ]
+  },
+  "frontend_event_calls": [
+    {
+      "event": "menu-action",
+      "file": "src/hooks/useTauriMenu.ts",
+      "payload_type": null
+    },
+    {
+      "event": "state_changed",
+      "file": "src/App.tsx",
+      "payload_type": null
+    },
+    {
+      "event": "tauri://drag-drop",
+      "file": "src/hooks/useFileDrop.ts",
+      "payload_type": null
+    },
+    {
+      "event": "tauri://drag-enter",
+      "file": "src/hooks/useFileDrop.ts",
+      "payload_type": null
+    },
+    {
+      "event": "tauri://drag-leave",
+      "file": "src/hooks/useFileDrop.ts",
+      "payload_type": null
+    },
+    {
+      "event": "tauri://file-drop-cancelled",
+      "file": "src/hooks/useFileDrop.ts",
+      "payload_type": null
+    },
+    {
+      "event": "tauri://file-drop-hover",
+      "file": "src/hooks/useFileDrop.ts",
+      "payload_type": null
+    },
+    {
+      "event": "tauri://file-drop",
+      "file": "src/hooks/useFileDrop.ts",
+      "payload_type": null
+    },
+    {
+      "event": "view_projection_changed",
+      "file": "src/hooks/useTauriMenu.ts",
+      "payload_type": null
+    },
+    {
+      "event": "volumetric_loaded",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "payload_type": null
+    }
+  ],
+  "frontend_events": {
+    "menu-action": [
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "state_changed": [
+      "src/App.tsx"
+    ],
+    "tauri://drag-drop": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "tauri://drag-enter": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "tauri://drag-leave": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "tauri://file-drop": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "tauri://file-drop-cancelled": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "tauri://file-drop-hover": [
+      "src/hooks/useFileDrop.ts"
+    ],
+    "view_projection_changed": [
+      "src/hooks/useTauriMenu.ts"
+    ],
+    "volumetric_loaded": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ]
+  },
+  "forbidden_tauri_imports": [],
+  "dynamic_frontend_commands": [],
+  "dynamic_frontend_events": [],
+  "invalid_frontend_command_args": [],
+  "unsafe_frontend_type_arguments": [],
+  "forbidden_ipc_reexports": [],
+  "argument_mismatches": [],
+  "unclassified_backend_commands": [],
+  "unclassified_backend_events": [],
+  "unclassified_frontend_commands": [],
+  "unclassified_frontend_events": [],
+  "unregistered_classified_commands": [],
+  "unregistered_frontend_commands": []
+}

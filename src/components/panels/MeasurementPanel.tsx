@@ -18,7 +18,7 @@ export default function MeasurementPanel({ crystalState, selectedAtoms = [], onS
             try {
                 const w = window.innerWidth;
                 const h = window.innerHeight;
-                const labels = await safeInvoke<{label: string, x: number, y: number}[]>('get_measurement_labels_screen', { width: w, height: h });
+                const labels = await safeInvoke('get_measurement_labels_screen', { width: w, height: h });
                 if (active) setMeasurementLabels(labels || []);
             } catch (e: any) {
                 if (active) setMeasurementLabels([]);
