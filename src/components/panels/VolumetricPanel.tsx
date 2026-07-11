@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
+import type { VolumetricInfo } from '../../ipc/contracts';
 import { PanelProps } from './index';
 
 export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }: PanelProps) {
-    const [volumetricInfo, setVolumetricInfo] = useState<any | null>(null);
+    const [volumetricInfo, setVolumetricInfo] = useState<VolumetricInfo | null>(null);
     const [volumetricRange, setVolumetricRange] = useState<{min: number, max: number}>({min: -1.0, max: 1.0});
     const [isovalue, setIsovalue] = useState(0.05);
 
     useEffect(() => {
         let unlisten = () => {};
-        safeListen<any>('volumetric_loaded', (event: any) => {
+        safeListen('volumetric_loaded', (event) => {
             const info = event.payload;
             if (info) {
                 setVolumetricInfo(info);
@@ -34,7 +35,7 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 safeInvoke('set_volume_render_mode', { mode: 'both' }).catch(console.warn);
                 safeInvoke('set_isosurface_sign_mode', { mode: 'both' }).catch(console.warn);
             }
-        }).then((f: any) => unlisten = f).catch(console.warn);
+        }).then((f) => unlisten = f).catch(console.warn);
         
         return () => {
             unlisten();
@@ -47,7 +48,7 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 try {
                     const file = await safeDialogOpen({ title: 'Open Volumetric File' });
                     if (file && typeof file === 'string') {
-                        const info = await safeInvoke<any>('load_volumetric_file', { path: file });
+                        const info = await safeInvoke('load_volumetric_file', { path: file });
                         if (info) {
                             setVolumetricInfo(info);
                             let dMin = info.data_min;

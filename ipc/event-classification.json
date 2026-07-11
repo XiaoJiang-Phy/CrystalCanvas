@@ -1,0 +1,15 @@
+{
+  "events": {
+    "menu-action": "application_menu",
+    "state_changed": "state_sync",
+    "tauri://drag-drop": "native_window",
+    "tauri://drag-enter": "native_window",
+    "tauri://drag-leave": "native_window",
+    "tauri://file-drop": "native_window",
+    "tauri://file-drop-cancelled": "native_window",
+    "tauri://file-drop-hover": "native_window",
+    "undo_stack_changed": "state_sync",
+    "view_projection_changed": "renderer_sync",
+    "volumetric_loaded": "renderer_sync"
+  }
+}

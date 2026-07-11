@@ -23,13 +23,13 @@ export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
         };
 
         // Tauri v1 / fallback file drop event
-        safeListen<{ paths: string[] }>('tauri://file-drop', (event) => {
+        safeListen('tauri://file-drop', (event) => {
             setIsDragging(false);
             handleDrop(event.payload.paths?.[0]);
         }).then(f => unlistenDrop = f).catch(console.warn);
 
         // Tauri v2 drag-drop event
-        safeListen<{ paths: string[] }>('tauri://drag-drop', (event) => {
+        safeListen('tauri://drag-drop', (event) => {
             setIsDragging(false);
             handleDrop(event.payload.paths?.[0]);
         }).then(f => unlistenDragDrop = f).catch(console.warn);

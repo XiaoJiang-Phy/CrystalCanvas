@@ -80,7 +80,7 @@ export function useCameraInteraction({
                     const x = (e.clientX - rect.left) * dpr;
                     const y = (e.clientY - rect.top) * dpr;
                     console.warn(`[CameraInteraction] calling pick_atom x=${x} y=${y} W=${rect.width * dpr} H=${rect.height * dpr}`);
-                    safeInvoke<number | null>('pick_atom', {
+                    safeInvoke('pick_atom', {
                         x, y,
                         screenW: rect.width * dpr,
                         screenH: rect.height * dpr

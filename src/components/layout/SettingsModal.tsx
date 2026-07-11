@@ -26,7 +26,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, e
 
     useEffect(() => {
         if (isOpen) {
-            safeInvoke<AppSettings>('get_settings')
+            safeInvoke('get_settings')
                 .then(s => s && setSettings(s))
                 .catch(console.error);
         }

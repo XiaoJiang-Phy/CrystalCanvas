@@ -36,6 +36,8 @@ export interface CrystalState {
     // State metadata
     version: number; // Incremented on every modification
     intrinsic_sites: number; // True atom count before boundary mirroring
+    is_2d: boolean;
+    vacuum_axis: number | null;
 
     measurements: MeasurementOverlay[];
 }
@@ -133,4 +135,3 @@ export interface WannierInfo {
     r_shells: [number, number, number][];
     t_max: number;
 }
-

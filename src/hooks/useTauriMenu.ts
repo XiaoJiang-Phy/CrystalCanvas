@@ -34,7 +34,7 @@ export function useTauriMenu({
         let unlistenMenu = () => { };
         let unlistenProjection = () => { };
 
-        safeListen<string>('menu-action', (event) => {
+        safeListen('menu-action', (event) => {
             const action = event.payload;
             console.log("Menu action received:", action);
 
@@ -146,7 +146,7 @@ export function useTauriMenu({
         };
         window.addEventListener('keydown', handleKeyDown);
 
-        safeListen<{ is_perspective: boolean }>('view_projection_changed', (event) => {
+        safeListen('view_projection_changed', (event) => {
             setIsPerspective(event.payload.is_perspective);
         }).then(f => unlistenProjection = f).catch(console.warn);
 

@@ -37,13 +37,38 @@ pub struct WannierOverlay {
 impl WannierOverlay {
     pub fn new(hr_data: WannierHrData, lattice_col_major: &[f64; 9], atom_positions: &[[f32; 3]]) -> Result<Self, String> {
         let n_shells = hr_data.r_shells.len();
+        let r_shell_map: std::collections::HashMap<[i32; 3], usize> = hr_data
+            .r_shells
+            .iter()
+            .enumerate()
+            .map(|(i, &r)| (r, i))
+            .collect();
+        if hr_data.num_wann == 0 || !hr_data.t_max.is_finite() || hr_data.t_max < 0.0 {
+            return Err("Wannier dimensions must be positive and t_max finite and non-negative".to_string());
+        }
+        for hopping in &hr_data.hoppings {
+            if hopping.m >= hr_data.num_wann || hopping.n >= hr_data.num_wann {
+                return Err(format!(
+                    "Hopping orbital indices ({}, {}) exceed num_wann={}",
+                    hopping.m, hopping.n, hr_data.num_wann
+                ));
+            }
+            if !hopping.re.is_finite() || !hopping.im.is_finite()
+                || !hopping.magnitude.is_finite() || hopping.magnitude < 0.0
+            {
+                return Err("Hopping components and magnitude must be finite".to_string());
+            }
+            if !r_shell_map.contains_key(&hopping.r_vec) {
+                return Err(format!("Hopping R-vec {:?} not found in r_shell_map", hopping.r_vec));
+            }
+        }
         let mut overlay = Self {
             t_min_threshold: 0.01,
             show_onsite: false,
             active_r_shells: vec![true; n_shells],
             active_orbitals: vec![true; hr_data.num_wann],
             visible_hoppings: Vec::with_capacity(hr_data.hoppings.len()),
-            r_shell_map: hr_data.r_shells.iter().enumerate().map(|(i, &r)| (r, i)).collect(),
+            r_shell_map,
             hr_data,
         };
         overlay.filter_and_rebuild(lattice_col_major, atom_positions)?;
@@ -72,8 +97,7 @@ impl WannierOverlay {
                 continue;
             }
 
-            let shell_idx = self.r_shell_map.get(&hopping.r_vec).copied()
-                .ok_or_else(|| "Hopping R-vec not found in r_shell_map".to_string())?;
+            let shell_idx = self.r_shell_map[&hopping.r_vec];
 
             if !self.active_r_shells[shell_idx] {
                 continue;
@@ -189,6 +213,34 @@ mod tests {
         // We defined atom_n = m = 0, so end_cart = [2.46, 0.0, 0.0]
         assert!((h.end_cart[0] - 2.46).abs() < 1e-4);
         assert!((h.end_cart[1] - 0.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_failed_filter_preserves_visible_hoppings() {
+        let hr_data = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
+        let mut overlay = WannierOverlay::new(hr_data, &LATTICE, &ATOMS).unwrap();
+        let before = serde_json::to_value(&overlay.visible_hoppings).unwrap();
+
+        assert!(overlay.filter_and_rebuild(&LATTICE, &[]).is_err());
+        assert_eq!(serde_json::to_value(&overlay.visible_hoppings).unwrap(), before);
+    }
+
+    #[test]
+    fn test_constructor_rejects_missing_r_shell_mapping() {
+        let mut hr_data = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
+        hr_data.r_shells.clear();
+        assert!(WannierOverlay::new(hr_data, &LATTICE, &ATOMS).is_err());
+    }
+
+    #[test]
+    fn test_constructor_rejects_invalid_orbital_indices_and_non_finite_hoppings() {
+        let mut invalid_index = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
+        invalid_index.hoppings[0].m = invalid_index.num_wann;
+        assert!(WannierOverlay::new(invalid_index, &LATTICE, &ATOMS).is_err());
+
+        let mut invalid_magnitude = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
+        invalid_magnitude.hoppings[0].magnitude = f64::NAN;
+        assert!(WannierOverlay::new(invalid_magnitude, &LATTICE, &ATOMS).is_err());
     }
 }
 
