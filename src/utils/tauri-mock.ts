@@ -54,14 +54,16 @@ export async function safeInvoke(
             || cmd === 'check_api_key_status' || cmd === 'compute_brillouin_zone'
             || cmd === 'generate_kpath_text' || cmd === 'get_bond_analysis'
             || cmd === 'get_bz_label_positions' || cmd === 'get_crystal_state'
-            || cmd === 'get_measurement_labels_screen' || cmd === 'get_settings'
+            || cmd === 'get_kpath_info' || cmd === 'get_measurement_labels_screen'
+            || cmd === 'get_settings'
             || cmd === 'llm_chat' || cmd === 'load_axsf_phonon'
             || cmd === 'load_phonon_interactive' || cmd === 'pick_atom'
             || cmd === 'load_cif_file' || cmd === 'export_file'
             || cmd === 'export_image' || cmd === 'write_text_file'
             || cmd === 'set_wannier_t_min' || cmd === 'set_wannier_r_shell'
             || cmd === 'set_wannier_orbital' || cmd === 'toggle_wannier_onsite'
-            || cmd === 'toggle_hopping_display' || cmd === 'clear_wannier') {
+            || cmd === 'toggle_hopping_display' || cmd === 'toggle_bz_display'
+            || cmd === 'set_bz_scale' || cmd === 'clear_wannier') {
             return validate_ipc_result(cmd, result);
         }
         return result;

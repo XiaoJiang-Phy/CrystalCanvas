@@ -2,6 +2,7 @@ import type {
     BondAnalysisResult,
     BzInfo,
     CrystalState,
+    KPathInfo,
     PhononModeSummary,
     WannierInfo,
 } from '../types/crystal';
@@ -77,6 +78,7 @@ export interface IpcCommandContract {
     get_bond_analysis: { args: { thresholdFactor: number }; result: BondAnalysisResult };
     get_bz_label_positions: { args: { width: number; height: number }; result: ScreenLabel[] };
     get_crystal_state: { args: undefined; result: CrystalState };
+    get_kpath_info: { args: undefined; result: KPathInfo };
     get_measurement_labels_screen: { args: { width: number; height: number }; result: ScreenLabel[] };
     get_settings: { args: undefined; result: AppSettingsDto };
     llm_chat: { args: { userMessage: string; selectedIndices: number[] | null }; result: string };
@@ -98,10 +100,12 @@ export interface IpcCommandContract {
         result: WannierInfo;
     };
     set_wannier_t_min: { args: { tMin: number }; result: null };
+    set_bz_scale: { args: { scale: number }; result: null };
     set_wannier_r_shell: { args: { shellIdx: number; active: boolean }; result: null };
     set_wannier_orbital: { args: { orbIdx: number; active: boolean }; result: null };
     toggle_wannier_onsite: { args: { show: boolean }; result: null };
     toggle_hopping_display: { args: { show: boolean }; result: null };
+    toggle_bz_display: { args: { show: boolean }; result: null };
     clear_wannier: { args: undefined; result: null };
     write_text_file: { args: { path: string; content: string }; result: null };
 }
@@ -221,6 +225,22 @@ function is_bz_info(value: unknown): value is BzInfo {
         && typeof value.is_2d === 'boolean';
 }
 
+function is_kpath_info(value: unknown): value is KPathInfo {
+    if (!is_record(value) || !Array.isArray(value.points) || !Array.isArray(value.segments)) {
+        return false;
+    }
+    const labels = new Set<string>();
+    for (const point of value.points) {
+        if (!is_record(point) || typeof point.label !== 'string' || point.label.length === 0
+            || !is_number_triplet(point.coord_frac) || labels.has(point.label)) return false;
+        labels.add(point.label);
+    }
+    return value.segments.every((segment) => Array.isArray(segment)
+        && segment.length >= 2
+        && segment.every((label) => typeof label === 'string'
+            && label.length > 0 && labels.has(label)));
+}
+
 function is_app_settings(value: unknown): value is AppSettingsDto {
     return is_record(value) && is_finite_number(value.atom_scale)
         && value.atom_scale >= 0
@@ -274,6 +294,7 @@ export function validate_ipc_result<Command extends TypedIpcCommand>(
     if (command === 'get_bond_analysis' && is_bond_analysis(value)) return value as IpcResult<Command>;
     if ((command === 'get_bz_label_positions' || command === 'get_measurement_labels_screen') && is_screen_labels(value)) return value as IpcResult<Command>;
     if (command === 'get_crystal_state' && is_crystal_state(value)) return value as IpcResult<Command>;
+    if (command === 'get_kpath_info' && is_kpath_info(value)) return value as IpcResult<Command>;
     if (command === 'get_settings' && is_app_settings(value)) return value as IpcResult<Command>;
     if (command === 'llm_chat' && typeof value === 'string') return value as IpcResult<Command>;
     if ((command === 'load_axsf_phonon' || command === 'load_phonon_interactive') && is_phonon_modes(value)) return value as IpcResult<Command>;
@@ -282,6 +303,7 @@ export function validate_ipc_result<Command extends TypedIpcCommand>(
         || command === 'write_text_file' || command === 'set_wannier_t_min'
         || command === 'set_wannier_r_shell' || command === 'set_wannier_orbital'
         || command === 'toggle_wannier_onsite' || command === 'toggle_hopping_display'
+        || command === 'toggle_bz_display' || command === 'set_bz_scale'
         || command === 'clear_wannier') && value === null) return value as IpcResult<Command>;
     throw new Error(`Invalid IPC response for ${command}`);
 }

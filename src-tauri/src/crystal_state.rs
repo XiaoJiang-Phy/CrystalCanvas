@@ -41,6 +41,14 @@ pub struct BondAnalysis {
     pub threshold_factor: f64,
 }
 
+#[derive(Clone)]
+pub struct BrillouinZoneCache {
+    pub bz: crate::brillouin_zone::BrillouinZone,
+    pub kpath: crate::kpath::KPath,
+    pub source_version: u32,
+    pub vacuum_axis: Option<usize>,
+}
+
 /// Type of measurement annotation
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum MeasurementKind {
@@ -105,7 +113,7 @@ pub struct CrystalState {
     #[serde(skip)]
     pub volumetric_data: Option<crate::volumetric::VolumetricData>,
     #[serde(skip)]
-    pub bz_cache: Option<(crate::brillouin_zone::BrillouinZone, crate::kpath::KPath)>,
+    pub bz_cache: Option<BrillouinZoneCache>,
     #[serde(skip)]
     pub wannier_overlay: Option<crate::wannier::WannierOverlay>,
     pub measurements: Vec<MeasurementOverlay>,
@@ -1347,8 +1355,8 @@ impl CrystalState {
         );
     }
     
-    /// Get the two in-plane lattice vectors projected to 2D given the vacuum axis.
-    pub fn get_inplane_lattice(&self) -> ([f64; 2], [f64; 2]) {
+    /// Get the two real-space lattice vectors spanning the periodic plane.
+    pub fn get_inplane_lattice(&self) -> ([f64; 3], [f64; 3]) {
         let lattice = self.get_lattice_col_major(); 
         let v1 = [lattice[0], lattice[1], lattice[2]];
         let v2 = [lattice[3], lattice[4], lattice[5]];
@@ -1356,19 +1364,12 @@ impl CrystalState {
         
         if let Some(axis) = self.vacuum_axis {
             match axis {
-                0 => {
-                    ([v2[1], v2[2]], [v3[1], v3[2]])
-                },
-                1 => {
-                    ([v1[0], v1[2]], [v3[0], v3[2]])
-                },
-                2 => {
-                    ([v1[0], v1[1]], [v2[0], v2[1]])
-                },
-                _ => ([v1[0], v1[1]], [v2[0], v2[1]])
+                0 => (v2, v3),
+                1 => (v1, v3),
+                _ => (v1, v2),
             }
         } else {
-            ([v1[0], v1[1]], [v2[0], v2[1]])
+            (v1, v2)
         }
     }
 
