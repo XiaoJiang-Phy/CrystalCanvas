@@ -6,6 +6,7 @@ import ts from 'typescript';
 const source = await readFile(new URL('../src/ipc/contracts.ts', import.meta.url), 'utf8');
 const wannier_command_source = await readFile(new URL('../src-tauri/src/commands/wannier.rs', import.meta.url), 'utf8');
 const wannier_core_source = await readFile(new URL('../src-tauri/src/wannier.rs', import.meta.url), 'utf8');
+const reciprocal_command_source = await readFile(new URL('../src-tauri/src/commands/reciprocal.rs', import.meta.url), 'utf8');
 const transpiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -98,6 +99,61 @@ test('Wannier mutation commands accept only unit success responses', () => {
         assert.equal(contracts.validate_ipc_result(command, null), null);
         assert.throws(() => contracts.validate_ipc_result(command, undefined));
     }
+});
+
+test('Reciprocal backend commands use structured IPC results', () => {
+    for (const command of [
+        'compute_brillouin_zone', 'toggle_bz_display', 'get_kpath_info',
+        'set_bz_scale', 'generate_kpath_text', 'get_bz_label_positions',
+    ]) {
+        const start = reciprocal_command_source.indexOf(`pub fn ${command}`);
+        const body = reciprocal_command_source.slice(start, reciprocal_command_source.indexOf('{', start));
+        assert.match(body, /\)\s*-> IpcResult</, command);
+    }
+    assert.doesNotMatch(reciprocal_command_source, /\)\s*-> Result<[^\n]*String>/);
+});
+
+test('Reciprocal renderer mutations accept only unit success responses', () => {
+    for (const command of ['toggle_bz_display', 'set_bz_scale']) {
+        assert.equal(contracts.validate_ipc_result(command, null), null);
+        assert.throws(() => contracts.validate_ipc_result(command, undefined));
+    }
+});
+
+test('Hiding the Brillouin zone does not acquire the crystal-state lock', () => {
+    const start = reciprocal_command_source.indexOf('pub fn toggle_bz_display');
+    const end = reciprocal_command_source.indexOf('#[tauri::command]', start);
+    const command = reciprocal_command_source.slice(start, end);
+    const hide_branch = command.indexOf('if !show');
+    const renderer_lock = command.indexOf('renderer_state', hide_branch);
+    const crystal_lock = command.indexOf('crystal_state', hide_branch);
+    assert.ok(hide_branch >= 0 && hide_branch < renderer_lock && renderer_lock < crystal_lock);
+});
+
+test('K-path info validation checks fractional coordinates and segment labels', () => {
+    const info = {
+        points: [
+            { label: 'Γ', coord_frac: [0, 0, 0] },
+            { label: 'X', coord_frac: [0.5, 0, 0] },
+        ],
+        segments: [['Γ', 'X']],
+    };
+    assert.deepEqual(contracts.validate_ipc_result('get_kpath_info', info), info);
+    assert.throws(() => contracts.validate_ipc_result('get_kpath_info', {
+        ...info, points: [{ label: 'Γ', coord_frac: [0, Number.NaN, 0] }],
+    }));
+    assert.throws(() => contracts.validate_ipc_result('get_kpath_info', {
+        ...info, segments: [['Γ', 1]],
+    }));
+    assert.throws(() => contracts.validate_ipc_result('get_kpath_info', {
+        ...info, segments: [['Γ', 'M']],
+    }));
+    assert.throws(() => contracts.validate_ipc_result('get_kpath_info', {
+        ...info, points: [...info.points, { label: 'X', coord_frac: [0, 0.5, 0] }],
+    }));
+    assert.throws(() => contracts.validate_ipc_result('get_kpath_info', {
+        ...info, segments: [['Γ']],
+    }));
 });
 
 test('Volumetric IPC validator accepts finite ordered grid metadata', () => {
