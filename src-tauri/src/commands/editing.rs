@@ -1,4 +1,5 @@
 use tauri::{Emitter, State};
+use crate::ipc::{IpcError, IpcResult};
 
 #[tauri::command]
 pub fn update_lattice_params(
@@ -9,18 +10,19 @@ pub fn update_lattice_params(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("update_lattice_params: a={}, b={}, c={}, alpha={}, beta={}, gamma={}", a, b, c, alpha, beta, gamma);
-    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        cs.cell_a = a;
-        cs.cell_b = b;
-        cs.cell_c = c;
-        cs.cell_alpha = alpha;
-        cs.cell_beta = beta;
-        cs.cell_gamma = gamma;
-        cs.fractional_to_cartesian();
-        cs.detect_spacegroup();
-        Ok(())
+    crate::transaction::with_prepared_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+        prepared.cell_a = a;
+        prepared.cell_b = b;
+        prepared.cell_c = c;
+        prepared.cell_alpha = alpha;
+        prepared.cell_beta = beta;
+        prepared.cell_gamma = gamma;
+        prepared.fractional_to_cartesian();
+        prepared.detect_spacegroup();
+        Ok(prepared)
     })
 }
 
@@ -34,9 +36,9 @@ pub fn add_atom(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
-    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+    crate::transaction::with_structural_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
         let formatted_symbol = crate::llm::router::format_element_symbol(&element_symbol);
         let an = if atomic_number == 0 {
             crate::llm::router::element_to_atomic_number(&formatted_symbol)
@@ -45,11 +47,11 @@ pub fn add_atom(
         };
         
         if an == 0 {
-            return Err(format!("Invalid element symbol: {}", element_symbol));
+            return Err(IpcError::invalid_argument(format!("Invalid element symbol: {}", element_symbol)));
         }
         
         cs.try_add_atom(&formatted_symbol, an, fract_pos)
-            .map_err(|_| "Collision detected: atom too close to existing atoms")?;
+            .map_err(|_| IpcError::invalid_argument("collision detected: atom too close to existing atoms"))?;
         Ok(())
     })
 }
@@ -62,9 +64,9 @@ pub fn delete_atoms(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("delete_atoms: {:?}", indices);
-    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+    crate::transaction::with_structural_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
         cs.delete_atoms(&indices);
         Ok(())
     })
@@ -79,9 +81,10 @@ pub fn translate_atoms_screen(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let (eye, target, up) = {
-        let r = renderer_state.lock().map_err(|_| "Failed to lock renderer")?;
+        let r = renderer_state.lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         (r.camera.eye, r.camera.target, r.camera.up)
     };
     
@@ -91,14 +94,18 @@ pub fn translate_atoms_screen(
     let up_dir = right.cross(forward).normalize();
     let translation = right * dx * pan_speed - up_dir * dy * pan_speed;
     
-    let mut cs = crystal_state.try_lock().map_err(|_| "State currently in use")?;
+    let mut cs = crystal_state.try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
+    let settings = settings_state.try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "settings"))?;
+    let mut renderer = renderer_state.try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
+    let next_version = cs.version.checked_add(1)
+        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
     cs.translate_atoms_cartesian(&indices, translation);
-    cs.version += 1;
-    
-    let settings = settings_state.try_lock().map_err(|_| "Settings in use")?;
+    cs.version = next_version;
+    let version = next_version;
     let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-    
-    let mut renderer = renderer_state.try_lock().map_err(|_| "Renderer in use")?;
     renderer.update_atoms(&instances);
     renderer.update_lines(&cs, &settings);
     if !indices.is_empty() {
@@ -110,7 +117,7 @@ pub fn translate_atoms_screen(
     drop(settings);
     drop(cs);
 
-    app.emit("state_changed", ()).ok();
+    app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
     Ok(())
 }
 
@@ -124,9 +131,9 @@ pub fn substitute_atoms(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("substitute_atoms: {:?} -> {}", indices, new_element_symbol);
-    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+    crate::transaction::with_structural_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
         let formatted_symbol = crate::llm::router::format_element_symbol(&new_element_symbol);
         let mut an = new_atomic_number;
         if an == 0 {
@@ -134,7 +141,7 @@ pub fn substitute_atoms(
         }
         
         if an == 0 {
-            return Err(format!("Invalid element symbol: {}", new_element_symbol));
+            return Err(IpcError::invalid_argument(format!("Invalid element symbol: {}", new_element_symbol)));
         }
         
         cs.substitute_atoms(&indices, &formatted_symbol, an);
@@ -145,26 +152,26 @@ pub fn substitute_atoms(
 #[tauri::command]
 pub fn update_selection(
     indices: Vec<usize>,
-    app: tauri::AppHandle,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     // Selection highlights are purely UI, do not push to undo stack
-    let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+    let mut cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let settings = settings_state.lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+    let mut renderer = renderer_state.lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+
     cs.selected_atoms = indices.clone();
-    
-    let settings = settings_state.lock().map_err(|_| "Failed to lock settings")?;
     let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &indices);
-    
-    let mut renderer = renderer_state.lock().map_err(|_| "Failed to lock renderer")?;
     renderer.update_bonds(&bond_instances);
     
     drop(renderer);
     drop(settings);
     drop(cs);
 
-    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -175,55 +182,36 @@ pub fn undo(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
-    let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
-    let mut u_stack = undo_state.lock().map_err(|e| format!("Undo stack locked: {}", e))?;
-    
-    // Attempt undo
-    if let Some(prev_state) = u_stack.undo(crate::undo::LightweightState::from_crystal_state(&cs)) {
-        // Restore properties from prev_state to cs
-        cs.name = prev_state.name;
-        cs.spacegroup_hm = prev_state.spacegroup_hm;
-        cs.spacegroup_number = prev_state.spacegroup_number;
-        cs.is_2d = prev_state.is_2d;
-        cs.vacuum_axis = prev_state.vacuum_axis;
-        cs.intrinsic_sites = prev_state.intrinsic_sites;
-        
-        cs.cell_a = prev_state.cell_a;
-        cs.cell_b = prev_state.cell_b;
-        cs.cell_c = prev_state.cell_c;
-        cs.cell_alpha = prev_state.cell_alpha;
-        cs.cell_beta = prev_state.cell_beta;
-        cs.cell_gamma = prev_state.cell_gamma;
-        
-        cs.labels = prev_state.labels;
-        cs.elements = prev_state.elements;
-        cs.fract_x = prev_state.fract_x;
-        cs.fract_y = prev_state.fract_y;
-        cs.fract_z = prev_state.fract_z;
-        cs.occupancies = prev_state.occupancies;
-        cs.atomic_numbers = prev_state.atomic_numbers;
-        cs.cart_positions = prev_state.cart_positions;
-        cs.selected_atoms = prev_state.selected_atoms;
-        cs.measurements = prev_state.measurements;
-        
-        cs.version += 1;
+) -> IpcResult<()> {
+    let mut cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let next_version = cs.version.checked_add(1)
+        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+    let mut u_stack = undo_state.lock()
+        .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
+    let settings = settings_state.lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+    let mut renderer = renderer_state.lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+
+    if let Some(prev_state) = u_stack.undo(crate::undo::StructuralSnapshot::from_crystal_state(&cs)) {
+        prev_state.restore_for_history(&mut cs);
+        cs.version = next_version;
+        let version = next_version;
         let can_undo = u_stack.can_undo();
         let can_redo = u_stack.can_redo();
-        drop(u_stack); // Drop early
-        
-        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
         let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
         let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
-        let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
+        renderer.clear_structure_bound_overlays();
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
         renderer.update_bonds(&bond_instances);
         
         drop(renderer);
         drop(settings);
+        drop(u_stack);
         drop(cs);
-        app.emit("state_changed", ()).ok();
+        app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
         app.emit("undo_stack_changed", crate::transaction::UndoStackPayload { can_undo, can_redo }).ok();
     }
     
@@ -237,54 +225,36 @@ pub fn redo(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
-    let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
-    let mut u_stack = undo_state.lock().map_err(|e| format!("Undo stack locked: {}", e))?;
-    
-    // Attempt redo
-    if let Some(next_state) = u_stack.redo(crate::undo::LightweightState::from_crystal_state(&cs)) {
-        cs.name = next_state.name;
-        cs.spacegroup_hm = next_state.spacegroup_hm;
-        cs.spacegroup_number = next_state.spacegroup_number;
-        cs.is_2d = next_state.is_2d;
-        cs.vacuum_axis = next_state.vacuum_axis;
-        cs.intrinsic_sites = next_state.intrinsic_sites;
-        
-        cs.cell_a = next_state.cell_a;
-        cs.cell_b = next_state.cell_b;
-        cs.cell_c = next_state.cell_c;
-        cs.cell_alpha = next_state.cell_alpha;
-        cs.cell_beta = next_state.cell_beta;
-        cs.cell_gamma = next_state.cell_gamma;
-        
-        cs.labels = next_state.labels;
-        cs.elements = next_state.elements;
-        cs.fract_x = next_state.fract_x;
-        cs.fract_y = next_state.fract_y;
-        cs.fract_z = next_state.fract_z;
-        cs.occupancies = next_state.occupancies;
-        cs.atomic_numbers = next_state.atomic_numbers;
-        cs.cart_positions = next_state.cart_positions;
-        cs.selected_atoms = next_state.selected_atoms;
-        cs.measurements = next_state.measurements;
-        
-        cs.version += 1;
+) -> IpcResult<()> {
+    let mut cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let next_version = cs.version.checked_add(1)
+        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+    let mut u_stack = undo_state.lock()
+        .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
+    let settings = settings_state.lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+    let mut renderer = renderer_state.lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+
+    if let Some(next_state) = u_stack.redo(crate::undo::StructuralSnapshot::from_crystal_state(&cs)) {
+        next_state.restore_for_history(&mut cs);
+        cs.version = next_version;
+        let version = next_version;
         let can_undo = u_stack.can_undo();
         let can_redo = u_stack.can_redo();
-        drop(u_stack); // Drop early
-        
-        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
         let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
         let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
-        let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
+        renderer.clear_structure_bound_overlays();
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
         renderer.update_bonds(&bond_instances);
         
         drop(renderer);
         drop(settings);
+        drop(u_stack);
         drop(cs);
-        app.emit("state_changed", ()).ok();
+        app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
         app.emit("undo_stack_changed", crate::transaction::UndoStackPayload { can_undo, can_redo }).ok();
     }
     

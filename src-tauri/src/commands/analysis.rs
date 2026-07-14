@@ -1,4 +1,5 @@
 use tauri::{Emitter, State};
+use crate::ipc::{IpcError, IpcResult};
 
 #[derive(serde::Serialize)]
 pub struct BondAnalysisResult {
@@ -15,18 +16,21 @@ pub struct BondAnalysisResult {
 pub fn get_bond_analysis(
     threshold_factor: Option<f64>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<BondAnalysisResult, String> {
+) -> IpcResult<BondAnalysisResult> {
     let factor = threshold_factor.unwrap_or(1.2);
+    if !factor.is_finite() || factor <= 0.0 {
+        return Err(IpcError::invalid_argument("bond threshold factor must be finite and positive"));
+    }
     let mut cs = crystal_state
         .try_lock()
-        .map_err(|_| "Failed to lock state")?;
+        .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
 
     cs.compute_bond_analysis(factor);
 
     let analysis = cs
         .bond_analysis
         .as_ref()
-        .ok_or_else(|| "Bond analysis not computed".to_string())?;
+        .ok_or_else(|| IpcError::from("bond analysis was not computed"))?;
 
     let stats = analysis.bond_length_stats(&cs.elements);
     let distortion_indices: Vec<f64> = analysis
@@ -53,10 +57,10 @@ pub fn load_phonon(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
-) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
+) -> IpcResult<Vec<crate::phonon::PhononModeSummary>> {
     log::info!("load_phonon: {}", path);
     // 1. Check if the phonon struct loader provides structural info (Molden/QE output)
-    let data = crate::phonon::parse_phonon_file(&path)?;
+    let data = crate::phonon::parse_phonon_file(&path).map_err(IpcError::parse)?;
     let summaries = data.summaries();
 
     // 2. We can try to guess or load structural info from phonon data if our state is empty
@@ -64,31 +68,38 @@ pub fn load_phonon(
     {
         let mut cs = crystal_state
             .lock()
-            .map_err(|_| "Failed to lock state")?;
-        
-        // Let's ensure the user loaded a structure first.
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        let settings = settings_state.lock()
+            .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+        let mut renderer = renderer_state.lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+
         if cs.cart_positions.is_empty() {
-             return Err("Please load a crystal structure (CIF/XYZ/PDB) before loading Phonon data.".to_string());
+             return Err(IpcError::invalid_argument("load a crystal structure before loading phonon data"));
         }
 
-        if cs.cart_positions.len() != data.n_atoms {
-             log::warn!("Atom count mismatch: struct={} vs phonon={}", cs.cart_positions.len(), data.n_atoms);
-             // We allow proceeding but this might truncate eigenvectors
+        if cs.intrinsic_sites != data.n_atoms {
+            return Err(IpcError::invalid_argument(format!(
+                "phonon atom count {} does not match crystal atom count {}",
+                data.n_atoms,
+                cs.intrinsic_sites
+            )));
         }
 
+        let next_version = cs.version.checked_add(1)
+            .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
         cs.phonon_data = Some(data);
         cs.active_phonon_mode = None;
         cs.phonon_phase = 0.0;
-        
-        // Trigger a reset of renderer instances just in case previous states were playing.
-        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+        cs.version = next_version;
         let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-        if let Ok(mut renderer) = renderer_state.lock() {
-            renderer.update_atoms(&instances);
-        }
-    }
+        renderer.update_atoms(&instances);
 
-    app.emit("state_changed", ()).ok();
+        drop(renderer);
+        drop(settings);
+        drop(cs);
+        app.emit("state_changed", crate::transaction::StateChangedPayload { version: next_version }).ok();
+    }
 
     Ok(summaries)
 }
@@ -104,14 +115,14 @@ pub fn load_phonon_interactive(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
+) -> IpcResult<Vec<crate::phonon::PhononModeSummary>> {
     log::info!("load_phonon_interactive: in={}, modes={}", scf_in, modes);
     
     // 1. Load the crystal structure from scf_in now (since its parser is fully robust)
-    let mut new_state = crate::io::qe_parser::parse_scf_in(&scf_in)?;
+    let mut new_state = crate::io::qe_parser::parse_scf_in(&scf_in).map_err(IpcError::parse)?;
     
     // 2. Parse phonon data
-    let data = crate::phonon::parse_phonon_file(&modes)?;
+    let data = crate::phonon::parse_phonon_file(&modes).map_err(IpcError::parse)?;
     let summaries = data.summaries();
 
     if new_state.cart_positions.len() != data.n_atoms {
@@ -124,22 +135,24 @@ pub fn load_phonon_interactive(
     
     let can_undo;
     let can_redo;
+    let version;
     {
-        let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+        let mut cs = crystal_state.lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
         
-        let mut u_stack = undo_state.lock().map_err(|e| format!("{}", e))?;
-        u_stack.push(crate::undo::LightweightState::from_crystal_state(&cs));
-        can_undo = u_stack.can_undo();
-        can_redo = u_stack.can_redo();
-        drop(u_stack);
-        
+        let mut u_stack = undo_state.lock()
+            .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
+        let settings = settings_state.lock()
+            .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+        let mut renderer = renderer_state.lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+        let next_version = cs.version.checked_add(1)
+            .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+        let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
+        renderer.clear_structure_bound_overlays();
         *cs = new_state;
-        
-        // Trigger a full renderer update (atoms + unit cell lines + camera)
-        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+        cs.version = next_version;
         let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-        
-        let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
         
@@ -152,9 +165,13 @@ pub fn load_phonon_interactive(
         if !renderer.camera.is_perspective {
             renderer.camera.set_orthographic(extent * 1.5);
         }
+        u_stack.push(previous_state);
+        can_undo = u_stack.can_undo();
+        can_redo = u_stack.can_redo();
+        version = next_version;
     }
 
-    app.emit("state_changed", ()).ok();
+    app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
     app.emit("undo_stack_changed", crate::transaction::UndoStackPayload { can_undo, can_redo }).ok();
 
     Ok(summaries)
@@ -169,10 +186,10 @@ pub fn load_axsf_phonon(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<Vec<crate::phonon::PhononModeSummary>, String> {
+) -> IpcResult<Vec<crate::phonon::PhononModeSummary>> {
     log::info!("load_axsf_phonon: {}", path);
     // 1 & 2. Load the crystal structure and phonon data directly from the axsf
-    let (mut new_state, data) = crate::io::axsf_parser::parse_axsf(&path)?;
+    let (mut new_state, data) = crate::io::axsf_parser::parse_axsf(&path).map_err(IpcError::parse)?;
     let summaries = data.summaries();
 
     new_state.phonon_data = Some(data);
@@ -181,19 +198,23 @@ pub fn load_axsf_phonon(
     
     let can_undo;
     let can_redo;
+    let version;
     {
-        let mut cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
-        let mut u_stack = undo_state.lock().map_err(|e| format!("{}", e))?;
-        u_stack.push(crate::undo::LightweightState::from_crystal_state(&cs));
-        can_undo = u_stack.can_undo();
-        can_redo = u_stack.can_redo();
-        drop(u_stack);
+        let mut cs = crystal_state.lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        let mut u_stack = undo_state.lock()
+            .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
+        let settings = settings_state.lock()
+            .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+        let mut renderer = renderer_state.lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+        let next_version = cs.version.checked_add(1)
+            .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+        let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
+        renderer.clear_structure_bound_overlays();
         *cs = new_state;
-        
-        let settings = settings_state.lock().map_err(|_| "Settings lock fail")?;
+        cs.version = next_version;
         let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-        
-        let mut renderer = renderer_state.lock().map_err(|_| "Renderer lock fail")?;
         renderer.update_atoms(&instances);
         renderer.update_lines(&cs, &settings);
         
@@ -205,9 +226,13 @@ pub fn load_axsf_phonon(
         if !renderer.camera.is_perspective {
             renderer.camera.set_orthographic(extent * 1.5);
         }
+        u_stack.push(previous_state);
+        can_undo = u_stack.can_undo();
+        can_redo = u_stack.can_redo();
+        version = next_version;
     }
 
-    app.emit("state_changed", ()).ok();
+    app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
     app.emit("undo_stack_changed", crate::transaction::UndoStackPayload { can_undo, can_redo }).ok();
 
     Ok(summaries)
@@ -217,13 +242,12 @@ pub fn load_axsf_phonon(
 #[tauri::command]
 pub fn set_phonon_mode(
     mode_index: Option<usize>,
-    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let mut cs = crystal_state
         .lock()
-        .map_err(|_| "Failed to lock state")?;
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
 
     if let Some(idx) = mode_index {
         let n_modes = cs
@@ -231,21 +255,20 @@ pub fn set_phonon_mode(
             .as_ref()
             .map_or(0, |d| d.modes.len());
         if idx >= n_modes {
-            return Err(format!(
+            return Err(IpcError::invalid_argument(format!(
                 "Mode index {} out of range (0..{})",
                 idx, n_modes
-            ));
+            )));
         }
 
         // Hide bonds purely for physics visualization mode
-        if let Ok(mut renderer) = renderer_state.lock() {
-            renderer.update_bonds(&[]);
-        }
+        let mut renderer = renderer_state.lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+        renderer.update_bonds(&[]);
     }
 
     cs.active_phonon_mode = mode_index;
     cs.phonon_phase = 0.0;
-    app.emit("state_changed", ()).ok();
     Ok(())
 }
 
@@ -258,22 +281,24 @@ pub fn set_phonon_phase(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let mut cs = crystal_state
         .lock()
-        .map_err(|_| "Failed to lock state")?;
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
 
-    cs.phonon_phase = phase;
     let amp = amplitude.unwrap_or(1.0);
 
-    // If a mode is active, compute displaced positions and update renderer
     if let (Some(mode_idx), Some(phonon_data)) = (cs.active_phonon_mode, &cs.phonon_data) {
         if mode_idx < phonon_data.modes.len() {
+            let settings = settings_state
+                .lock()
+                .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+            let mut renderer = renderer_state.lock()
+                .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
             let mode = &phonon_data.modes[mode_idx];
             let sin_phase = phase.sin();
             let n = cs.cart_positions.len().min(mode.eigenvectors.len());
 
-            // Compute displaced positions
             let mut displaced = cs.cart_positions.clone();
             for i in 0..n {
                 displaced[i][0] += (amp * mode.eigenvectors[i][0] * sin_phase) as f32;
@@ -281,17 +306,14 @@ pub fn set_phonon_phase(
                 displaced[i][2] += (amp * mode.eigenvectors[i][2] * sin_phase) as f32;
             }
 
-            // Update renderer with displaced positions
-            let settings = settings_state
-                .lock()
-                .map_err(|_| "Settings lock fail")?;
             let instances = crate::wannier::build_atoms_with_ghosts_displaced(&cs, &displaced, &settings);
-            if let Ok(mut renderer) = renderer_state.lock() {
-                renderer.update_atoms(&instances);
-            }
+            cs.phonon_phase = phase;
+            renderer.update_atoms(&instances);
+            return Ok(());
         }
     }
 
+    cs.phonon_phase = phase;
     Ok(())
 }
 
@@ -303,14 +325,14 @@ pub fn add_measurement(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<crate::crystal_state::MeasurementOverlay, String> {
+) -> IpcResult<crate::crystal_state::MeasurementOverlay> {
     let mut measurement = None;
     crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        measurement = Some(cs.add_measurement(&indices)?);
+        measurement = Some(cs.add_measurement(&indices).map_err(IpcError::invalid_argument)?);
         Ok(())
     })?;
     
-    measurement.ok_or_else(|| "Failed to get measurement".to_string())
+    measurement.ok_or_else(|| IpcError::from("measurement transaction returned no result"))
 }
 
 #[tauri::command]
@@ -320,7 +342,7 @@ pub fn clear_measurements(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
         cs.clear_measurements();
         Ok(())
@@ -331,8 +353,9 @@ pub fn clear_measurements(
 #[tauri::command]
 pub fn get_measurements(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<Vec<crate::crystal_state::MeasurementOverlay>, String> {
-    let cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
+) -> IpcResult<Vec<crate::crystal_state::MeasurementOverlay>> {
+    let cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     Ok(cs.measurements.clone())
 }
 
@@ -349,9 +372,11 @@ pub fn get_measurement_labels_screen(
     height: f32,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<Vec<MeasurementLabelPos>, String> {
-    let cs = crystal_state.lock().map_err(|e| e.to_string())?;
-    let renderer = renderer_state.lock().map_err(|e| e.to_string())?;
+) -> IpcResult<Vec<MeasurementLabelPos>> {
+    let cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let renderer = renderer_state.lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
 
     let vp_matrix = renderer.camera.build_view_projection_matrix();
 

@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 /// A lightweight snapshot of the crystal state that excludes heavy caching and data payload.
 #[derive(Clone)]
-pub struct LightweightState {
+pub struct StructuralSnapshot {
     pub name: String,
     pub spacegroup_hm: String,
     pub spacegroup_number: i32,
@@ -36,7 +36,7 @@ pub struct LightweightState {
     pub measurements: Vec<crate::crystal_state::MeasurementOverlay>,
 }
 
-impl LightweightState {
+impl StructuralSnapshot {
     pub fn from_crystal_state(cs: &CrystalState) -> Self {
         Self {
             name: cs.name.clone(),
@@ -67,11 +67,52 @@ impl LightweightState {
             measurements: cs.measurements.clone(),
         }
     }
+
+    pub fn restore_for_rollback(self, cs: &mut CrystalState) {
+        self.restore_structural_fields(cs);
+    }
+
+    pub fn restore_for_history(self, cs: &mut CrystalState) {
+        self.restore_structural_fields(cs);
+        cs.invalidate_structure_bound_data();
+    }
+
+    pub fn into_crystal_state(self) -> CrystalState {
+        let mut cs = CrystalState::default();
+        self.restore_structural_fields(&mut cs);
+        cs
+    }
+
+    fn restore_structural_fields(self, cs: &mut CrystalState) {
+        cs.name = self.name;
+        cs.spacegroup_hm = self.spacegroup_hm;
+        cs.spacegroup_number = self.spacegroup_number;
+        cs.is_2d = self.is_2d;
+        cs.vacuum_axis = self.vacuum_axis;
+        cs.intrinsic_sites = self.intrinsic_sites;
+        cs.version = self.version;
+        cs.cell_a = self.cell_a;
+        cs.cell_b = self.cell_b;
+        cs.cell_c = self.cell_c;
+        cs.cell_alpha = self.cell_alpha;
+        cs.cell_beta = self.cell_beta;
+        cs.cell_gamma = self.cell_gamma;
+        cs.labels = self.labels;
+        cs.elements = self.elements;
+        cs.fract_x = self.fract_x;
+        cs.fract_y = self.fract_y;
+        cs.fract_z = self.fract_z;
+        cs.occupancies = self.occupancies;
+        cs.atomic_numbers = self.atomic_numbers;
+        cs.cart_positions = self.cart_positions;
+        cs.selected_atoms = self.selected_atoms;
+        cs.measurements = self.measurements;
+    }
 }
 
 pub struct UndoStack {
-    past: VecDeque<LightweightState>,
-    future: VecDeque<LightweightState>,
+    past: VecDeque<StructuralSnapshot>,
+    future: VecDeque<StructuralSnapshot>,
     pub max_depth: usize,
 }
 
@@ -85,7 +126,7 @@ impl UndoStack {
     }
 
     /// Push a pre-mutation snapshot. Clears futures.
-    pub fn push(&mut self, state: LightweightState) {
+    pub fn push(&mut self, state: StructuralSnapshot) {
         self.future.clear();
         self.past.push_back(state);
         if self.past.len() > self.max_depth {
@@ -94,7 +135,7 @@ impl UndoStack {
     }
 
     /// Move back in history. We receive the `current_state` to store in `future`.
-    pub fn undo(&mut self, current_state: LightweightState) -> Option<LightweightState> {
+    pub fn undo(&mut self, current_state: StructuralSnapshot) -> Option<StructuralSnapshot> {
         if let Some(prev) = self.past.pop_back() {
             self.future.push_front(current_state);
             Some(prev)
@@ -104,7 +145,7 @@ impl UndoStack {
     }
 
     /// Move forward in history. We receive the `current_state` to store in `past`.
-    pub fn redo(&mut self, current_state: LightweightState) -> Option<LightweightState> {
+    pub fn redo(&mut self, current_state: StructuralSnapshot) -> Option<StructuralSnapshot> {
         if let Some(next) = self.future.pop_front() {
             self.past.push_back(current_state);
             Some(next)
@@ -131,10 +172,10 @@ impl UndoStack {
 mod tests {
     use super::*;
 
-    fn create_dummy_state(version: u32) -> LightweightState {
+    fn create_dummy_state(version: u32) -> StructuralSnapshot {
         let mut cs = CrystalState::default();
         cs.version = version;
-        LightweightState::from_crystal_state(&cs)
+        StructuralSnapshot::from_crystal_state(&cs)
     }
 
     #[test]
@@ -199,10 +240,10 @@ mod tests {
         let mut cs = CrystalState::default();
         cs.cart_positions.push([0.0, 0.0, 0.0]); // Add some pseudo data
         
-        let ls = LightweightState::from_crystal_state(&cs);
-        // By definition, LightweightState does NOT mirror the full memory map of CrystalState.
+        let ls = StructuralSnapshot::from_crystal_state(&cs);
+        // By definition, StructuralSnapshot does NOT mirror the full memory map of CrystalState.
         // We assert its structural memory size is deterministic and ignores large allocs.
-        let ls_size = std::mem::size_of::<LightweightState>();
+        let ls_size = std::mem::size_of::<StructuralSnapshot>();
         assert!(ls_size < 500); // Expecting ~350 bytes for pointers
         
         // The properties requested (atom count) must align

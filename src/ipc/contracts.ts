@@ -3,9 +3,11 @@ import type {
     BzInfo,
     CrystalState,
     KPathInfo,
+    MeasurementOverlay,
     PhononModeSummary,
     WannierInfo,
 } from '../types/crystal';
+import type { IpcCommandName } from './commands.generated';
 
 export interface AppSettingsDto {
     atom_scale: number;
@@ -21,6 +23,11 @@ export interface ScreenLabel {
     y: number;
 }
 
+export interface KPathText {
+    qe: string;
+    vasp: string;
+}
+
 export interface VolumetricInfo {
     grid_dims: [number, number, number];
     data_min: number;
@@ -33,8 +40,21 @@ export interface TauriDragPayload {
     position: { x: number; y: number };
 }
 
+export interface StateChangedPayload {
+    version: number;
+}
+
+export type CameraAxis = 'a' | 'b' | 'c' | 'a_star' | 'b_star' | 'c_star' | 'reset';
+export type IsosurfaceSignMode = 'positive' | 'negative' | 'both';
+export type VolumeRenderMode = 'isosurface' | 'volume' | 'both';
+export type VolumeColormap = 'viridis' | 'grayscale' | 'inferno' | 'plasma' | 'coolwarm'
+    | 'hot' | 'magma' | 'cividis' | 'turbo' | 'rdylbu';
+export type LlmProvider = 'openai' | 'deepseek' | 'claude' | 'gemini' | 'ollama';
+export type ExportFileFormat = 'POSCAR' | 'VASP' | 'LAMMPS' | 'QE';
+export type ExportImageBackground = 'transparent' | 'white' | 'black' | 'default';
+
 export type IpcErrorCode = 'invalid_argument' | 'io_error' | 'lock_poisoned'
-    | 'parse_error' | 'render_error' | 'internal_error';
+    | 'not_in_tauri' | 'state_busy' | 'parse_error' | 'render_error' | 'internal_error';
 
 export interface IpcError {
     code: IpcErrorCode;
@@ -56,66 +76,129 @@ export class IpcException extends Error implements IpcError {
 
 export interface IpcEventContract {
     'menu-action': string;
-    state_changed: null;
+    state_changed: StateChangedPayload;
     'tauri://drag-drop': TauriDragPayload;
     'tauri://drag-enter': TauriDragPayload;
     'tauri://drag-leave': null | undefined;
     'tauri://file-drop': { paths: string[] };
-    'tauri://file-drop-cancelled': unknown;
-    'tauri://file-drop-hover': unknown;
+    'tauri://file-drop-cancelled': null | undefined;
+    'tauri://file-drop-hover': { paths: string[] };
     undo_stack_changed: { can_undo: boolean; can_redo: boolean };
     view_projection_changed: { is_perspective: boolean };
     volumetric_loaded: VolumetricInfo;
 }
 
 export interface IpcCommandContract {
-    check_api_key_status: {
-        args: { providerType: string };
-        result: boolean;
-    };
+    add_atom: { args: { elementSymbol: string; atomicNumber: number; fractPos: [number, number, number] }; result: null };
+    add_measurement: { args: { indices: number[] }; result: MeasurementOverlay };
+    apply_cell_standardize: { args: { toPrimitive: boolean }; result: null };
+    apply_niggli_reduce: { args: undefined; result: null };
+    apply_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: null };
+    apply_supercell: { args: { matrix: [[number, number, number], [number, number, number], [number, number, number]] }; result: null };
+    check_api_key_status: { args: { providerType: LlmProvider }; result: boolean };
+    clear_measurements: { args: undefined; result: null };
+    clear_wannier: { args: undefined; result: null };
     compute_brillouin_zone: { args: undefined; result: BzInfo };
-    generate_kpath_text: { args: { npoints: number }; result: { qe: string; vasp: string } };
-    get_bond_analysis: { args: { thresholdFactor: number }; result: BondAnalysisResult };
+    delete_atoms: { args: { indices: number[] }; result: null };
+    export_file: { args: { format: ExportFileFormat; path: string }; result: null };
+    export_image: { args: { path: string; width: number; height: number; bgMode: ExportImageBackground }; result: null };
+    generate_kpath_text: { args: { npoints: number }; result: KPathText };
+    get_bond_analysis: { args: { thresholdFactor?: number | null }; result: BondAnalysisResult };
     get_bz_label_positions: { args: { width: number; height: number }; result: ScreenLabel[] };
     get_crystal_state: { args: undefined; result: CrystalState };
     get_kpath_info: { args: undefined; result: KPathInfo };
     get_measurement_labels_screen: { args: { width: number; height: number }; result: ScreenLabel[] };
+    get_measurements: { args: undefined; result: MeasurementOverlay[] };
     get_settings: { args: undefined; result: AppSettingsDto };
-    llm_chat: { args: { userMessage: string; selectedIndices: number[] | null }; result: string };
+    get_volumetric_info: { args: undefined; result: VolumetricInfo | null };
+    llm_chat: { args: { userMessage: string; selectedIndices?: number[] | null }; result: string };
+    llm_configure: { args: { providerType: LlmProvider; apiKey: string; model: string }; result: null };
+    llm_execute_command: { args: { commandJson: string }; result: null };
     load_axsf_phonon: { args: { path: string }; result: PhononModeSummary[] };
     load_cif_file: { args: { path: string }; result: null };
-    load_phonon_interactive: {
-        args: { scfIn: string; scfOut: string; modes: string };
-        result: PhononModeSummary[];
-    };
+    load_phonon: { args: { path: string }; result: PhononModeSummary[] };
+    load_phonon_interactive: { args: { scfIn: string; scfOut: string; modes: string }; result: PhononModeSummary[] };
     load_volumetric_file: { args: { path: string }; result: VolumetricInfo };
-    export_file: { args: { format: string; path: string }; result: null };
-    export_image: { args: { path: string; width: number; height: number; bgMode: string }; result: null };
-    pick_atom: {
-        args: { x: number; y: number; screenW: number; screenH: number };
-        result: number | null;
-    };
-    load_wannier_hr: {
-        args: { path: string };
-        result: WannierInfo;
-    };
-    set_wannier_t_min: { args: { tMin: number }; result: null };
+    load_wannier_hr: { args: { path: string }; result: WannierInfo };
+    pan_camera: { args: { dx: number; dy: number }; result: null };
+    pick_atom: { args: { x: number; y: number; screenW: number; screenH: number }; result: number | null };
+    preview_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: CrystalState };
+    preview_supercell: { args: { expansion: [number, number, number, number, number, number, number, number, number] }; result: CrystalState };
+    redo: { args: undefined; result: null };
+    reset_camera: { args: undefined; result: null };
+    restore_unitcell: { args: undefined; result: null };
+    rotate_camera: { args: { dx: number; dy: number }; result: null };
     set_bz_scale: { args: { scale: number }; result: null };
-    set_wannier_r_shell: { args: { shellIdx: number; active: boolean }; result: null };
+    set_camera_projection: { args: { isPerspective: boolean }; result: null };
+    set_camera_view_axis: { args: { axis: CameraAxis }; result: null };
+    set_isosurface_color: { args: { color: [number, number, number, number] }; result: null };
+    set_isosurface_opacity: { args: { opacity: number }; result: null };
+    set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode }; result: null };
+    set_isovalue: { args: { value: number }; result: null };
+    set_phonon_mode: { args: { modeIndex?: number | null }; result: null };
+    set_phonon_phase: { args: { phase: number; amplitude?: number | null }; result: null };
+    set_render_flags: { args: { showCell: boolean; showBonds: boolean }; result: null };
+    set_volume_colormap: { args: { mode: VolumeColormap }; result: null };
+    set_volume_density_cutoff: { args: { cutoff: number }; result: null };
+    set_volume_opacity_range: { args: { min: number; max: number; opacityScale: number }; result: null };
+    set_volume_render_mode: { args: { mode: VolumeRenderMode }; result: null };
     set_wannier_orbital: { args: { orbIdx: number; active: boolean }; result: null };
-    toggle_wannier_onsite: { args: { show: boolean }; result: null };
-    toggle_hopping_display: { args: { show: boolean }; result: null };
+    set_wannier_r_shell: { args: { shellIdx: number; active: boolean }; result: null };
+    set_wannier_t_min: { args: { tMin: number }; result: null };
+    shift_termination: { args: { targetLayerIdx: number; layerToleranceA?: number | null }; result: number };
+    substitute_atoms: { args: { indices: number[]; newElementSymbol: string; newAtomicNumber: number }; result: null };
     toggle_bz_display: { args: { show: boolean }; result: null };
-    clear_wannier: { args: undefined; result: null };
+    toggle_hopping_display: { args: { show: boolean }; result: null };
+    toggle_wannier_onsite: { args: { show: boolean }; result: null };
+    translate_atoms_screen: { args: { indices: number[]; dx: number; dy: number }; result: null };
+    undo: { args: undefined; result: null };
+    update_lattice_params: { args: { a: number; b: number; c: number; alpha: number; beta: number; gamma: number }; result: null };
+    update_selection: { args: { indices: number[] }; result: null };
+    update_settings: { args: { newSettings: AppSettingsDto }; result: null };
+    update_viewport_size: { args: { width: number; height: number }; result: null };
     write_text_file: { args: { path: string; content: string }; result: null };
+    zoom_camera: { args: { delta: number }; result: null };
 }
 
 export type TypedIpcCommand = keyof IpcCommandContract;
 export type TypedIpcEvent = keyof IpcEventContract;
 
+type MissingIpcContract = Exclude<IpcCommandName, TypedIpcCommand>;
+type ExtraIpcContract = Exclude<TypedIpcCommand, IpcCommandName>;
+type CompleteIpcCommandContract = [MissingIpcContract, ExtraIpcContract] extends [never, never]
+    ? true
+    : never;
+const COMPLETE_IPC_COMMAND_CONTRACT: CompleteIpcCommandContract = true;
+void COMPLETE_IPC_COMMAND_CONTRACT;
+
 export type IpcArgs<Command extends TypedIpcCommand> = IpcCommandContract[Command]['args'];
 
 export type IpcResult<Command extends TypedIpcCommand> = IpcCommandContract[Command]['result'];
+
+export function is_camera_axis(value: string): value is CameraAxis {
+    return value === 'a' || value === 'b' || value === 'c' || value === 'a_star'
+        || value === 'b_star' || value === 'c_star' || value === 'reset';
+}
+
+export function is_isosurface_sign_mode(value: string): value is IsosurfaceSignMode {
+    return value === 'positive' || value === 'negative' || value === 'both';
+}
+
+export function is_volume_render_mode(value: string): value is VolumeRenderMode {
+    return value === 'isosurface' || value === 'volume' || value === 'both';
+}
+
+export function is_volume_colormap(value: string): value is VolumeColormap {
+    return value === 'viridis' || value === 'grayscale' || value === 'inferno'
+        || value === 'plasma' || value === 'coolwarm' || value === 'hot'
+        || value === 'magma' || value === 'cividis' || value === 'turbo'
+        || value === 'rdylbu';
+}
+
+export function is_llm_provider(value: string): value is LlmProvider {
+    return value === 'openai' || value === 'deepseek' || value === 'claude'
+        || value === 'gemini' || value === 'ollama';
+}
 
 function is_integer_triplet(value: unknown): value is [number, number, number] {
     return Array.isArray(value)
@@ -146,7 +229,7 @@ function is_rgba(value: unknown): value is [number, number, number, number] {
         && value.every((component) => is_finite_number(component) && component >= 0 && component <= 1);
 }
 
-function is_measurement(value: unknown): boolean {
+function is_measurement(value: unknown): value is MeasurementOverlay {
     if (!is_record(value) || !Array.isArray(value.indices)
         || !value.indices.every(is_nonnegative_integer)
         || !is_finite_number(value.value) || !is_number_triplet(value.label_position)) return false;
@@ -278,40 +361,99 @@ function is_bond_analysis(value: unknown): value is BondAnalysisResult {
     return bonds_valid && coordination_valid && stats_valid;
 }
 
+const is_null = (value: unknown): value is null => value === null;
+const is_integer = (value: unknown): value is number => Number.isSafeInteger(value);
+const is_measurements = (value: unknown): value is MeasurementOverlay[] => Array.isArray(value)
+    && value.every(is_measurement);
+const is_kpath_text = (value: unknown): value is { qe: string; vasp: string } => is_record(value)
+    && typeof value.qe === 'string' && typeof value.vasp === 'string';
+
+const IPC_RESULT_VALIDATORS: {
+    [Command in TypedIpcCommand]: (value: unknown) => boolean;
+} = {
+    add_atom: is_null,
+    add_measurement: is_measurement,
+    apply_cell_standardize: is_null,
+    apply_niggli_reduce: is_null,
+    apply_slab: is_null,
+    apply_supercell: is_null,
+    check_api_key_status: (value) => typeof value === 'boolean',
+    clear_measurements: is_null,
+    clear_wannier: is_null,
+    compute_brillouin_zone: is_bz_info,
+    delete_atoms: is_null,
+    export_file: is_null,
+    export_image: is_null,
+    generate_kpath_text: is_kpath_text,
+    get_bond_analysis: is_bond_analysis,
+    get_bz_label_positions: is_screen_labels,
+    get_crystal_state: is_crystal_state,
+    get_kpath_info: is_kpath_info,
+    get_measurement_labels_screen: is_screen_labels,
+    get_measurements: is_measurements,
+    get_settings: is_app_settings,
+    get_volumetric_info: (value) => value === null || is_volumetric_info(value),
+    llm_chat: (value) => typeof value === 'string',
+    llm_configure: is_null,
+    llm_execute_command: is_null,
+    load_axsf_phonon: is_phonon_modes,
+    load_cif_file: is_null,
+    load_phonon: is_phonon_modes,
+    load_phonon_interactive: is_phonon_modes,
+    load_volumetric_file: is_volumetric_info,
+    load_wannier_hr: is_wannier_info,
+    pan_camera: is_null,
+    pick_atom: (value) => value === null || is_nonnegative_integer(value),
+    preview_slab: is_crystal_state,
+    preview_supercell: is_crystal_state,
+    redo: is_null,
+    reset_camera: is_null,
+    restore_unitcell: is_null,
+    rotate_camera: is_null,
+    set_bz_scale: is_null,
+    set_camera_projection: is_null,
+    set_camera_view_axis: is_null,
+    set_isosurface_color: is_null,
+    set_isosurface_opacity: is_null,
+    set_isosurface_sign_mode: is_null,
+    set_isovalue: is_null,
+    set_phonon_mode: is_null,
+    set_phonon_phase: is_null,
+    set_render_flags: is_null,
+    set_volume_colormap: is_null,
+    set_volume_density_cutoff: is_null,
+    set_volume_opacity_range: is_null,
+    set_volume_render_mode: is_null,
+    set_wannier_orbital: is_null,
+    set_wannier_r_shell: is_null,
+    set_wannier_t_min: is_null,
+    shift_termination: is_integer,
+    substitute_atoms: is_null,
+    toggle_bz_display: is_null,
+    toggle_hopping_display: is_null,
+    toggle_wannier_onsite: is_null,
+    translate_atoms_screen: is_null,
+    undo: is_null,
+    update_lattice_params: is_null,
+    update_selection: is_null,
+    update_settings: is_null,
+    update_viewport_size: is_null,
+    write_text_file: is_null,
+    zoom_camera: is_null,
+};
+
 export function validate_ipc_result<Command extends TypedIpcCommand>(
     command: Command,
     value: unknown
 ): IpcResult<Command> {
-    if (command === 'load_wannier_hr' && is_wannier_info(value)) {
-        return value as IpcResult<Command>;
-    }
-    if (command === 'load_volumetric_file' && is_volumetric_info(value)) {
-        return value as IpcResult<Command>;
-    }
-    if (command === 'check_api_key_status' && typeof value === 'boolean') return value as IpcResult<Command>;
-    if (command === 'compute_brillouin_zone' && is_bz_info(value)) return value as IpcResult<Command>;
-    if (command === 'generate_kpath_text' && is_record(value) && typeof value.qe === 'string' && typeof value.vasp === 'string') return value as IpcResult<Command>;
-    if (command === 'get_bond_analysis' && is_bond_analysis(value)) return value as IpcResult<Command>;
-    if ((command === 'get_bz_label_positions' || command === 'get_measurement_labels_screen') && is_screen_labels(value)) return value as IpcResult<Command>;
-    if (command === 'get_crystal_state' && is_crystal_state(value)) return value as IpcResult<Command>;
-    if (command === 'get_kpath_info' && is_kpath_info(value)) return value as IpcResult<Command>;
-    if (command === 'get_settings' && is_app_settings(value)) return value as IpcResult<Command>;
-    if (command === 'llm_chat' && typeof value === 'string') return value as IpcResult<Command>;
-    if ((command === 'load_axsf_phonon' || command === 'load_phonon_interactive') && is_phonon_modes(value)) return value as IpcResult<Command>;
-    if (command === 'pick_atom' && (value === null || Number.isSafeInteger(value))) return value as IpcResult<Command>;
-    if ((command === 'load_cif_file' || command === 'export_file' || command === 'export_image'
-        || command === 'write_text_file' || command === 'set_wannier_t_min'
-        || command === 'set_wannier_r_shell' || command === 'set_wannier_orbital'
-        || command === 'toggle_wannier_onsite' || command === 'toggle_hopping_display'
-        || command === 'toggle_bz_display' || command === 'set_bz_scale'
-        || command === 'clear_wannier') && value === null) return value as IpcResult<Command>;
+    if (IPC_RESULT_VALIDATORS[command](value)) return value as IpcResult<Command>;
     throw new Error(`Invalid IPC response for ${command}`);
 }
 
 export function normalize_ipc_error(value: unknown): IpcException {
     if (value instanceof IpcException) return value;
     if (is_record(value) && typeof value.code === 'string'
-        && ['invalid_argument', 'io_error', 'lock_poisoned', 'parse_error', 'render_error', 'internal_error'].includes(value.code)
+        && ['invalid_argument', 'io_error', 'lock_poisoned', 'not_in_tauri', 'state_busy', 'parse_error', 'render_error', 'internal_error'].includes(value.code)
         && typeof value.message === 'string' && typeof value.recoverable === 'boolean') {
         return new IpcException(value as unknown as IpcError);
     }
@@ -323,14 +465,16 @@ export function normalize_ipc_error(value: unknown): IpcException {
 }
 
 export function validate_ipc_event<Event extends TypedIpcEvent>(event: Event, value: unknown): IpcEventContract[Event] {
-    if (event === 'state_changed' && value === null) return value as IpcEventContract[Event];
+    if (event === 'state_changed' && is_record(value) && is_nonnegative_integer(value.version)) return value as IpcEventContract[Event];
     if (event === 'tauri://drag-leave' && (value === null || value === undefined)) return value as IpcEventContract[Event];
-    if (event === 'tauri://file-drop-cancelled' || event === 'tauri://file-drop-hover') return value as IpcEventContract[Event];
+    if (event === 'tauri://file-drop-cancelled' && (value === null || value === undefined)) return value as IpcEventContract[Event];
     if (event === 'menu-action' && typeof value === 'string') return value as IpcEventContract[Event];
     if ((event === 'tauri://drag-enter' || event === 'tauri://drag-drop') && is_record(value)
         && Array.isArray(value.paths) && value.paths.every((path) => typeof path === 'string')
         && is_record(value.position) && is_finite_number(value.position.x) && is_finite_number(value.position.y)) return value as IpcEventContract[Event];
     if (event === 'tauri://file-drop' && is_record(value) && Array.isArray(value.paths) && value.paths.every((path) => typeof path === 'string')) return value as IpcEventContract[Event];
+    if (event === 'tauri://file-drop-hover' && is_record(value) && Array.isArray(value.paths)
+        && value.paths.every((path) => typeof path === 'string')) return value as IpcEventContract[Event];
     if (event === 'undo_stack_changed' && is_record(value) && typeof value.can_undo === 'boolean' && typeof value.can_redo === 'boolean') return value as IpcEventContract[Event];
     if (event === 'view_projection_changed' && is_record(value) && typeof value.is_perspective === 'boolean') return value as IpcEventContract[Event];
     if (event === 'volumetric_loaded' && is_volumetric_info(value)) return value as IpcEventContract[Event];

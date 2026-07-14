@@ -178,8 +178,8 @@ pub fn load_wannier_hr(
         .map_err(|e| IpcError::lock(e.to_string()))?;
     let instances = crate::renderer::instance::build_hopping_instances(&overlay.visible_hoppings, overlay.hr_data.t_max);
     renderer.update_hoppings(&instances);
+    renderer.update_bonds(&[]);
     renderer.show_hoppings = true;
-    renderer.show_bonds = false;
 
     // Extract WannierInfo before moving overlay into cs
     let num_wann = overlay.hr_data.num_wann;
@@ -295,9 +295,10 @@ pub fn clear_wannier(
     cs.wannier_overlay = None;
     renderer.update_hoppings(&[]);
     let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
+    let bonds = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
     renderer.update_atoms(&atoms);
+    renderer.update_bonds(&bonds);
     renderer.show_hoppings = false;
-    renderer.show_bonds = true;
     Ok(())
 }
 

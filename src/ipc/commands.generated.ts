@@ -72,78 +72,79 @@ export const IPC_COMMANDS = {
     zoom_camera: 'zoom_camera',
 } as const;
 
+export const IPC_COMMAND_CLASSIFICATION = {
+    add_atom: 'committed_mutation',
+    add_measurement: 'committed_mutation',
+    apply_cell_standardize: 'committed_mutation',
+    apply_niggli_reduce: 'committed_mutation',
+    apply_slab: 'committed_mutation',
+    apply_supercell: 'committed_mutation',
+    check_api_key_status: 'read',
+    clear_measurements: 'committed_mutation',
+    clear_wannier: 'renderer_only',
+    compute_brillouin_zone: 'renderer_only',
+    delete_atoms: 'committed_mutation',
+    export_file: 'external_io',
+    export_image: 'external_io',
+    generate_kpath_text: 'read',
+    get_bond_analysis: 'read',
+    get_bz_label_positions: 'read',
+    get_crystal_state: 'read',
+    get_kpath_info: 'read',
+    get_measurement_labels_screen: 'read',
+    get_measurements: 'read',
+    get_settings: 'read',
+    get_volumetric_info: 'read',
+    llm_chat: 'external_io',
+    llm_configure: 'external_io',
+    llm_execute_command: 'committed_mutation',
+    load_axsf_phonon: 'committed_mutation',
+    load_cif_file: 'committed_mutation',
+    load_phonon: 'state_attachment',
+    load_phonon_interactive: 'committed_mutation',
+    load_volumetric_file: 'renderer_only',
+    load_wannier_hr: 'renderer_only',
+    pan_camera: 'high_frequency',
+    pick_atom: 'read',
+    preview_slab: 'read',
+    preview_supercell: 'read',
+    redo: 'committed_mutation',
+    reset_camera: 'renderer_only',
+    restore_unitcell: 'committed_mutation',
+    rotate_camera: 'high_frequency',
+    set_bz_scale: 'renderer_only',
+    set_camera_projection: 'renderer_only',
+    set_camera_view_axis: 'renderer_only',
+    set_isosurface_color: 'renderer_only',
+    set_isosurface_opacity: 'renderer_only',
+    set_isosurface_sign_mode: 'renderer_only',
+    set_isovalue: 'renderer_only',
+    set_phonon_mode: 'renderer_only',
+    set_phonon_phase: 'high_frequency',
+    set_render_flags: 'renderer_only',
+    set_volume_colormap: 'renderer_only',
+    set_volume_density_cutoff: 'renderer_only',
+    set_volume_opacity_range: 'renderer_only',
+    set_volume_render_mode: 'renderer_only',
+    set_wannier_orbital: 'renderer_only',
+    set_wannier_r_shell: 'renderer_only',
+    set_wannier_t_min: 'renderer_only',
+    shift_termination: 'committed_mutation',
+    substitute_atoms: 'committed_mutation',
+    toggle_bz_display: 'renderer_only',
+    toggle_hopping_display: 'renderer_only',
+    toggle_wannier_onsite: 'renderer_only',
+    translate_atoms_screen: 'high_frequency',
+    undo: 'committed_mutation',
+    update_lattice_params: 'committed_mutation',
+    update_selection: 'renderer_only',
+    update_settings: 'renderer_only',
+    update_viewport_size: 'renderer_only',
+    write_text_file: 'external_io',
+    zoom_camera: 'high_frequency',
+} as const;
+
 export type IpcCommandName = typeof IPC_COMMANDS[keyof typeof IPC_COMMANDS];
-
-export interface GeneratedIpcCommandArgs {
-    add_atom: { atomicNumber: unknown; elementSymbol: unknown; fractPos: unknown };
-    add_measurement: { indices: unknown };
-    apply_cell_standardize: { toPrimitive: unknown };
-    apply_niggli_reduce: undefined;
-    apply_slab: { layers: unknown; miller: unknown; vacuumA: unknown };
-    apply_supercell: { matrix: unknown };
-    check_api_key_status: { providerType: unknown };
-    clear_measurements: undefined;
-    clear_wannier: undefined;
-    compute_brillouin_zone: undefined;
-    delete_atoms: { indices: unknown };
-    export_file: { format: unknown; path: unknown };
-    export_image: { bgMode: unknown; height: unknown; path: unknown; width: unknown };
-    generate_kpath_text: { npoints: unknown };
-    get_bond_analysis: { thresholdFactor: unknown };
-    get_bz_label_positions: { height: unknown; width: unknown };
-    get_crystal_state: undefined;
-    get_kpath_info: undefined;
-    get_measurement_labels_screen: { height: unknown; width: unknown };
-    get_measurements: undefined;
-    get_settings: undefined;
-    get_volumetric_info: undefined;
-    llm_chat: { selectedIndices: unknown; userMessage: unknown };
-    llm_configure: { apiKey: unknown; model: unknown; providerType: unknown };
-    llm_execute_command: { commandJson: unknown };
-    load_axsf_phonon: { path: unknown };
-    load_cif_file: { path: unknown };
-    load_phonon: { path: unknown };
-    load_phonon_interactive: { modes: unknown; scfIn: unknown; scfOut: unknown };
-    load_volumetric_file: { path: unknown };
-    load_wannier_hr: { path: unknown };
-    pan_camera: { dx: unknown; dy: unknown };
-    pick_atom: { screenH: unknown; screenW: unknown; x: unknown; y: unknown };
-    preview_slab: { layers: unknown; miller: unknown; vacuumA: unknown };
-    preview_supercell: { expansion: unknown };
-    redo: undefined;
-    reset_camera: undefined;
-    restore_unitcell: undefined;
-    rotate_camera: { dx: unknown; dy: unknown };
-    set_bz_scale: { scale: unknown };
-    set_camera_projection: { isPerspective: unknown };
-    set_camera_view_axis: { axis: unknown };
-    set_isosurface_color: { color: unknown };
-    set_isosurface_opacity: { opacity: unknown };
-    set_isosurface_sign_mode: { mode: unknown };
-    set_isovalue: { value: unknown };
-    set_phonon_mode: { modeIndex: unknown };
-    set_phonon_phase: { amplitude: unknown; phase: unknown };
-    set_render_flags: { showBonds: unknown; showCell: unknown };
-    set_volume_colormap: { mode: unknown };
-    set_volume_density_cutoff: { cutoff: unknown };
-    set_volume_opacity_range: { max: unknown; min: unknown; opacityScale: unknown };
-    set_volume_render_mode: { mode: unknown };
-    set_wannier_orbital: { active: unknown; orbIdx: unknown };
-    set_wannier_r_shell: { active: unknown; shellIdx: unknown };
-    set_wannier_t_min: { tMin: unknown };
-    shift_termination: { layerToleranceA: unknown; targetLayerIdx: unknown };
-    substitute_atoms: { indices: unknown; newAtomicNumber: unknown; newElementSymbol: unknown };
-    toggle_bz_display: { show: unknown };
-    toggle_hopping_display: { show: unknown };
-    toggle_wannier_onsite: { show: unknown };
-    translate_atoms_screen: { dx: unknown; dy: unknown; indices: unknown };
-    undo: undefined;
-    update_lattice_params: { a: unknown; alpha: unknown; b: unknown; beta: unknown; c: unknown; gamma: unknown };
-    update_selection: { indices: unknown };
-    update_settings: { newSettings: unknown };
-    update_viewport_size: { height: unknown; width: unknown };
-    write_text_file: { content: unknown; path: unknown };
-    zoom_camera: { delta: unknown };
-}
-
-export type GeneratedIpcArgs<Command extends IpcCommandName> = GeneratedIpcCommandArgs[Command];
+export type ReadIpcCommand = {
+    [Command in IpcCommandName]: typeof IPC_COMMAND_CLASSIFICATION[Command] extends 'read' ? Command : never;
+}[IpcCommandName];

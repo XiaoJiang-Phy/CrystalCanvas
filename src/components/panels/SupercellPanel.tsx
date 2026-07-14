@@ -7,7 +7,7 @@ export default function SupercellPanel({ onStructureUpdate }: PanelProps) {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
 
     const handle_supercell = () => {
-        const matrix = [
+        const matrix: [[number, number, number], [number, number, number], [number, number, number]] = [
             [sc.nx, 0, 0],
             [0, sc.ny, 0],
             [0, 0, sc.nz]

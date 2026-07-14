@@ -12,10 +12,15 @@ use super::instance::AtomInstance;
 use super::pipeline;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VolumeRenderMode {
+pub enum RendererVolumeMode {
     Isosurface,
     Volume,
     Both,
+}
+
+pub struct PreparedVolumetric {
+    isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    volume_raycast_pipeline: crate::renderer::volume_raycast::VolumeRaycastPipeline,
 }
 
 /// Main rendering engine for CrystalCanvas.
@@ -70,7 +75,7 @@ pub struct Renderer {
     pub show_isosurface: bool,
     pub volume_raycast_pipeline: Option<crate::renderer::volume_raycast::VolumeRaycastPipeline>,
     pub show_volume: bool,
-    pub volume_render_mode: VolumeRenderMode,
+    pub volume_render_mode: RendererVolumeMode,
     pub active_colormap_mode: u32,
     camera_bind_group_layout: wgpu::BindGroupLayout,
     pub isosurface_dispatch_size: [u32; 3],
@@ -260,7 +265,7 @@ impl Renderer {
             show_isosurface: false,
             volume_raycast_pipeline: None,
             show_volume: false,
-            volume_render_mode: VolumeRenderMode::Isosurface,
+            volume_render_mode: RendererVolumeMode::Isosurface,
             active_colormap_mode: 0,
             camera_bind_group_layout,
             isosurface_dispatch_size: [0; 3],
@@ -536,8 +541,8 @@ impl Renderer {
 
         // ═══ Depth copy: opaque → transparent (for Pass 2 depth test) ════
         let needs_transparent_pass = 
-            (self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both)) ||
-            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both)) ||
+            (self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both)) ||
+            (self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both)) ||
             self.transparent_instance_count > 0;
 
         if needs_transparent_pass {
@@ -586,14 +591,14 @@ impl Renderer {
                 });
 
                 // Volume raycast FIRST (inner fill), then Isosurface (outer skin)
-                if self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both) {
+                if self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both) {
                     if let Some(vol_pipe) = &self.volume_raycast_pipeline {
                         vol_pipe.render(&mut pass, &self.camera_bind_group);
                     }
                 }
 
                 // Isosurface (semi-transparent outer envelope)
-                if self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both) {
+                if self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both) {
                     if let Some(iso_pipe) = &self.isosurface_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
@@ -765,8 +770,8 @@ impl Renderer {
 
         // ═══ Offscreen Pass 2: Transparent ═══
         let needs_transparent = 
-            (self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both)) ||
-            (self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both)) ||
+            (self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both)) ||
+            (self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both)) ||
             self.transparent_instance_count > 0;
 
         if needs_transparent {
@@ -809,13 +814,13 @@ impl Renderer {
                     occlusion_query_set: None,
                 });
 
-                if self.show_volume && (self.volume_render_mode == VolumeRenderMode::Volume || self.volume_render_mode == VolumeRenderMode::Both) {
+                if self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both) {
                     if let Some(vol_pipe) = &self.volume_raycast_pipeline {
                         vol_pipe.render(&mut pass, &self.camera_bind_group);
                     }
                 }
 
-                if self.show_isosurface && (self.volume_render_mode == VolumeRenderMode::Isosurface || self.volume_render_mode == VolumeRenderMode::Both) {
+                if self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both) {
                     if let Some(iso_pipe) = &self.isosurface_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
@@ -935,7 +940,15 @@ impl Renderer {
         self.volume_raycast_pipeline = None;
         self.show_isosurface = false;
         self.show_volume = false;
-        self.volume_render_mode = VolumeRenderMode::Isosurface;
+        self.volume_render_mode = RendererVolumeMode::Isosurface;
+    }
+
+    pub fn clear_structure_bound_overlays(&mut self) {
+        self.clear_volumetric();
+        self.update_hoppings(&[]);
+        self.show_hoppings = false;
+        self.bz_viewport = None;
+        self.show_bz = false;
     }
 
     /// Toggle bond display.
@@ -958,33 +971,44 @@ impl Renderer {
         }
     }
 
-    /// Upload volumetric data to GPU and initialize isosurface pipeline.
-    pub fn upload_volumetric(&mut self, vol: &crate::volumetric::VolumetricData) {
-        if self.gpu.render_config.supports_compute_shaders {
-            let iso_pipe = crate::renderer::isosurface::IsosurfacePipeline::new(
+    pub fn prepare_volumetric(
+        &self,
+        vol: &crate::volumetric::VolumetricData,
+    ) -> Result<PreparedVolumetric, ()> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let isosurface_pipeline = if self.gpu.render_config.supports_compute_shaders {
+                Some(crate::renderer::isosurface::IsosurfacePipeline::new(
+                    &self.gpu.device,
+                    &self.gpu.queue,
+                    self.gpu.surface_format(),
+                    &self.camera_bind_group_layout,
+                    vol,
+                ))
+            } else {
+                log::warn!("Compute shaders not supported! GPU Marching Cubes cannot run on this device.");
+                None
+            };
+            let volume_raycast_pipeline = crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
                 &self.gpu.device,
-                &self.gpu.queue,
                 self.gpu.surface_format(),
                 &self.camera_bind_group_layout,
                 vol,
+                &self.opaque_depth_view,
             );
-            self.isosurface_pipeline = Some(iso_pipe);
-            self.show_isosurface = true;
-        } else {
-            log::warn!("Compute shaders not supported! GPU Marching Cubes cannot run on this device.");
-        }
+            PreparedVolumetric {
+                isosurface_pipeline,
+                volume_raycast_pipeline,
+            }
+        }))
+        .map_err(|_| ())
+    }
 
-        let vol_pipe = crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
-            &self.gpu.device,
-            self.gpu.surface_format(),
-            &self.camera_bind_group_layout,
-            vol,
-            &self.opaque_depth_view,
-        );
-
-        self.volume_raycast_pipeline = Some(vol_pipe);
+    pub fn commit_volumetric(&mut self, prepared: PreparedVolumetric) {
+        self.show_isosurface = prepared.isosurface_pipeline.is_some();
+        self.isosurface_pipeline = prepared.isosurface_pipeline;
+        self.volume_raycast_pipeline = Some(prepared.volume_raycast_pipeline);
         self.show_volume = true;
-        self.volume_render_mode = VolumeRenderMode::Both;
+        self.volume_render_mode = RendererVolumeMode::Both;
     }
 
     /// Update isovalue threshold and trigger compute pass.

@@ -1,6 +1,7 @@
 use tauri::{Emitter, State};
 
 use super::LlmState;
+use crate::ipc::{CameraAxis, IpcEnumInput, IpcError, IpcResult, LlmProvider};
 
 /// Sent by the React frontend via ResizeObserver when the transparent viewport <div> resizes.
 #[tauri::command]
@@ -8,11 +9,11 @@ pub fn update_viewport_size(
     width: u32,
     height: u32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("update_viewport_size: {}x{}", width, height);
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     renderer.resize(winit::dpi::PhysicalSize::new(width, height));
     Ok(())
 }
@@ -23,24 +24,22 @@ pub fn set_camera_projection(
     app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("set_camera_projection: perspective={}", is_perspective);
 
     // Lock crystal state FIRST to avoid AB/BA deadlock with restore_unitcell
     let scale = if !is_perspective {
-        if let Ok(cs) = crystal_state.lock() {
-            let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-            if extent > 0.0 { extent * 1.5 } else { 15.0 }
-        } else {
-            15.0
-        }
+        let cs = crystal_state.lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+        if extent > 0.0 { extent * 1.5 } else { 15.0 }
     } else {
         15.0
     };
 
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
 
     if is_perspective {
         renderer.camera.set_perspective();
@@ -67,11 +66,11 @@ pub fn set_render_flags(
     show_cell: bool,
     show_bonds: bool,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("set_render_flags: cell={}, bonds={}", show_cell, show_bonds);
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     
     renderer.show_cell = show_cell;
     renderer.show_bonds = show_bonds;
@@ -81,15 +80,16 @@ pub fn set_render_flags(
 /// Set camera view along a lattice axis or reset the view.
 #[tauri::command]
 pub fn set_camera_view_axis(
-    axis: String,
+    axis: IpcEnumInput<CameraAxis>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<(), String> {
-    log::info!("set_camera_view_axis: {}", axis);
+) -> IpcResult<()> {
+    let axis = axis.parse("axis")?;
+    log::info!("set_camera_view_axis: {:?}", axis);
 
     let cs = crystal_state
         .try_lock()
-        .map_err(|_| "Failed to lock crystal state")?;
+        .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
     let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
     let dist = extent * 2.5;
 
@@ -111,50 +111,47 @@ pub fn set_camera_view_axis(
 
     let mut renderer = renderer_state
         .try_lock()
-        .map_err(|_| "Failed to lock renderer")?;
+        .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
 
     let center = cs.unit_cell_center();
     let center_vec = glam::Vec3::from_array(center);
     renderer.camera.target = center_vec;
 
-    match axis.as_str() {
-        "a" => {
+    match axis {
+        CameraAxis::A => {
             let dir = va.normalize();
             renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
-        "b" => {
+        CameraAxis::B => {
             let dir = vb.normalize();
             renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
-        "c" => {
+        CameraAxis::C => {
             let dir = vc.normalize();
             renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Y;
         }
-        "a_star" => {
+        CameraAxis::AStar => {
             // a* is perpendicular to b-c plane
             let dir = vb.cross(vc).normalize();
             renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
-        "b_star" => {
+        CameraAxis::BStar => {
             let dir = vc.cross(va).normalize();
             renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Z;
         }
-        "c_star" => {
+        CameraAxis::CStar => {
             let dir = va.cross(vb).normalize();
             renderer.camera.eye = center_vec + dir * dist;
             renderer.camera.up = glam::Vec3::Y;
         }
-        "reset" => {
+        CameraAxis::Reset => {
             renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
             renderer.camera.up = glam::Vec3::Y;
-        }
-        _ => {
-            return Err(format!("Unknown axis: {}", axis));
         }
     }
 
@@ -201,46 +198,48 @@ fn get_api_key(provider: &str, provided_key: &str) -> String {
 }
 
 #[tauri::command]
-pub fn check_api_key_status(provider_type: String) -> Result<bool, String> {
-    let key = get_api_key(&provider_type.to_lowercase(), "");
+pub fn check_api_key_status(provider_type: IpcEnumInput<LlmProvider>) -> IpcResult<bool> {
+    let provider_type = provider_type.parse("providerType")?;
+    let key = get_api_key(provider_type.as_str(), "");
     Ok(!key.is_empty())
 }
 
 #[tauri::command]
 pub fn llm_configure(
-    provider_type: String,
+    provider_type: IpcEnumInput<LlmProvider>,
     api_key: String,
     model: String,
     state: State<'_, LlmState>,
-) -> Result<(), String> {
-    let pt = provider_type.to_lowercase();
-    let resolved_key = if pt == "ollama" {
+) -> IpcResult<()> {
+    let provider_type = provider_type.parse("providerType")?;
+    let provider_name = provider_type.as_str();
+    let resolved_key = if matches!(provider_type, LlmProvider::Ollama) {
         String::new()
     } else {
-        get_api_key(&pt, &api_key)
+        get_api_key(provider_name, &api_key)
     };
 
-    let config = match pt.as_str() {
-        "openai" => crate::llm::provider::ProviderConfig::OpenAi {
+    let config = match provider_type {
+        LlmProvider::Openai => crate::llm::provider::ProviderConfig::OpenAi {
             api_key: resolved_key,
             model,
         },
-        "deepseek" => crate::llm::provider::ProviderConfig::DeepSeek {
+        LlmProvider::Deepseek => crate::llm::provider::ProviderConfig::DeepSeek {
             api_key: resolved_key,
             model,
         },
-        "claude" => crate::llm::provider::ProviderConfig::Claude {
+        LlmProvider::Claude => crate::llm::provider::ProviderConfig::Claude {
             api_key: resolved_key,
             model,
         },
-        "gemini" => crate::llm::provider::ProviderConfig::Gemini {
+        LlmProvider::Gemini => crate::llm::provider::ProviderConfig::Gemini {
             api_key: resolved_key,
             model,
         },
-        "ollama" => crate::llm::provider::ProviderConfig::Ollama { model },
-        _ => return Err(format!("Unknown provider type: {}", provider_type)),
+        LlmProvider::Ollama => crate::llm::provider::ProviderConfig::Ollama { model },
     };
-    let mut st = state.0.try_lock().map_err(|_| "Failed to lock LLM state")?;
+    let mut st = state.0.try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "LLM state"))?;
     *st = Some(config);
     Ok(())
 }
@@ -251,26 +250,27 @@ pub async fn llm_chat(
     selected_indices: Option<Vec<usize>>,
     state: State<'_, LlmState>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<String, String> {
+) -> IpcResult<String> {
     let config_opt = {
-        let st = state.0.try_lock().map_err(|_| "Failed to lock LLM state")?;
+        let st = state.0.try_lock()
+            .map_err(|error| IpcError::from_try_lock(error, "LLM state"))?;
         st.clone()
     };
 
     let config = config_opt
-        .ok_or_else(|| "LLM provider is not configured. Please supply an API key.".to_string())?;
+        .ok_or_else(|| IpcError::invalid_argument("LLM provider is not configured"))?;
 
     let context = {
         let cs = crystal_state
             .try_lock()
-            .map_err(|_| "Failed to lock state")?;
+            .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
         crate::llm::context::build_crystal_context(&cs, selected_indices.as_deref())
     };
 
     let messages = crate::llm::prompt::build_messages(&context, &user_message);
 
     let provider = crate::llm::provider::create_provider(&config);
-    provider.chat(&messages).await
+    provider.chat(&messages).await.map_err(IpcError::io)
 }
 
 #[tauri::command]
@@ -281,34 +281,43 @@ pub fn llm_execute_command(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     // 1. Layer 1: Schema parse validation
     let command: crate::llm::command::CrystalCommand = serde_json::from_str(&command_json)
-        .map_err(|e| format!("Schema validation failed: {}", e))?;
+        .map_err(|e| IpcError::parse(format!("schema validation failed: {}", e)))?;
 
     let dry_run_state = {
-        let cs = crystal_state.lock().map_err(|_| "Failed to lock state")?;
-        cs.clone()
+        let cs = crystal_state.lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        crate::undo::StructuralSnapshot::from_crystal_state(&cs).into_crystal_state()
     };
 
     // 2. Layer 2: Physics Sandbox validation
     crate::llm::sandbox::validate_command(&command, &dry_run_state)
-        .map_err(|e| format!("Physics sandbox error: {}", e))?;
+        .map_err(|e| IpcError::invalid_argument(format!("physics sandbox rejected command: {}", e)))?;
 
-    crate::transaction::with_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        crate::llm::router::execute_command(command, cs)
-            .map_err(|e| format!("Command execution failed: {}", e))?;
-        Ok(())
+    if matches!(&command, crate::llm::command::CrystalCommand::ExportFile(_)) {
+        let mut cs = crystal_state.lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        return crate::llm::router::execute_command(command, &mut cs)
+            .map_err(|e| IpcError::invalid_argument(format!("command execution failed: {}", e)));
+    }
+
+    crate::transaction::with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+        crate::llm::router::execute_command(command, &mut prepared)
+            .map_err(|e| IpcError::invalid_argument(format!("command execution failed: {}", e)))?;
+        Ok(prepared)
     })
 }
 
 #[tauri::command]
 pub fn get_crystal_state(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<crate::crystal_state::CrystalState, String> {
+) -> IpcResult<crate::crystal_state::CrystalState> {
     let cs = crystal_state
         .lock()
-        .map_err(|_| "Failed to lock state")?;
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     Ok(cs.clone())
 }
 
@@ -318,10 +327,10 @@ pub fn rotate_camera(
     dx: f32,
     dy: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         
     if renderer.show_bz {
         // Rotation disabled in BZ view — labels use a fixed camera projection
@@ -336,10 +345,10 @@ pub fn rotate_camera(
 pub fn zoom_camera(
     delta: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         
     if renderer.show_bz {
         let crate::renderer::renderer::Renderer { ref gpu, ref mut bz_viewport, .. } = *renderer;
@@ -359,10 +368,10 @@ pub fn pan_camera(
     dx: f32,
     dy: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         
     if renderer.show_bz {
         let crate::renderer::renderer::Renderer { ref gpu, ref mut bz_viewport, .. } = *renderer;
@@ -381,22 +390,20 @@ pub fn pan_camera(
 pub fn reset_camera(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
+    let cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     let mut renderer = renderer_state
         .lock()
-        .map_err(|e| format!("Failed to lock renderer: {}", e))?;
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
 
-    if let Ok(cs) = crystal_state.lock() {
-        let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
-        let dist = extent * 2.5;
-        let center = cs.unit_cell_center();
-        let center_vec = glam::Vec3::from_array(center);
-        renderer.camera.target = center_vec;
-        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
-        renderer.camera.orthographic_scale = extent * 1.5;
-    } else {
-        renderer.camera = crate::renderer::camera::Camera::default_for_crystal();
-    }
+    let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
+    let dist = extent * 2.5;
+    let center = cs.unit_cell_center();
+    let center_vec = glam::Vec3::from_array(center);
+    renderer.camera.target = center_vec;
+    renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, dist);
+    renderer.camera.orthographic_scale = extent * 1.5;
 
     Ok(())
 }
@@ -410,7 +417,7 @@ pub fn pick_atom(
     screen_h: f32,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<Option<usize>, String> {
+) -> IpcResult<Option<usize>> {
     log::info!(
         "pick_atom: window screen_w={} screen_h={} pointer x={} y={}",
         screen_w,
@@ -421,7 +428,7 @@ pub fn pick_atom(
     let (camera_eye, view_proj, is_perspective) = {
         let renderer = renderer_state
             .try_lock()
-            .map_err(|_| "Failed to lock renderer")?;
+            .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
         let vp = renderer.camera.build_projection_matrix() * renderer.camera.build_view_matrix();
         (renderer.camera.eye, vp, renderer.camera.is_perspective)
     };
@@ -444,7 +451,7 @@ pub fn pick_atom(
 
     let cs = crystal_state
         .try_lock()
-        .map_err(|_| "Failed to lock state")?;
+        .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
 
     let mut closest_idx = None;
     let mut min_t = f32::MAX;
@@ -482,8 +489,10 @@ pub fn pick_atom(
 #[tauri::command]
 pub fn get_settings(
     settings: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
-) -> Result<crate::settings::AppSettings, String> {
-    Ok(settings.lock().map_err(|e| e.to_string())?.clone())
+) -> IpcResult<crate::settings::AppSettings> {
+    Ok(settings.lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?
+        .clone())
 }
 
 #[tauri::command]
@@ -493,32 +502,27 @@ pub fn update_settings(
     settings: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("update_settings called");
-    
-    // 1. Update global settings state
-    {
-        let mut s = settings.lock().map_err(|e| e.to_string())?;
-        *s = new_settings.clone();
-    }
-    
-    // 2. Save to disk
-    let _ = new_settings.save(&app).map_err(|e| log::warn!("Failed to save settings: {}", e));
+    let cs = crystal_state.lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let mut current_settings = settings.lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+    let mut renderer = renderer_state.lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
 
-    // 3. Rebuild renderer data
-    // Lock State FIRST to avoid AB/BA deadlock with commands that lock renderer then state
-    let cs = crystal_state.lock().map_err(|e| format!("State lock: {}", e))?;
-    let mut renderer = renderer_state.lock().map_err(|e| format!("Renderer lock: {}", e))?;
-
-    // Update atoms (affects scale and visibility)
     let instances = crate::wannier::build_atoms_with_ghosts(&cs, &new_settings);
     renderer.update_atoms(&instances);
-
-    // Update lines (affects cell box and bonds)
     renderer.update_lines(&cs, &new_settings);
     let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &new_settings, &cs.selected_atoms);
     renderer.update_bonds(&bond_instances);
+    *current_settings = new_settings.clone();
 
+    drop(renderer);
+    drop(current_settings);
+    drop(cs);
+
+    let _ = new_settings.save(&app).map_err(|e| log::warn!("Failed to save settings: {}", e));
 
     Ok(())
 }

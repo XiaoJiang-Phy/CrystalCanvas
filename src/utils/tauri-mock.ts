@@ -1,15 +1,8 @@
-import type { GeneratedIpcArgs, IpcCommandName } from '../ipc/commands.generated';
-import { normalize_ipc_error, validate_ipc_event, validate_ipc_result } from '../ipc/contracts';
+import { IpcException, normalize_ipc_error, validate_ipc_event, validate_ipc_result } from '../ipc/contracts';
 import type { IpcArgs, IpcEventContract, IpcResult, TypedIpcCommand, TypedIpcEvent } from '../ipc/contracts';
+import { IPC_COMMAND_CLASSIFICATION } from '../ipc/commands.generated';
+import type { ReadIpcCommand } from '../ipc/commands.generated';
 import type { OpenDialogOptions, SaveDialogOptions } from '@tauri-apps/plugin-dialog';
-
-type SafeIpcArgs<Command extends IpcCommandName> = Command extends TypedIpcCommand
-    ? IpcArgs<Command>
-    : GeneratedIpcArgs<Command>;
-
-type SafeIpcResult<Command extends IpcCommandName> = Command extends TypedIpcCommand
-    ? IpcResult<Command>
-    : unknown;
 
 declare global {
     interface Window {
@@ -35,38 +28,26 @@ const isTauri = (): boolean => {
  * Safe wrapper around Tauri's invoke.
  * Returns undefined when not running in Tauri.
  */
-export function safeInvoke<Command extends IpcCommandName>(
+export function safeInvoke<Command extends TypedIpcCommand>(
     cmd: Command,
-    ...args: SafeIpcArgs<Command> extends undefined ? [] : [args: SafeIpcArgs<Command>]
-): Promise<SafeIpcResult<Command> | undefined>;
+    ...args: IpcArgs<Command> extends undefined ? [] : [args: IpcArgs<Command>]
+): Promise<IpcResult<Command> | (Command extends ReadIpcCommand ? undefined : never)>;
 export async function safeInvoke(
-    cmd: IpcCommandName,
+    cmd: TypedIpcCommand,
     args?: Record<string, unknown>
 ): Promise<unknown | undefined> {
     if (!isTauri()) {
-        // Silently no-op in browser mode
-        return undefined;
+        if (IPC_COMMAND_CLASSIFICATION[cmd] === 'read') return undefined;
+        throw new IpcException({
+            code: 'not_in_tauri',
+            message: `IPC command '${cmd}' requires the Tauri runtime`,
+            recoverable: false,
+        });
     }
     try {
         const { invoke } = await import('@tauri-apps/api/core');
         const result = await invoke(cmd, args);
-        if (cmd === 'load_wannier_hr' || cmd === 'load_volumetric_file'
-            || cmd === 'check_api_key_status' || cmd === 'compute_brillouin_zone'
-            || cmd === 'generate_kpath_text' || cmd === 'get_bond_analysis'
-            || cmd === 'get_bz_label_positions' || cmd === 'get_crystal_state'
-            || cmd === 'get_kpath_info' || cmd === 'get_measurement_labels_screen'
-            || cmd === 'get_settings'
-            || cmd === 'llm_chat' || cmd === 'load_axsf_phonon'
-            || cmd === 'load_phonon_interactive' || cmd === 'pick_atom'
-            || cmd === 'load_cif_file' || cmd === 'export_file'
-            || cmd === 'export_image' || cmd === 'write_text_file'
-            || cmd === 'set_wannier_t_min' || cmd === 'set_wannier_r_shell'
-            || cmd === 'set_wannier_orbital' || cmd === 'toggle_wannier_onsite'
-            || cmd === 'toggle_hopping_display' || cmd === 'toggle_bz_display'
-            || cmd === 'set_bz_scale' || cmd === 'clear_wannier') {
-            return validate_ipc_result(cmd, result);
-        }
-        return result;
+        return validate_ipc_result(cmd, result);
     } catch (e) {
         console.warn(`[tauri-mock] invoke('${cmd}') failed:`, e);
         throw normalize_ipc_error(e);

@@ -328,29 +328,45 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                     let path_str = path.to_string();
                     log::info!("Opening file: {}", path_str);
                     match crate::io::import::load_file(&path_str) {
-                        Ok(state) => {
-                            // Update base state for "Restore Unitcell"
-                            if let Some(base_st) = handle.try_state::<commands::BaseCrystalState>() {
-                                if let Ok(mut base) = base_st.0.lock() {
-                                    *base = Some(state.clone());
+                        Ok(mut state) => {
+                            let vol_data = state.volumetric_data.take();
+                            let base_snapshot = state.clone();
+                            state.volumetric_data = vol_data;
+                            let Some(base_st) = handle.try_state::<commands::BaseCrystalState>() else {
+                                log::error!("Base crystal state is unavailable");
+                                return;
+                            };
+                            let mut base = match base_st.0.lock() {
+                                Ok(base) => base,
+                                Err(error) => {
+                                    log::error!("Failed to lock base crystal state: {}", error);
+                                    return;
                                 }
-                            }
-
-                            // Block until crystal state lock is available
-                            if let Some(cs_mutex) = handle
-                                .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
-                            {
-                                match cs_mutex.lock() {
-                                    Ok(mut cs) => {
-                                        *cs = state.clone();
-                                        cs.version += 1;
-                                    }
-                                    Err(e) => log::error!("Failed to lock crystal state: {}", e),
+                            };
+                            let cs_mutex = handle.state::<std::sync::Mutex<crate::crystal_state::CrystalState>>();
+                            let mut cs = match cs_mutex.lock() {
+                                Ok(cs) => cs,
+                                Err(error) => {
+                                    log::error!("Failed to lock crystal state: {}", error);
+                                    return;
                                 }
-                            }
+                            };
+                            let undo_state = handle.state::<std::sync::Mutex<crate::undo::UndoStack>>();
+                            let mut u_stack = match undo_state.lock() {
+                                Ok(stack) => stack,
+                                Err(error) => {
+                                    log::error!("Failed to lock undo stack: {}", error);
+                                    return;
+                                }
+                            };
                             let settings_st = handle.state::<std::sync::Mutex<crate::settings::AppSettings>>();
-                            let settings = settings_st.lock().unwrap();
-
+                            let settings = match settings_st.lock() {
+                                Ok(settings) => settings,
+                                Err(error) => {
+                                    log::error!("Failed to lock settings: {}", error);
+                                    return;
+                                }
+                            };
                             let instances = crate::renderer::instance::build_instance_data(
                                 &state.cart_positions,
                                 &state.atomic_numbers,
@@ -359,33 +375,62 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 &settings,
                                 &state.selected_atoms,
                             );
-                            // Block until renderer lock is available
-                            if let Some(r) = handle
-                                .try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>(
-                                )
-                            {
-                                match r.lock() {
-                                    Ok(mut renderer) => {
-                                        renderer.update_atoms(&instances);
-                                        renderer.update_lines(&state, &settings);
-                                        if let Some(vol) = &state.volumetric_data {
-                                            renderer.upload_volumetric(vol);
-                                        }
-                                        let extent =
-                                            state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
-                                        let center = state.unit_cell_center();
-                                        let center_vec = glam::Vec3::from_array(center);
-                                        renderer.camera.eye =
-                                            center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
-                                        renderer.camera.target = center_vec;
-                                        if !renderer.camera.is_perspective {
-                                            renderer.camera.set_orthographic(extent * 1.5);
-                                        }
-                                        renderer.update_camera();
-                                    }
-                                    Err(e) => log::error!("Failed to lock renderer: {}", e),
+                            let renderer_state = handle.state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>();
+                            let mut renderer = match renderer_state.lock() {
+                                Ok(renderer) => renderer,
+                                Err(error) => {
+                                    log::error!("Failed to lock renderer: {}", error);
+                                    return;
                                 }
+                            };
+                            let prepared_volumetric = match state.volumetric_data.as_ref()
+                                .map(|vol| renderer.prepare_volumetric(vol))
+                                .transpose()
+                            {
+                                Ok(prepared) => prepared,
+                                Err(()) => {
+                                    log::error!("GPU out of memory while preparing volumetric grid");
+                                    return;
+                                }
+                            };
+                            let Some(next_version) = cs.version.checked_add(1) else {
+                                log::error!("Crystal state version exhausted");
+                                return;
+                            };
+                            let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
+                            renderer.clear_structure_bound_overlays();
+                            renderer.update_atoms(&instances);
+                            renderer.update_lines(&state, &settings);
+                            if let Some(prepared) = prepared_volumetric {
+                                renderer.commit_volumetric(prepared);
                             }
+                            let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
+                            let center_vec = glam::Vec3::from_array(state.unit_cell_center());
+                            renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+                            renderer.camera.target = center_vec;
+                            if !renderer.camera.is_perspective {
+                                renderer.camera.set_orthographic(extent * 1.5);
+                            }
+                            renderer.update_camera();
+                            *base = Some(base_snapshot);
+                            *cs = state;
+                            cs.version = next_version;
+                            u_stack.push(previous_state);
+                            let can_undo = u_stack.can_undo();
+                            let can_redo = u_stack.can_redo();
+                            drop(renderer);
+                            drop(settings);
+                            drop(u_stack);
+                            drop(cs);
+                            drop(base);
+                            let _ = handle.emit(
+                                "state_changed",
+                                crate::transaction::StateChangedPayload { version: next_version },
+                            );
+                            let _ = handle.emit(
+                                "undo_stack_changed",
+                                crate::transaction::UndoStackPayload { can_undo, can_redo },
+                            );
                             log::info!("File loaded and base state saved: {}", path_str);
                         }
                         Err(e) => log::error!("Failed to load file: {}", e),
