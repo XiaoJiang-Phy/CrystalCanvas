@@ -157,6 +157,16 @@ impl Default for CrystalState {
 }
 
 impl CrystalState {
+    pub fn invalidate_structure_bound_data(&mut self) {
+        self.bond_analysis = None;
+        self.phonon_data = None;
+        self.active_phonon_mode = None;
+        self.phonon_phase = 0.0;
+        self.volumetric_data = None;
+        self.bz_cache = None;
+        self.wannier_overlay = None;
+    }
+
     /// Construct a CrystalState by parsing a CIF file.
     pub fn from_cif(path: &str) -> std::result::Result<Self, String> {
         let ffi_data =

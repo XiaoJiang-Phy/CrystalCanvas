@@ -1,7 +1,7 @@
 use tauri::{Emitter, State};
 
 use super::{BaseCrystalState, VolumetricInfo};
-use crate::ipc::{IpcError, IpcResult};
+use crate::ipc::{ExportFileFormat, ExportImageBackground, IpcEnumInput, IpcError, IpcResult};
 
 /// Load a CIF file into the state.
 #[tauri::command]
@@ -35,73 +35,70 @@ pub fn load_cif_file(
         }
     });
 
-    {
-        let mut base = base_state
-            .0
-            .lock()
-            .map_err(|e| IpcError::lock(e.to_string()))?;
-        *base = Some(state.clone()); // Clonned without heavy volumetric buffer
-    }
-
+    let base_snapshot = state.clone();
     state.volumetric_data = vol_data;
 
     let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
     let center = state.unit_cell_center();
-
+    let mut base = base_state
+        .0
+        .lock()
+        .map_err(|e| IpcError::lock(e.to_string()))?;
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|e| IpcError::lock(format!("Failed to lock crystal state: {}", e)))?;
+    let mut u_stack = undo_state
+        .lock()
+        .map_err(|e| IpcError::lock(format!("Failed to lock undo state: {}", e)))?;
     let settings = settings_state
         .lock()
         .map_err(|e| IpcError::lock(format!("Failed to lock settings: {}", e)))?;
     let instances = crate::wannier::build_atoms_with_ghosts(&state, &settings);
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
+    let next_version = cs.version.checked_add(1)
+        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+    let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
 
-    {
-        let mut renderer = renderer_state
-            .lock()
-            .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
-        renderer.update_atoms(&instances);
-        renderer.update_lines(&state, &settings);
+    let prepared_volumetric = state
+        .volumetric_data
+        .as_ref()
+        .map(|vol| renderer.prepare_volumetric(vol))
+        .transpose()
+        .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
-        let center_vec = glam::Vec3::from_array(center);
-        renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        renderer.camera.target = center_vec;
-        if !renderer.camera.is_perspective {
-            renderer.camera.set_orthographic(extent * 1.5);
-        }
+    renderer.clear_structure_bound_overlays();
+    renderer.update_atoms(&instances);
+    renderer.update_lines(&state, &settings);
 
-        if let Some(vol) = &state.volumetric_data {
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                renderer.upload_volumetric(vol);
-            }));
-            if res.is_err() {
-                log::error!("GPU OOM: Failed to create volumetric pipelines. File too large.");
-                renderer.clear_volumetric();
-            }
-        } else {
-            renderer.clear_volumetric();
-        }
-        renderer.update_camera();
+    let center_vec = glam::Vec3::from_array(center);
+    renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+    renderer.camera.target = center_vec;
+    if !renderer.camera.is_perspective {
+        renderer.camera.set_orthographic(extent * 1.5);
     }
+
+    if let Some(prepared) = prepared_volumetric {
+        renderer.commit_volumetric(prepared);
+    }
+    renderer.update_camera();
+
+    *base = Some(base_snapshot);
+    *cs = state;
+    cs.version = next_version;
+    u_stack.push(previous_state);
+    let can_undo = u_stack.can_undo();
+    let can_redo = u_stack.can_redo();
+    let version = next_version;
+
+    drop(renderer);
     drop(settings);
+    drop(u_stack);
+    drop(cs);
+    drop(base);
 
-    let can_undo;
-    let can_redo;
-    {
-        let mut cs = crystal_state
-            .lock()
-            .map_err(|e| IpcError::lock(format!("Failed to lock crystal state: {}", e)))?;
-        // Snapshot the old state before overriding
-        let mut u_stack = undo_state
-            .lock()
-            .map_err(|e| IpcError::lock(format!("Failed to lock undo state: {}", e)))?;
-        u_stack.push(crate::undo::LightweightState::from_crystal_state(&cs));
-        can_undo = u_stack.can_undo();
-        can_redo = u_stack.can_redo();
-        drop(u_stack);
-
-        *cs = state;
-        cs.version += 1;
-    }
-
-    app.emit("state_changed", ()).ok();
+    app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
     app.emit(
         "undo_stack_changed",
         crate::transaction::UndoStackPayload { can_undo, can_redo },
@@ -116,24 +113,19 @@ pub fn load_cif_file(
 
 #[tauri::command]
 pub fn export_file(
-    format: String,
+    format: IpcEnumInput<ExportFileFormat>,
     path: String,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> IpcResult<()> {
-    log::info!("export_file: format={} path={}", format, path);
+    let format = format.parse("format")?;
+    log::info!("export_file: format={:?} path={}", format, path);
     let cx = crystal_state
         .try_lock()
-        .map_err(|_| IpcError::lock("Failed to lock state"))?;
-    let fmt = match format.to_uppercase().as_str() {
-        "POSCAR" | "VASP" => crate::llm::command::ExportFormat::Poscar,
-        "LAMMPS" => crate::llm::command::ExportFormat::Lammps,
-        "QE" => crate::llm::command::ExportFormat::Qe,
-        _ => {
-            return Err(IpcError::invalid_argument(format!(
-                "Unsupported format: {}",
-                format
-            )));
-        }
+        .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
+    let fmt = match format {
+        ExportFileFormat::Poscar | ExportFileFormat::Vasp => crate::llm::command::ExportFormat::Poscar,
+        ExportFileFormat::Lammps => crate::llm::command::ExportFormat::Lammps,
+        ExportFileFormat::Qe => crate::llm::command::ExportFormat::Qe,
     };
 
     match fmt {
@@ -157,14 +149,15 @@ pub fn export_image(
     path: String,
     width: u32,
     height: u32,
-    bg_mode: String,
+    bg_mode: IpcEnumInput<ExportImageBackground>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
+    let bg_mode = bg_mode.parse("bgMode")?;
     log::info!(
         "export_image: {}x{}, bg={}, path={}",
         width,
         height,
-        bg_mode,
+        bg_mode.as_str(),
         path
     );
 
@@ -173,14 +166,14 @@ pub fn export_image(
         .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
 
     let rgba_data = renderer
-        .render_offscreen(width, height, &bg_mode)
+        .render_offscreen(width, height, bg_mode.as_str())
         .map_err(IpcError::render)?;
 
     // Determine output format from file extension
     let path_lower = path.to_lowercase();
     if path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg") {
         // JPEG does not support transparency — composite onto white if transparent
-        let rgb_data: Vec<u8> = if bg_mode == "transparent" {
+        let rgb_data: Vec<u8> = if matches!(bg_mode, ExportImageBackground::Transparent) {
             rgba_data
                 .chunks_exact(4)
                 .flat_map(|px| {

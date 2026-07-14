@@ -293,6 +293,989 @@
       "delta"
     ]
   },
+  "backend_command_schemas": {
+    "add_atom": {
+      "args": [
+        {
+          "name": "atomicNumber",
+          "optional": false,
+          "rust_type": "u8",
+          "type": "number"
+        },
+        {
+          "name": "elementSymbol",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "fractPos",
+          "optional": false,
+          "rust_type": "[f64; 3]",
+          "type": "[number,number,number]"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "add_measurement": {
+      "args": [
+        {
+          "name": "indices",
+          "optional": false,
+          "rust_type": "Vec<usize>",
+          "type": "Array<number>"
+        }
+      ],
+      "result": "MeasurementOverlay",
+      "rust_result": "IpcResult<crate::crystal_state::MeasurementOverlay>"
+    },
+    "apply_cell_standardize": {
+      "args": [
+        {
+          "name": "toPrimitive",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "apply_niggli_reduce": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "apply_slab": {
+      "args": [
+        {
+          "name": "layers",
+          "optional": false,
+          "rust_type": "i32",
+          "type": "number"
+        },
+        {
+          "name": "miller",
+          "optional": false,
+          "rust_type": "[i32; 3]",
+          "type": "[number,number,number]"
+        },
+        {
+          "name": "vacuumA",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "apply_supercell": {
+      "args": [
+        {
+          "name": "matrix",
+          "optional": false,
+          "rust_type": "[[i32; 3]; 3]",
+          "type": "[[number,number,number],[number,number,number],[number,number,number]]"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "check_api_key_status": {
+      "args": [
+        {
+          "name": "providerType",
+          "optional": false,
+          "rust_type": "IpcEnumInput<LlmProvider>",
+          "type": "LlmProvider"
+        }
+      ],
+      "result": "boolean",
+      "rust_result": "IpcResult<bool>"
+    },
+    "clear_measurements": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "clear_wannier": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "compute_brillouin_zone": {
+      "args": [],
+      "result": "BzInfo",
+      "rust_result": "IpcResult<BzInfoResponse>"
+    },
+    "delete_atoms": {
+      "args": [
+        {
+          "name": "indices",
+          "optional": false,
+          "rust_type": "Vec<usize>",
+          "type": "Array<number>"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "export_file": {
+      "args": [
+        {
+          "name": "format",
+          "optional": false,
+          "rust_type": "IpcEnumInput<ExportFileFormat>",
+          "type": "ExportFileFormat"
+        },
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "export_image": {
+      "args": [
+        {
+          "name": "bgMode",
+          "optional": false,
+          "rust_type": "IpcEnumInput<ExportImageBackground>",
+          "type": "ExportImageBackground"
+        },
+        {
+          "name": "height",
+          "optional": false,
+          "rust_type": "u32",
+          "type": "number"
+        },
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "width",
+          "optional": false,
+          "rust_type": "u32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "generate_kpath_text": {
+      "args": [
+        {
+          "name": "npoints",
+          "optional": false,
+          "rust_type": "u32",
+          "type": "number"
+        }
+      ],
+      "result": "KPathText",
+      "rust_result": "IpcResult<KPathTextResponse>"
+    },
+    "get_bond_analysis": {
+      "args": [
+        {
+          "name": "thresholdFactor",
+          "optional": true,
+          "rust_type": "Option<f64>",
+          "type": "null|number"
+        }
+      ],
+      "result": "BondAnalysisResult",
+      "rust_result": "IpcResult<BondAnalysisResult>"
+    },
+    "get_bz_label_positions": {
+      "args": [
+        {
+          "name": "height",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "width",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "Array<ScreenLabel>",
+      "rust_result": "IpcResult<Vec<BzLabelPos>>"
+    },
+    "get_crystal_state": {
+      "args": [],
+      "result": "CrystalState",
+      "rust_result": "IpcResult<crate::crystal_state::CrystalState>"
+    },
+    "get_kpath_info": {
+      "args": [],
+      "result": "KPathInfo",
+      "rust_result": "IpcResult<KPathInfoResponse>"
+    },
+    "get_measurement_labels_screen": {
+      "args": [
+        {
+          "name": "height",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "width",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "Array<ScreenLabel>",
+      "rust_result": "IpcResult<Vec<MeasurementLabelPos>>"
+    },
+    "get_measurements": {
+      "args": [],
+      "result": "Array<MeasurementOverlay>",
+      "rust_result": "IpcResult<Vec<crate::crystal_state::MeasurementOverlay>>"
+    },
+    "get_settings": {
+      "args": [],
+      "result": "AppSettingsDto",
+      "rust_result": "IpcResult<crate::settings::AppSettings>"
+    },
+    "get_volumetric_info": {
+      "args": [],
+      "result": "VolumetricInfo|null",
+      "rust_result": "IpcResult<Option<VolumetricInfo>>"
+    },
+    "llm_chat": {
+      "args": [
+        {
+          "name": "selectedIndices",
+          "optional": true,
+          "rust_type": "Option<Vec<usize>>",
+          "type": "Array<number>|null"
+        },
+        {
+          "name": "userMessage",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "string",
+      "rust_result": "IpcResult<String>"
+    },
+    "llm_configure": {
+      "args": [
+        {
+          "name": "apiKey",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "model",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "providerType",
+          "optional": false,
+          "rust_type": "IpcEnumInput<LlmProvider>",
+          "type": "LlmProvider"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "llm_execute_command": {
+      "args": [
+        {
+          "name": "commandJson",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "load_axsf_phonon": {
+      "args": [
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "Array<PhononModeSummary>",
+      "rust_result": "IpcResult<Vec<crate::phonon::PhononModeSummary>>"
+    },
+    "load_cif_file": {
+      "args": [
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "load_phonon": {
+      "args": [
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "Array<PhononModeSummary>",
+      "rust_result": "IpcResult<Vec<crate::phonon::PhononModeSummary>>"
+    },
+    "load_phonon_interactive": {
+      "args": [
+        {
+          "name": "modes",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "scfIn",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "scfOut",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "Array<PhononModeSummary>",
+      "rust_result": "IpcResult<Vec<crate::phonon::PhononModeSummary>>"
+    },
+    "load_volumetric_file": {
+      "args": [
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "VolumetricInfo",
+      "rust_result": "IpcResult<VolumetricInfo>"
+    },
+    "load_wannier_hr": {
+      "args": [
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "WannierInfo",
+      "rust_result": "IpcResult<WannierInfo>"
+    },
+    "pan_camera": {
+      "args": [
+        {
+          "name": "dx",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "dy",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "pick_atom": {
+      "args": [
+        {
+          "name": "screenH",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "screenW",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "x",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "y",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null|number",
+      "rust_result": "IpcResult<Option<usize>>"
+    },
+    "preview_slab": {
+      "args": [
+        {
+          "name": "layers",
+          "optional": false,
+          "rust_type": "i32",
+          "type": "number"
+        },
+        {
+          "name": "miller",
+          "optional": false,
+          "rust_type": "[i32; 3]",
+          "type": "[number,number,number]"
+        },
+        {
+          "name": "vacuumA",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        }
+      ],
+      "result": "CrystalState",
+      "rust_result": "IpcResult<crate::crystal_state::CrystalState>"
+    },
+    "preview_supercell": {
+      "args": [
+        {
+          "name": "expansion",
+          "optional": false,
+          "rust_type": "[i32; 9]",
+          "type": "[number,number,number,number,number,number,number,number,number]"
+        }
+      ],
+      "result": "CrystalState",
+      "rust_result": "IpcResult<crate::crystal_state::CrystalState>"
+    },
+    "redo": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "reset_camera": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "restore_unitcell": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "rotate_camera": {
+      "args": [
+        {
+          "name": "dx",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "dy",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_bz_scale": {
+      "args": [
+        {
+          "name": "scale",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_camera_projection": {
+      "args": [
+        {
+          "name": "isPerspective",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_camera_view_axis": {
+      "args": [
+        {
+          "name": "axis",
+          "optional": false,
+          "rust_type": "IpcEnumInput<CameraAxis>",
+          "type": "CameraAxis"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_isosurface_color": {
+      "args": [
+        {
+          "name": "color",
+          "optional": false,
+          "rust_type": "[f32; 4]",
+          "type": "[number,number,number,number]"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_isosurface_opacity": {
+      "args": [
+        {
+          "name": "opacity",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_isosurface_sign_mode": {
+      "args": [
+        {
+          "name": "mode",
+          "optional": false,
+          "rust_type": "IpcEnumInput<IsosurfaceSignMode>",
+          "type": "IsosurfaceSignMode"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_isovalue": {
+      "args": [
+        {
+          "name": "value",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_phonon_mode": {
+      "args": [
+        {
+          "name": "modeIndex",
+          "optional": true,
+          "rust_type": "Option<usize>",
+          "type": "null|number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_phonon_phase": {
+      "args": [
+        {
+          "name": "amplitude",
+          "optional": true,
+          "rust_type": "Option<f64>",
+          "type": "null|number"
+        },
+        {
+          "name": "phase",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_render_flags": {
+      "args": [
+        {
+          "name": "showBonds",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        },
+        {
+          "name": "showCell",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_volume_colormap": {
+      "args": [
+        {
+          "name": "mode",
+          "optional": false,
+          "rust_type": "IpcEnumInput<VolumeColormap>",
+          "type": "VolumeColormap"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_volume_density_cutoff": {
+      "args": [
+        {
+          "name": "cutoff",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_volume_opacity_range": {
+      "args": [
+        {
+          "name": "max",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "min",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "opacityScale",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_volume_render_mode": {
+      "args": [
+        {
+          "name": "mode",
+          "optional": false,
+          "rust_type": "IpcEnumInput<VolumeRenderMode>",
+          "type": "VolumeRenderMode"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_wannier_orbital": {
+      "args": [
+        {
+          "name": "active",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        },
+        {
+          "name": "orbIdx",
+          "optional": false,
+          "rust_type": "usize",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_wannier_r_shell": {
+      "args": [
+        {
+          "name": "active",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        },
+        {
+          "name": "shellIdx",
+          "optional": false,
+          "rust_type": "usize",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_wannier_t_min": {
+      "args": [
+        {
+          "name": "tMin",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "shift_termination": {
+      "args": [
+        {
+          "name": "layerToleranceA",
+          "optional": true,
+          "rust_type": "Option<f64>",
+          "type": "null|number"
+        },
+        {
+          "name": "targetLayerIdx",
+          "optional": false,
+          "rust_type": "i32",
+          "type": "number"
+        }
+      ],
+      "result": "number",
+      "rust_result": "IpcResult<i32>"
+    },
+    "substitute_atoms": {
+      "args": [
+        {
+          "name": "indices",
+          "optional": false,
+          "rust_type": "Vec<usize>",
+          "type": "Array<number>"
+        },
+        {
+          "name": "newAtomicNumber",
+          "optional": false,
+          "rust_type": "u8",
+          "type": "number"
+        },
+        {
+          "name": "newElementSymbol",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "toggle_bz_display": {
+      "args": [
+        {
+          "name": "show",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "toggle_hopping_display": {
+      "args": [
+        {
+          "name": "show",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "toggle_wannier_onsite": {
+      "args": [
+        {
+          "name": "show",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "translate_atoms_screen": {
+      "args": [
+        {
+          "name": "dx",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "dy",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "indices",
+          "optional": false,
+          "rust_type": "Vec<usize>",
+          "type": "Array<number>"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "undo": {
+      "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "update_lattice_params": {
+      "args": [
+        {
+          "name": "a",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        },
+        {
+          "name": "alpha",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        },
+        {
+          "name": "b",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        },
+        {
+          "name": "beta",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        },
+        {
+          "name": "c",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        },
+        {
+          "name": "gamma",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "update_selection": {
+      "args": [
+        {
+          "name": "indices",
+          "optional": false,
+          "rust_type": "Vec<usize>",
+          "type": "Array<number>"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "update_settings": {
+      "args": [
+        {
+          "name": "newSettings",
+          "optional": false,
+          "rust_type": "crate::settings::AppSettings",
+          "type": "AppSettingsDto"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "update_viewport_size": {
+      "args": [
+        {
+          "name": "height",
+          "optional": false,
+          "rust_type": "u32",
+          "type": "number"
+        },
+        {
+          "name": "width",
+          "optional": false,
+          "rust_type": "u32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "write_text_file": {
+      "args": [
+        {
+          "name": "content",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "zoom_camera": {
+      "args": [
+        {
+          "name": "delta",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    }
+  },
+  "command_schema_mismatches": [],
+  "dto_schema_mismatches": [],
+  "enum_schema_mismatches": [],
+  "unsupported_rust_wire_shapes": [],
   "missing_backend_command_argument_schemas": [],
   "backend_events": {
     "menu-action": [
@@ -315,13 +1298,13 @@
       "src-tauri/src/commands/analysis.rs",
       "src-tauri/src/commands/analysis.rs",
       "src-tauri/src/commands/analysis.rs",
-      "src-tauri/src/commands/analysis.rs",
-      "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/file_io.rs",
       "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/transaction.rs",
       "src-tauri/src/transaction.rs"
     ],
     "undo_stack_changed": [
@@ -330,6 +1313,8 @@
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/file_io.rs",
+      "src-tauri/src/main.rs",
+      "src-tauri/src/transaction.rs",
       "src-tauri/src/transaction.rs"
     ],
     "view_projection_changed": [
@@ -370,7 +1355,7 @@
     "llm_execute_command": "committed_mutation",
     "load_axsf_phonon": "committed_mutation",
     "load_cif_file": "committed_mutation",
-    "load_phonon": "committed_mutation",
+    "load_phonon": "state_attachment",
     "load_phonon_interactive": "committed_mutation",
     "load_volumetric_file": "renderer_only",
     "load_wannier_hr": "renderer_only",

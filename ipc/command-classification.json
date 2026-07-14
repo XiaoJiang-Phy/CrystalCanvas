@@ -27,7 +27,7 @@
     "llm_execute_command": "committed_mutation",
     "load_axsf_phonon": "committed_mutation",
     "load_cif_file": "committed_mutation",
-    "load_phonon": "committed_mutation",
+    "load_phonon": "state_attachment",
     "load_phonon_interactive": "committed_mutation",
     "load_volumetric_file": "renderer_only",
     "load_wannier_hr": "renderer_only",

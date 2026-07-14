@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
-import type { VolumetricInfo } from '../../ipc/contracts';
+import {
+    is_isosurface_sign_mode,
+    is_volume_colormap,
+    is_volume_render_mode,
+    type VolumetricInfo,
+} from '../../ipc/contracts';
 import { PanelProps } from './index';
 
 export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }: PanelProps) {
@@ -90,7 +95,11 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 <label className="text-[11px] text-slate-500 dark:text-slate-400">Render Mode</label>
                 <select
                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
-                    onChange={(e) => safeInvoke('set_volume_render_mode', { mode: e.target.value }).catch((e: any) => alert(String(e)))}
+                    onChange={(e) => {
+                        const mode = e.target.value;
+                        if (!is_volume_render_mode(mode)) return;
+                        safeInvoke('set_volume_render_mode', { mode }).catch((err: unknown) => alert(String(err)));
+                    }}
                     defaultValue="both"
                 >
                     <option value="both">Both (Isosurface + Volume)</option>
@@ -133,7 +142,9 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 <select
                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
                     onChange={(e) => {
-                        safeInvoke('set_isosurface_sign_mode', { mode: e.target.value }).catch((err: any) => alert(String(err)));
+                        const mode = e.target.value;
+                        if (!is_isosurface_sign_mode(mode)) return;
+                        safeInvoke('set_isosurface_sign_mode', { mode }).catch((err: unknown) => alert(String(err)));
                     }}
                     defaultValue="both"
                 >
@@ -147,7 +158,11 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 <label className="text-[11px] text-slate-500 dark:text-slate-400">Volume Colormap</label>
                 <select
                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
-                    onChange={(e) => safeInvoke('set_volume_colormap', { mode: e.target.value }).catch((err: any) => alert(String(err)))}
+                    onChange={(e) => {
+                        const mode = e.target.value;
+                        if (!is_volume_colormap(mode)) return;
+                        safeInvoke('set_volume_colormap', { mode }).catch((err: unknown) => alert(String(err)));
+                    }}
                     defaultValue="viridis"
                 >
                     <option value="viridis">Viridis</option>

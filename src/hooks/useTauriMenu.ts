@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { safeInvoke, safeListen } from '../utils/tauri-mock';
+import { is_camera_axis } from '../ipc/contracts';
 
 interface UseTauriMenuProps {
     setShowAssistant: React.Dispatch<React.SetStateAction<boolean>>;
@@ -47,7 +48,9 @@ export function useTauriMenu({
             } else if (action === 'export_image') {
                 setIsExportImageOpen(true);
             } else if (action.startsWith('view_axis_')) {
-                safeInvoke('set_camera_view_axis', { axis: action.replace('view_axis_', '') })
+                const axis = action.replace('view_axis_', '');
+                if (!is_camera_axis(axis)) return;
+                safeInvoke('set_camera_view_axis', { axis })
                     .catch(console.error);
             } else if (action === 'delete_selected') {
                 if (selectedAtomsRef.current.length > 0) {
