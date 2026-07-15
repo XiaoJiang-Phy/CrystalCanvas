@@ -71,7 +71,13 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
         ],
     )?;
     let sep_f3 = PredefinedMenuItem::separator(app)?;
-    let exp_image = MenuItem::with_id(app, "menu_export_image", "Export Image...", true, None::<&str>)?;
+    let exp_image = MenuItem::with_id(
+        app,
+        "menu_export_image",
+        "Export Image...",
+        true,
+        None::<&str>,
+    )?;
     let sep_f4 = PredefinedMenuItem::separator(app)?;
     let close_win = PredefinedMenuItem::close_window(app, None::<&str>)?;
     let file_menu = Submenu::with_items(
@@ -159,7 +165,14 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let sep_v2 = PredefinedMenuItem::separator(app)?;
     let v_reset = MenuItem::with_id(app, "menu_reset_view", "Reset View", true, None::<&str>)?;
     let sep_v3 = PredefinedMenuItem::separator(app)?;
-    let v_labels = CheckMenuItem::with_id(app, "menu_toggle_labels", "Show Labels", true, false, None::<&str>)?;
+    let v_labels = CheckMenuItem::with_id(
+        app,
+        "menu_toggle_labels",
+        "Show Labels",
+        true,
+        false,
+        None::<&str>,
+    )?;
     let v_cell = CheckMenuItem::with_id(
         app,
         "menu_toggle_cell",
@@ -168,7 +181,14 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let v_bonds = CheckMenuItem::with_id(app, "menu_toggle_bonds", "Show Bonds", true, true, None::<&str>)?;
+    let v_bonds = CheckMenuItem::with_id(
+        app,
+        "menu_toggle_bonds",
+        "Show Bonds",
+        true,
+        true,
+        None::<&str>,
+    )?;
     let sep_v4 = PredefinedMenuItem::separator(app)?;
     let v_dark = MenuItem::with_id(
         app,
@@ -310,7 +330,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                 app_handle.try_state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>()
                 && let Ok(mut renderer) = r.try_lock()
             {
-                renderer.update_atoms(&[]);
+                renderer.clear_atoms();
             }
             log::info!("New empty structure created.");
         }
@@ -319,7 +339,13 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             app_handle
                 .dialog()
                 .file()
-                .add_filter("All Supported", &["cif", "xyz", "pdb", "poscar", "contcar", "vasp", "in", "pwi", "chgcar", "locpot", "cube", "xsf", "dat"])
+                .add_filter(
+                    "All Supported",
+                    &[
+                        "cif", "xyz", "pdb", "poscar", "contcar", "vasp", "in", "pwi", "chgcar",
+                        "locpot", "cube", "xsf", "dat",
+                    ],
+                )
                 .add_filter("Volumetric", &["chgcar", "locpot", "cube", "xsf"])
                 .add_filter("Wannier Hopping", &["dat"])
                 .set_title("Open Structure File")
@@ -332,7 +358,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                             let vol_data = state.volumetric_data.take();
                             let base_snapshot = state.clone();
                             state.volumetric_data = vol_data;
-                            let Some(base_st) = handle.try_state::<commands::BaseCrystalState>() else {
+                            let Some(base_st) = handle.try_state::<commands::BaseCrystalState>()
+                            else {
                                 log::error!("Base crystal state is unavailable");
                                 return;
                             };
@@ -343,7 +370,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     return;
                                 }
                             };
-                            let cs_mutex = handle.state::<std::sync::Mutex<crate::crystal_state::CrystalState>>();
+                            let cs_mutex = handle
+                                .state::<std::sync::Mutex<crate::crystal_state::CrystalState>>();
                             let mut cs = match cs_mutex.lock() {
                                 Ok(cs) => cs,
                                 Err(error) => {
@@ -351,7 +379,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     return;
                                 }
                             };
-                            let undo_state = handle.state::<std::sync::Mutex<crate::undo::UndoStack>>();
+                            let undo_state =
+                                handle.state::<std::sync::Mutex<crate::undo::UndoStack>>();
                             let mut u_stack = match undo_state.lock() {
                                 Ok(stack) => stack,
                                 Err(error) => {
@@ -359,7 +388,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     return;
                                 }
                             };
-                            let settings_st = handle.state::<std::sync::Mutex<crate::settings::AppSettings>>();
+                            let settings_st =
+                                handle.state::<std::sync::Mutex<crate::settings::AppSettings>>();
                             let settings = match settings_st.lock() {
                                 Ok(settings) => settings,
                                 Err(error) => {
@@ -367,15 +397,41 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     return;
                                 }
                             };
-                            let instances = crate::renderer::instance::build_instance_data(
-                                &state.cart_positions,
-                                &state.atomic_numbers,
-                                &state.elements,
-                                &state.occupancies,
-                                &settings,
-                                &state.selected_atoms,
+                            let atom_scene =
+                                match crate::wannier::build_atoms_with_ghosts(&state, &settings) {
+                                    Ok(instances) => match crate::renderer::instance::prepare_atom_scene(instances) {
+                                        Ok(scene) => scene,
+                                        Err(error) => {
+                                            log::error!(
+                                                "Failed to prepare renderer scene: {}",
+                                                error.message
+                                            );
+                                            return;
+                                        }
+                                    },
+                                    Err(error) => {
+                                        log::error!(
+                                            "Failed to build renderer scene: {}",
+                                            error.message
                             );
-                            let renderer_state = handle.state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>();
+                                        return;
+                                    }
+                                };
+                            let line_scene = match crate::renderer::instance::build_line_scene(
+                                &state,
+                                &settings,
+                            ) {
+                                Ok(scene) => scene,
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to prepare render lines: {}",
+                                        error.message
+                                    );
+                                    return;
+                                }
+                            };
+                            let renderer_state = handle
+                                .state::<std::sync::Mutex<crate::renderer::renderer::Renderer>>();
                             let mut renderer = match renderer_state.lock() {
                                 Ok(renderer) => renderer,
                                 Err(error) => {
@@ -383,13 +439,17 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     return;
                                 }
                             };
-                            let prepared_volumetric = match state.volumetric_data.as_ref()
+                            let prepared_volumetric = match state
+                                .volumetric_data
+                                .as_ref()
                                 .map(|vol| renderer.prepare_volumetric(vol))
                                 .transpose()
                             {
                                 Ok(prepared) => prepared,
                                 Err(()) => {
-                                    log::error!("GPU out of memory while preparing volumetric grid");
+                                    log::error!(
+                                        "GPU out of memory while preparing volumetric grid"
+                                    );
                                     return;
                                 }
                             };
@@ -397,16 +457,18 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 log::error!("Crystal state version exhausted");
                                 return;
                             };
-                            let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
+                            let previous_state =
+                                crate::undo::StructuralSnapshot::from_crystal_state(&cs);
                             renderer.clear_structure_bound_overlays();
-                            renderer.update_atoms(&instances);
-                            renderer.update_lines(&state, &settings);
+                            renderer.commit_atoms(atom_scene);
+                            renderer.update_lines(&line_scene);
                             if let Some(prepared) = prepared_volumetric {
                                 renderer.commit_volumetric(prepared);
                             }
                             let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
                             let center_vec = glam::Vec3::from_array(state.unit_cell_center());
-                            renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+                            renderer.camera.eye =
+                                center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
                             renderer.camera.target = center_vec;
                             if !renderer.camera.is_perspective {
                                 renderer.camera.set_orthographic(extent * 1.5);
@@ -425,7 +487,9 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                             drop(base);
                             let _ = handle.emit(
                                 "state_changed",
-                                crate::transaction::StateChangedPayload { version: next_version },
+                                crate::transaction::StateChangedPayload {
+                                    version: next_version,
+                                },
                             );
                             let _ = handle.emit(
                                 "undo_stack_changed",
@@ -478,8 +542,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                 && let Ok(mut renderer) = r_mutex.lock()
             {
                 let mut scale = 15.0;
-                if let Some(cs_mutex) = app_handle
-                    .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                if let Some(cs_mutex) =
+                    app_handle.try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
                     && let Ok(cs) = cs_mutex.lock()
                 {
                     let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
@@ -511,8 +575,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
             {
                 let mut dist = 30.0;
                 let mut center_vec = glam::Vec3::ZERO;
-                if let Some(cs_mutex) = app_handle
-                    .try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
+                if let Some(cs_mutex) =
+                    app_handle.try_state::<std::sync::Mutex<crate::crystal_state::CrystalState>>()
                     && let Ok(cs) = cs_mutex.lock()
                 {
                     let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
@@ -649,7 +713,7 @@ fn main() {
             let mut renderer = renderer::renderer::Renderer::new(arc_window.clone(), 1280, 800);
 
             // Startup with empty crystal canvas (No test instances)
-            renderer.update_atoms(&[]);
+            renderer.clear_atoms();
 
             // Store it in Tauri managed state so commands and the event loop can access it
             app.manage(std::sync::Mutex::new(renderer));
@@ -659,7 +723,6 @@ fn main() {
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
             app.manage(commands::BaseCrystalState(std::sync::Mutex::new(None)));
             app.manage(std::sync::Mutex::new(crate::undo::UndoStack::new(20)));
-
 
             // --- Menu Construction ---
             let _ = build_menu(app);
@@ -682,7 +745,6 @@ fn main() {
             commands::preview_supercell,
             commands::export_file,
             commands::restore_unitcell,
-
             commands::llm_configure,
             commands::llm_chat,
             commands::llm_execute_command,
@@ -759,7 +821,10 @@ fn main() {
                         // Reconfigure the surface to recover from transient GPU state errors
                         log::warn!("Surface lost/outdated — reconfiguring");
                         let size = renderer.gpu.size;
-                        renderer.gpu.surface.configure(&renderer.gpu.device, &renderer.gpu.config);
+                        renderer
+                            .gpu
+                            .surface
+                            .configure(&renderer.gpu.device, &renderer.gpu.config);
                         renderer.resize(size);
                     }
                     Err(wgpu::SurfaceError::OutOfMemory) => {

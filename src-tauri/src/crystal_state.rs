@@ -4,11 +4,22 @@
 
 use crate::ffi;
 use crate::renderer::instance::covalent_radius;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Error returned when trying to add an overlapping atom
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollisionError;
+
+pub(crate) struct AtomTranslationRollback {
+    version: u32,
+    atoms: Vec<AtomTranslationRollbackEntry>,
+}
+
+struct AtomTranslationRollbackEntry {
+    index: usize,
+    fractional: [f64; 3],
+    cartesian: [f32; 3],
+}
 
 // =========================================================================
 // Bond Analysis Data Structures (M10)
@@ -267,95 +278,6 @@ impl CrystalState {
         state.fractional_to_cartesian();
         state.detect_spacegroup();
         state
-    }
-
-    /// Duplicate atoms residing on the fractional boundaries (0.0 or 1.0) for visual continuity
-    pub fn apply_boundary_mirroring(&mut self) {
-        if self.num_atoms() == 0 {
-            return;
-        }
-        let eps = 1e-4;
-        let mut new_labels = Vec::new();
-        let mut new_elements = Vec::new();
-        let mut new_fract_x = Vec::new();
-        let mut new_fract_y = Vec::new();
-        let mut new_fract_z = Vec::new();
-        let mut new_occupancies = Vec::new();
-        let mut new_atomic_numbers = Vec::new();
-
-        for i in 0..self.num_atoms() {
-            let x = self.fract_x[i];
-            let y = self.fract_y[i];
-            let z = self.fract_z[i];
-
-            for dx in 0..=1 {
-                for dy in 0..=1 {
-                    for dz in 0..=1 {
-                        if dx == 0 && dy == 0 && dz == 0 {
-                            continue;
-                        }
-
-                        let mut add = true;
-                        let mut nx = x;
-                        let mut ny = y;
-                        let mut nz = z;
-
-                        if dx == 1 {
-                            if x.abs() < eps || (x - 1.0).abs() < eps {
-                                nx = if x.abs() < eps { x + 1.0 } else { x - 1.0 };
-                            } else {
-                                add = false;
-                            }
-                        }
-                        if dy == 1 {
-                            if y.abs() < eps || (y - 1.0).abs() < eps {
-                                ny = if y.abs() < eps { y + 1.0 } else { y - 1.0 };
-                            } else {
-                                add = false;
-                            }
-                        }
-                        if dz == 1 {
-                            if z.abs() < eps || (z - 1.0).abs() < eps {
-                                nz = if z.abs() < eps { z + 1.0 } else { z - 1.0 };
-                            } else {
-                                add = false;
-                            }
-                        }
-
-                        if add {
-                            // Only add if not already in the list
-                            let mut exists = false;
-                            for j in 0..self.num_atoms() {
-                                if (self.fract_x[j] - nx).abs() < eps
-                                    && (self.fract_y[j] - ny).abs() < eps
-                                    && (self.fract_z[j] - nz).abs() < eps
-                                {
-                                    exists = true;
-                                    break;
-                                }
-                            }
-                            if !exists {
-                                new_labels.push(self.labels[i].clone());
-                                new_elements.push(self.elements[i].clone());
-                                new_fract_x.push(nx);
-                                new_fract_y.push(ny);
-                                new_fract_z.push(nz);
-                                new_occupancies.push(self.occupancies[i]);
-                                new_atomic_numbers.push(self.atomic_numbers[i]);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        self.labels.extend(new_labels);
-        self.elements.extend(new_elements);
-        self.fract_x.extend(new_fract_x);
-        self.fract_y.extend(new_fract_y);
-        self.fract_z.extend(new_fract_z);
-        self.occupancies.extend(new_occupancies);
-        self.atomic_numbers.extend(new_atomic_numbers);
     }
 
     pub fn detect_spacegroup(&mut self) {
@@ -703,7 +625,11 @@ impl CrystalState {
     }
 
     /// Translates specific atoms by a Cartesian vector (x, y, z), updating their fractional coords.
-    pub fn translate_atoms_cartesian(&mut self, indices: &[usize], translation: glam::Vec3) {
+    pub(crate) fn translate_atoms_cartesian(
+        &mut self,
+        indices: &[usize],
+        translation: glam::Vec3,
+    ) -> Result<AtomTranslationRollback, std::collections::TryReserveError> {
         let (a, b, c) = (self.cell_a as f32, self.cell_b as f32, self.cell_c as f32);
         let alpha_rad = self.cell_alpha.to_radians() as f32;
         let beta_rad = self.cell_beta.to_radians() as f32;
@@ -719,14 +645,27 @@ impl CrystalState {
         let m02 = c * cos_beta;
         let m11 = b * sin_gamma;
         let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
-        let m22 = c * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma + 2.0 * cos_alpha * cos_beta * cos_gamma).max(0.0).sqrt()) / sin_gamma;
+        let m22 = c
+            * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma
+                + 2.0 * cos_alpha * cos_beta * cos_gamma)
+                .max(0.0)
+                .sqrt())
+            / sin_gamma;
         
         let d_frac_z = translation.z / m22;
         let d_frac_y = (translation.y - m12 * d_frac_z) / m11;
         let d_frac_x = (translation.x - m01 * d_frac_y - m02 * d_frac_z) / m00;
         
+        let mut atoms = Vec::new();
+        atoms.try_reserve_exact(indices.len())?;
+        let version = self.version;
         for &idx in indices {
             if idx < self.num_atoms() {
+                atoms.push(AtomTranslationRollbackEntry {
+                    index: idx,
+                    fractional: [self.fract_x[idx], self.fract_y[idx], self.fract_z[idx]],
+                    cartesian: self.cart_positions[idx],
+                });
                 self.fract_x[idx] += d_frac_x as f64;
                 self.fract_y[idx] += d_frac_y as f64;
                 self.fract_z[idx] += d_frac_z as f64;
@@ -736,6 +675,17 @@ impl CrystalState {
             }
         }
         self.version += 1;
+        Ok(AtomTranslationRollback { version, atoms })
+    }
+
+    pub(crate) fn rollback_atom_translation(&mut self, rollback: AtomTranslationRollback) {
+        for atom in rollback.atoms.into_iter().rev() {
+            self.fract_x[atom.index] = atom.fractional[0];
+            self.fract_y[atom.index] = atom.fractional[1];
+            self.fract_z[atom.index] = atom.fractional[2];
+            self.cart_positions[atom.index] = atom.cartesian;
+        }
+        self.version = rollback.version;
     }
     /// Generate a slab based on Miller indices and layers.
     /// Returns a new CrystalState representing the slab.
@@ -755,7 +705,7 @@ impl CrystalState {
                 "Slab generation requires a conventional unit cell with symmetry \
                  (spacegroup ≠ P1). Miller indices (hkl) are defined relative to \
                  conventional axes. Please load or convert to a conventional cell first."
-                .to_string()
+                    .to_string(),
             );
         }
 
@@ -771,12 +721,7 @@ impl CrystalState {
         }
 
         let n_upper = unsafe {
-            ffi::get_slab_size_v2(
-                lattice_col_major.as_ptr(),
-                miller.as_ptr(),
-                layers,
-                n_atoms,
-            )
+            ffi::get_slab_size_v2(lattice_col_major.as_ptr(), miller.as_ptr(), layers, n_atoms)
         };
 
         if n_upper <= 0 {
@@ -825,10 +770,10 @@ impl CrystalState {
         let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
         let new_beta = (dot_ca / (new_c * new_a)).acos().to_degrees();
 
-
         let mut new_state = CrystalState {
             name: format!(
-                "{}_slab_{}_{}_{}", self.name, miller[0], miller[1], miller[2]
+                "{}_slab_{}_{}_{}",
+                self.name, miller[0], miller[1], miller[2]
             ),
             cell_a: new_a,
             cell_b: new_b,
@@ -925,7 +870,8 @@ impl CrystalState {
 
         if target_layer_idx < 0 || target_layer_idx >= n_layers {
             return Err(format!(
-                "Layer index {} out of range [0, {})", target_layer_idx, n_layers
+                "Layer index {} out of range [0, {})",
+                target_layer_idx, n_layers
             ));
         }
 
@@ -1085,7 +1031,6 @@ impl CrystalState {
             new_state.atomic_numbers.push(t);
         }
 
-        new_state.apply_boundary_mirroring();
         new_state.fractional_to_cartesian();
         new_state.detect_spacegroup();
 
@@ -1157,6 +1102,7 @@ impl CrystalState {
                 self.atomic_numbers.remove(idx);
             }
         }
+        self.intrinsic_sites = self.num_atoms();
         self.version += 1;
         self.fractional_to_cartesian();
     }
@@ -1213,7 +1159,6 @@ impl CrystalState {
 
         // Flatten the 3x3 lattice in column-major
         let lattice_col_major = self.get_lattice_col_major();
-
 
         let min_bond_length = 0.4; // Angstroms
         let max_bonds = n * n; // Upper bound (for safety)
@@ -1318,7 +1263,9 @@ impl CrystalState {
                 coords.push(v);
             }
             
-            if coords.is_empty() { continue; }
+            if coords.is_empty() {
+                continue;
+            }
             coords.sort_by(|a, b| a.total_cmp(b));
             
             let mut current_max_gap = 0.0;
@@ -1396,23 +1343,39 @@ impl CrystalState {
     }
 
     pub fn measure_angle(&self, i: usize, j: usize, k: usize) -> Result<f64, String> {
-        if i >= self.cart_positions.len() || j >= self.cart_positions.len() || k >= self.cart_positions.len() {
+        if i >= self.cart_positions.len()
+            || j >= self.cart_positions.len()
+            || k >= self.cart_positions.len()
+        {
             return Err("Atom index out of bounds".to_string());
         }
         let pi = self.cart_positions[i];
         let pj = self.cart_positions[j];
         let pk = self.cart_positions[k];
         
-        let v1 = glam::DVec3::new((pi[0] as f64) - (pj[0] as f64), (pi[1] as f64) - (pj[1] as f64), (pi[2] as f64) - (pj[2] as f64)).normalize_or_zero();
-        let v2 = glam::DVec3::new((pk[0] as f64) - (pj[0] as f64), (pk[1] as f64) - (pj[1] as f64), (pk[2] as f64) - (pj[2] as f64)).normalize_or_zero();
+        let v1 = glam::DVec3::new(
+            (pi[0] as f64) - (pj[0] as f64),
+            (pi[1] as f64) - (pj[1] as f64),
+            (pi[2] as f64) - (pj[2] as f64),
+        )
+        .normalize_or_zero();
+        let v2 = glam::DVec3::new(
+            (pk[0] as f64) - (pj[0] as f64),
+            (pk[1] as f64) - (pj[1] as f64),
+            (pk[2] as f64) - (pj[2] as f64),
+        )
+        .normalize_or_zero();
         
         let dot = v1.dot(v2).clamp(-1.0, 1.0);
         Ok(dot.acos().to_degrees())
     }
 
     pub fn measure_dihedral(&self, i: usize, j: usize, k: usize, l: usize) -> Result<f64, String> {
-        if i >= self.cart_positions.len() || j >= self.cart_positions.len() 
-            || k >= self.cart_positions.len() || l >= self.cart_positions.len() {
+        if i >= self.cart_positions.len()
+            || j >= self.cart_positions.len()
+            || k >= self.cart_positions.len()
+            || l >= self.cart_positions.len()
+        {
             return Err("Atom index out of bounds".to_string());
         }
         let pi = self.cart_positions[i];
@@ -1420,9 +1383,21 @@ impl CrystalState {
         let pk = self.cart_positions[k];
         let pl = self.cart_positions[l];
         
-        let b1 = glam::DVec3::new((pj[0] as f64) - (pi[0] as f64), (pj[1] as f64) - (pi[1] as f64), (pj[2] as f64) - (pi[2] as f64));
-        let b2 = glam::DVec3::new((pk[0] as f64) - (pj[0] as f64), (pk[1] as f64) - (pj[1] as f64), (pk[2] as f64) - (pj[2] as f64));
-        let b3 = glam::DVec3::new((pl[0] as f64) - (pk[0] as f64), (pl[1] as f64) - (pk[1] as f64), (pl[2] as f64) - (pk[2] as f64));
+        let b1 = glam::DVec3::new(
+            (pj[0] as f64) - (pi[0] as f64),
+            (pj[1] as f64) - (pi[1] as f64),
+            (pj[2] as f64) - (pi[2] as f64),
+        );
+        let b2 = glam::DVec3::new(
+            (pk[0] as f64) - (pj[0] as f64),
+            (pk[1] as f64) - (pj[1] as f64),
+            (pk[2] as f64) - (pj[2] as f64),
+        );
+        let b3 = glam::DVec3::new(
+            (pl[0] as f64) - (pk[0] as f64),
+            (pl[1] as f64) - (pk[1] as f64),
+            (pl[2] as f64) - (pk[2] as f64),
+        );
         
         let n1 = b1.cross(b2).normalize_or_zero();
         let n2 = b2.cross(b3).normalize_or_zero();
@@ -1549,7 +1524,11 @@ impl BondAnalysis {
             })
             .collect();
 
-        stats.sort_by(|a, b| a.element_a.cmp(&b.element_a).then(a.element_b.cmp(&b.element_b)));
+        stats.sort_by(|a, b| {
+            a.element_a
+                .cmp(&b.element_a)
+                .then(a.element_b.cmp(&b.element_b))
+        });
         stats
     }
 
@@ -1683,7 +1662,11 @@ mod tests {
         // Since H and O are close, there should be 1 bond
         assert_eq!(analysis.bonds.len(), 1, "Should detect 1 bond");
         
-        assert_eq!(analysis.coordination.len(), 2, "Should have 2 coordination shells");
+        assert_eq!(
+            analysis.coordination.len(),
+            2,
+            "Should have 2 coordination shells"
+        );
         assert_eq!(analysis.coordination[0].coordination_number, 1);
         assert_eq!(analysis.coordination[1].coordination_number, 1);
     }
@@ -1700,7 +1683,10 @@ mod tests {
         };
         
         let delta = BondAnalysis::distortion_index(&coord);
-        assert!((delta - 0.0).abs() < 1e-10, "Perfect octahedron should have 0 distortion");
+        assert!(
+            (delta - 0.0).abs() < 1e-10,
+            "Perfect octahedron should have 0 distortion"
+        );
 
         let distorted_coord = CoordinationInfo {
             center_idx: 0,
@@ -1714,22 +1700,25 @@ mod tests {
         let delta_distorted = BondAnalysis::distortion_index(&distorted_coord);
         // mean is 2.0, |d - d_mean| is 0.1 for all
         // Delta = (1/6) * (6 * 0.1 / 2.0) = 0.05
-        assert!((delta_distorted - 0.05).abs() < 1e-10, "Distortion should be exactly 0.05");
+        assert!(
+            (delta_distorted - 0.05).abs() < 1e-10,
+            "Distortion should be exactly 0.05"
+        );
     }
 
     #[test]
     fn test_distance_measurement() {
         let mut cs = CrystalState::default();
         // T-1 & T-6: Exactly representable f32 coordinates and tight precision
-        cs.cart_positions = vec![
-            [1.0, 2.0, 3.0],
-            [4.5, -0.5, 1.5],
-        ];
+        cs.cart_positions = vec![[1.0, 2.0, 3.0], [4.5, -0.5, 1.5]];
         
         let dist = cs.measure_distance(0, 1).unwrap();
         // dx=3.5, dy=-2.5, dz=-1.5. sum_sq = 12.25 + 6.25 + 2.25 = 20.75
         let expected = 20.75f64.sqrt();
-        assert!((dist - expected).abs() < 1e-12, "Distance precision failure on bit-exact coords");
+        assert!(
+            (dist - expected).abs() < 1e-12,
+            "Distance precision failure on bit-exact coords"
+        );
         
         // Zero distance
         let dist0 = cs.measure_distance(0, 0).unwrap();
@@ -1749,7 +1738,10 @@ mod tests {
         ];
         
         let angle60 = cs.measure_angle(0, 1, 2).unwrap();
-        assert!((angle60 - 60.0).abs() < 1e-5, "Angle precision failure on 60 degree case");
+        assert!(
+            (angle60 - 60.0).abs() < 1e-5,
+            "Angle precision failure on 60 degree case"
+        );
         
         // Collinear 180
         cs.cart_positions.push([-1.0, 0.0, 0.0]);
@@ -1779,7 +1771,11 @@ mod tests {
         // n1 = b1 x b2 = (-1, 1, 0), n2 = b2 x b3 = (0, 1, 0)
         // cos(phi) = n1.n2 / (|n1||n2|) = 1 / sqrt(2) -> 45 deg
         // Verify exact sign (+45.0)
-        assert!((dh - 45.0).abs() < 1e-5, "Dihedral sign or value failure: expected +45.0, got {}", dh);
+        assert!(
+            (dh - 45.0).abs() < 1e-5,
+            "Dihedral sign or value failure: expected +45.0, got {}",
+            dh
+        );
         
         // Breaker: Collinear backbone (j, k, l collinear)
         cs.cart_positions.push([0.0, 0.0, 2.0]); // 4: k'

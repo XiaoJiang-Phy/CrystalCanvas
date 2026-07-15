@@ -31,25 +31,35 @@ fn validate_wannier_index(kind: &str, index: usize, len: usize) -> IpcResult<()>
 
 struct WannierScene {
     hoppings: Vec<crate::renderer::instance::BondInstance>,
-    atoms: Vec<crate::renderer::instance::AtomInstance>,
+    atoms: crate::renderer::instance::PreparedAtomScene,
 }
 
 fn build_wannier_scene(
     cs: &crate::crystal_state::CrystalState,
     settings: &crate::settings::AppSettings,
-) -> WannierScene {
-    let hoppings = if let Some(overlay) = &cs.wannier_overlay {
+) -> IpcResult<WannierScene> {
+    build_wannier_scene_with_overlay(cs, settings, cs.wannier_overlay.as_ref())
+}
+
+fn build_wannier_scene_with_overlay(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    overlay: Option<&crate::wannier::WannierOverlay>,
+) -> IpcResult<WannierScene> {
+    let hoppings = if let Some(overlay) = overlay {
         crate::renderer::instance::build_hopping_instances(
             &overlay.visible_hoppings,
             overlay.hr_data.t_max,
-        )
+        )?
     } else {
         Vec::new()
     };
-    WannierScene {
+    Ok(WannierScene {
         hoppings,
-        atoms: crate::wannier::build_atoms_with_ghosts(cs, settings),
-    }
+        atoms: crate::renderer::instance::prepare_atom_scene(
+            crate::wannier::build_atoms_with_ghosts_with_overlay(cs, settings, overlay)?,
+        )?,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -102,7 +112,8 @@ fn apply_wannier_change(
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;
     change.validate(
-        cs.wannier_overlay.as_ref()
+        cs.wannier_overlay
+            .as_ref()
             .ok_or_else(|| IpcError::invalid_argument("No Wannier data loaded"))?,
     )?;
     let settings = settings_state
@@ -111,32 +122,59 @@ fn apply_wannier_change(
     let lattice_col_major = cs.get_lattice_col_major();
     let cs_ref = &mut *cs;
     let cart_positions = &cs_ref.cart_positions;
-    let overlay = cs_ref.wannier_overlay.as_mut()
+    let overlay = cs_ref
+        .wannier_overlay
+        .as_mut()
         .ok_or_else(|| IpcError::invalid_argument("No Wannier data loaded"))?;
     let rollback = change.apply(overlay);
     if let Err(error) = overlay.filter_and_rebuild(&lattice_col_major, cart_positions) {
         rollback.apply(overlay);
         return Err(IpcError::invalid_argument(error));
     }
-    let scene = build_wannier_scene(&cs, &settings);
+    let scene = match build_wannier_scene(&cs, &settings) {
+        Ok(scene) => scene,
+        Err(error) => {
+            let cs_ref = &mut *cs;
+            let cart_positions = &cs_ref.cart_positions;
+            let overlay = cs_ref
+                .wannier_overlay
+                .as_mut()
+                .ok_or_else(|| IpcError::invalid_argument("No Wannier data loaded"))?;
+            rollback.apply(overlay);
+            overlay
+                .filter_and_rebuild(&lattice_col_major, cart_positions)
+                .map_err(|rollback_error| {
+                    IpcError::from(format!(
+                        "Failed to restore Wannier state after scene preparation failure: {}",
+                        rollback_error
+                    ))
+                })?;
+            return Err(error);
+        }
+    };
     let mut renderer = match renderer_state.lock() {
         Ok(renderer) => renderer,
         Err(error) => {
             let cs_ref = &mut *cs;
             let cart_positions = &cs_ref.cart_positions;
-            let overlay = cs_ref.wannier_overlay.as_mut()
+            let overlay = cs_ref
+                .wannier_overlay
+                .as_mut()
                 .ok_or_else(|| IpcError::invalid_argument("No Wannier data loaded"))?;
             rollback.apply(overlay);
-            overlay.filter_and_rebuild(&lattice_col_major, cart_positions)
-                .map_err(|rollback_error| IpcError::from(format!(
+            overlay
+                .filter_and_rebuild(&lattice_col_major, cart_positions)
+                .map_err(|rollback_error| {
+                    IpcError::from(format!(
                     "Failed to restore Wannier state after renderer lock failure: {}",
                     rollback_error
-                )))?;
+                    ))
+                })?;
             return Err(IpcError::lock(error.to_string()));
         }
     };
     renderer.update_hoppings(&scene.hoppings);
-    renderer.update_atoms(&scene.atoms);
+    renderer.commit_atoms(scene.atoms);
     Ok(())
 }
 
@@ -148,8 +186,7 @@ pub fn load_wannier_hr(
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> IpcResult<WannierInfo> {
     log::info!("load_wannier_hr: {}", path);
-    let hr_data = crate::io::wannier_hr_parser::parse_wannier_hr(&path)
-        .map_err(IpcError::parse)?;
+    let hr_data = crate::io::wannier_hr_parser::parse_wannier_hr(&path).map_err(IpcError::parse)?;
     let mut cs = crystal_state
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;
@@ -164,31 +201,24 @@ pub fn load_wannier_hr(
 
     let lattice_col_major = cs.get_lattice_col_major();
     // WannierOverlay::new naturally populates visible_hoppings with defaults
-    let overlay = crate::wannier::WannierOverlay::new(
-        hr_data,
-        &lattice_col_major,
-        &cs.cart_positions,
-    )
+    let overlay =
+        crate::wannier::WannierOverlay::new(hr_data, &lattice_col_major, &cs.cart_positions)
     .map_err(IpcError::invalid_argument)?;
     let settings = settings_state
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;
-    let mut renderer = renderer_state
-        .lock()
-        .map_err(|e| IpcError::lock(e.to_string()))?;
-    let instances = crate::renderer::instance::build_hopping_instances(&overlay.visible_hoppings, overlay.hr_data.t_max);
-    renderer.update_hoppings(&instances);
-    renderer.update_bonds(&[]);
-    renderer.show_hoppings = true;
-
-    // Extract WannierInfo before moving overlay into cs
     let num_wann = overlay.hr_data.num_wann;
     let r_shells = overlay.hr_data.r_shells.clone();
     let t_max = overlay.hr_data.t_max;
-
+    let scene = build_wannier_scene_with_overlay(&cs, &settings, Some(&overlay))?;
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|e| IpcError::lock(e.to_string()))?;
+    renderer.update_hoppings(&scene.hoppings);
+    renderer.update_bonds(&[]);
+    renderer.show_hoppings = true;
+    renderer.commit_atoms(scene.atoms);
     cs.wannier_overlay = Some(overlay);
-    let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-    renderer.update_atoms(&atoms);
 
     Ok(WannierInfo {
         num_wann,
@@ -223,7 +253,10 @@ pub fn set_wannier_r_shell(
 ) -> IpcResult<()> {
     log::info!("set_wannier_r_shell: {} -> {}", shell_idx, active);
     apply_wannier_change(
-        WannierChange::RShell { index: shell_idx, active },
+        WannierChange::RShell {
+            index: shell_idx,
+            active,
+        },
         &crystal_state,
         &settings_state,
         &renderer_state,
@@ -240,7 +273,10 @@ pub fn set_wannier_orbital(
 ) -> IpcResult<()> {
     log::info!("set_wannier_orbital: {} -> {}", orb_idx, active);
     apply_wannier_change(
-        WannierChange::Orbital { index: orb_idx, active },
+        WannierChange::Orbital {
+            index: orb_idx,
+            active,
+        },
         &crystal_state,
         &settings_state,
         &renderer_state,
@@ -289,14 +325,16 @@ pub fn clear_wannier(
     let settings = settings_state
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;
+    let atom_scene = crate::renderer::instance::prepare_atom_scene(
+        crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)?,
+    )?;
+    let bonds = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;
     cs.wannier_overlay = None;
     renderer.update_hoppings(&[]);
-    let atoms = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-    let bonds = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
-    renderer.update_atoms(&atoms);
+    renderer.commit_atoms(atom_scene);
     renderer.update_bonds(&bonds);
     renderer.show_hoppings = false;
     Ok(())
@@ -304,7 +342,7 @@ pub fn clear_wannier(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_wannier_index, validate_wannier_t_min, WannierChange, WannierInfo};
+    use super::{WannierChange, WannierInfo, validate_wannier_index, validate_wannier_t_min};
     use crate::io::wannier_hr_parser::parse_wannier_hr;
 
     #[test]
@@ -340,7 +378,8 @@ mod tests {
     #[test]
     fn wannier_changes_produce_zero_copy_inverse_operations() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
+            .parent()
+            .unwrap()
             .join("tests/fixtures/graphene_hr.dat");
         let hr_data = parse_wannier_hr(path.to_str().unwrap()).unwrap();
         let lattice = [2.46, 0.0, 0.0, -1.23, 2.13, 0.0, 0.0, 0.0, 10.0];
@@ -349,8 +388,14 @@ mod tests {
 
         for change in [
             WannierChange::Threshold(0.5),
-            WannierChange::RShell { index: 0, active: false },
-            WannierChange::Orbital { index: 0, active: false },
+            WannierChange::RShell {
+                index: 0,
+                active: false,
+            },
+            WannierChange::Orbital {
+                index: 0,
+                active: false,
+            },
             WannierChange::Onsite(true),
         ] {
             let rollback = change.apply(&mut overlay);

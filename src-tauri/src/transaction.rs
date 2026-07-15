@@ -23,10 +23,7 @@ pub struct StateChangedPayload {
 }
 
 /// A read-only transaction for querying the crystal state without mutation.
-pub fn with_state_read<F, R>(
-    crystal_state: &State<'_, Mutex<CrystalState>>,
-    f: F,
-) -> IpcResult<R>
+pub fn with_state_read<F, R>(crystal_state: &State<'_, Mutex<CrystalState>>, f: F) -> IpcResult<R>
 where
     F: FnOnce(&CrystalState) -> IpcResult<R>,
 {
@@ -63,7 +60,15 @@ pub fn with_state_update<F>(
 where
     F: FnOnce(&mut CrystalState) -> IpcResult<()>,
 {
-    _with_state_update_impl(app, crystal_state, settings_state, renderer_state, undo_state, false, f)
+    _with_state_update_impl(
+        app,
+        crystal_state,
+        settings_state,
+        renderer_state,
+        undo_state,
+        false,
+        f,
+    )
 }
 
 pub fn with_structural_state_update<F>(
@@ -77,7 +82,15 @@ pub fn with_structural_state_update<F>(
 where
     F: FnOnce(&mut CrystalState) -> IpcResult<()>,
 {
-    _with_state_update_impl(app, crystal_state, settings_state, renderer_state, undo_state, true, f)
+    _with_state_update_impl(
+        app,
+        crystal_state,
+        settings_state,
+        renderer_state,
+        undo_state,
+        true,
+        f,
+    )
 }
 
 pub fn with_prepared_state_update<F>(
@@ -153,21 +166,18 @@ where
     let settings = settings_state
         .lock()
         .map_err(|_| IpcError::lock("settings lock poisoned"))?;
-    let instances = crate::wannier::build_atoms_with_ghosts(&prepared, &settings);
-    let bond_instances = crate::renderer::instance::build_bond_instances(
-        &prepared,
-        &settings,
-        &prepared.selected_atoms,
-    );
+    let atom_scene = crate::renderer::instance::prepare_atom_scene(
+        crate::wannier::build_atoms_with_ghosts(&prepared, &settings)?,
+    )?;
+    let line_scene = crate::renderer::instance::build_line_scene(&prepared, &settings)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let previous_state = StructuralSnapshot::from_crystal_state(&cs);
 
     renderer.clear_structure_bound_overlays();
-    renderer.update_atoms(&instances);
-    renderer.update_lines(&prepared, &settings);
-    renderer.update_bonds(&bond_instances);
+    renderer.commit_atoms(atom_scene);
+    renderer.update_lines(&line_scene);
     if refit_camera {
         let extent = prepared.cell_a.max(prepared.cell_b).max(prepared.cell_c) as f32;
         let center_vec = glam::Vec3::from_array(prepared.unit_cell_center());
@@ -189,8 +199,18 @@ where
     drop(u_stack);
     drop(cs);
 
-    app.emit("state_changed", StateChangedPayload { version: next_version }).ok();
-    app.emit("undo_stack_changed", UndoStackPayload { can_undo, can_redo }).ok();
+    app.emit(
+        "state_changed",
+        StateChangedPayload {
+            version: next_version,
+        },
+    )
+    .ok();
+    app.emit(
+        "undo_stack_changed",
+        UndoStackPayload { can_undo, can_redo },
+    )
+    .ok();
     Ok(())
 }
 
@@ -215,9 +235,6 @@ where
     let settings = settings_state
         .lock()
         .map_err(|_| IpcError::lock("settings lock poisoned"))?;
-    let mut renderer = renderer_state
-        .lock()
-        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let next_version = cs
         .version
         .checked_add(1)
@@ -228,6 +245,50 @@ where
         pre_mutation_snapshot.restore_for_rollback(&mut cs);
         return Err(error);
     }
+
+    let render_overlay = (!invalidate_structure_bound_data)
+        .then(|| cs.wannier_overlay.as_ref())
+        .flatten();
+    let atom_scene = match crate::wannier::build_atoms_with_ghosts_with_overlay(
+        &cs,
+        &settings,
+        render_overlay,
+    )
+    .and_then(crate::renderer::instance::prepare_atom_scene)
+    {
+        Ok(atom_scene) => atom_scene,
+        Err(error) => {
+            pre_mutation_snapshot.restore_for_rollback(&mut cs);
+            return Err(error);
+        }
+    };
+    let line_scene = match crate::renderer::instance::build_line_scene(&cs, &settings) {
+        Ok(line_scene) => line_scene,
+        Err(error) => {
+            pre_mutation_snapshot.restore_for_rollback(&mut cs);
+            return Err(error);
+        }
+    };
+    let hopping_instances = render_overlay.map(|overlay| {
+        crate::renderer::instance::build_hopping_instances(
+            &overlay.visible_hoppings,
+            overlay.hr_data.t_max,
+        )
+    }).transpose();
+    let hopping_instances = match hopping_instances {
+        Ok(instances) => instances,
+        Err(error) => {
+            pre_mutation_snapshot.restore_for_rollback(&mut cs);
+            return Err(error);
+        }
+    };
+    let mut renderer = match renderer_state.lock() {
+        Ok(renderer) => renderer,
+        Err(_) => {
+            pre_mutation_snapshot.restore_for_rollback(&mut cs);
+            return Err(IpcError::lock("renderer lock poisoned"));
+        }
+    };
 
     if invalidate_structure_bound_data {
         cs.invalidate_structure_bound_data();
@@ -240,16 +301,11 @@ where
     let can_undo = u_stack.can_undo();
     let can_redo = u_stack.can_redo();
 
-    let instances = crate::wannier::build_atoms_with_ghosts(&cs, &settings);
-    let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms);
-
-    renderer.update_atoms(&instances);
-    renderer.update_lines(&cs, &settings);
-    renderer.update_bonds(&bond_instances);
+    renderer.commit_atoms(atom_scene);
+    renderer.update_lines(&line_scene);
     
-    if let Some(overlay) = &cs.wannier_overlay {
-        let hopping_instances = crate::renderer::instance::build_hopping_instances(&overlay.visible_hoppings, overlay.hr_data.t_max);
-        renderer.update_hoppings(&hopping_instances);
+    if let Some(hopping_instances) = &hopping_instances {
+        renderer.update_hoppings(hopping_instances);
     }
     
     drop(renderer);
@@ -257,8 +313,13 @@ where
     drop(u_stack);
     drop(cs);
 
-    app.emit("state_changed", StateChangedPayload { version }).ok();
-    app.emit("undo_stack_changed", UndoStackPayload { can_undo, can_redo }).ok();
+    app.emit("state_changed", StateChangedPayload { version })
+        .ok();
+    app.emit(
+        "undo_stack_changed",
+        UndoStackPayload { can_undo, can_redo },
+    )
+    .ok();
 
     Ok(())
 }
