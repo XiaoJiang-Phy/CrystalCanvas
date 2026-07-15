@@ -49,7 +49,6 @@ fn make_test_state_with_atom_at_origin() -> CrystalState {
         measurements: vec![],
     };
     state.try_add_atom("O", 8, [0.0, 0.0, 0.0]).unwrap();
-    state.version = 1; // Reset to 1 for tests tracking version increment
     state
 }
 
@@ -140,9 +139,8 @@ fn test_insert_valid_atom_accepted() {
 
     assert!(result.is_ok(), "Insert at safe distance should succeed");
     assert_eq!(
-        state.version,
-        initial_version + 1,
-        "Version should increment"
+        state.version, initial_version,
+        "Low-level mutation must not commit the state version"
     );
     assert_eq!(state.num_atoms(), 2);
 }

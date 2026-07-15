@@ -241,9 +241,9 @@ fn test_generate_slab_large_layer_count_no_panic() {
     }
 }
 
-/// Version must increment after successful shift_termination
+/// Low-level termination shifts preserve the version until transaction commit.
 #[test]
-fn test_shift_termination_increments_version() {
+fn test_shift_termination_preserves_version() {
     let state = make_sc_state(3.0);
     let mut slab = state.generate_slab([1, 0, 0], 3, 10.0).unwrap();
     let v_before = slab.version;
@@ -251,9 +251,8 @@ fn test_shift_termination_increments_version() {
     slab.shift_termination(0, 0.3).unwrap();
 
     assert_eq!(
-        slab.version,
-        v_before + 1,
-        "Version must increment after successful shift_termination"
+        slab.version, v_before,
+        "Low-level mutation must not commit the state version"
     );
 }
 

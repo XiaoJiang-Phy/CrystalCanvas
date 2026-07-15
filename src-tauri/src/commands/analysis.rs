@@ -87,10 +87,7 @@ pub fn load_phonon(
             )));
         }
 
-        let next_version = cs
-            .version
-            .checked_add(1)
-            .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+        let pending_version = crate::transaction::next_version(&cs)?;
         let atom_scene = crate::renderer::instance::prepare_atom_scene(
             crate::wannier::build_atoms_with_ghosts(&cs, &settings)?,
         )?;
@@ -100,7 +97,7 @@ pub fn load_phonon(
         cs.phonon_data = Some(data);
         cs.active_phonon_mode = None;
         cs.phonon_phase = 0.0;
-        cs.version = next_version;
+        let version = crate::transaction::commit_version(&mut cs, pending_version)?;
         renderer.commit_atoms(atom_scene);
 
         drop(renderer);
@@ -109,7 +106,7 @@ pub fn load_phonon(
         app.emit(
             "state_changed",
             crate::transaction::StateChangedPayload {
-                version: next_version,
+                version,
             },
         )
         .ok();
@@ -165,10 +162,7 @@ pub fn load_phonon_interactive(
         let settings = settings_state
             .lock()
             .map_err(|_| IpcError::lock("settings lock poisoned"))?;
-        let next_version = cs
-            .version
-            .checked_add(1)
-            .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+        let pending_version = crate::transaction::next_version(&cs)?;
         let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
         let atom_scene = crate::renderer::instance::prepare_atom_scene(
             crate::wannier::build_atoms_with_ghosts(&new_state, &settings)?,
@@ -178,8 +172,8 @@ pub fn load_phonon_interactive(
             .lock()
             .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         renderer.clear_structure_bound_overlays();
+        let committed_version = crate::transaction::stamp_version(&mut new_state, pending_version);
         *cs = new_state;
-        cs.version = next_version;
         renderer.commit_atoms(atom_scene);
         renderer.update_lines(&line_scene);
         
@@ -195,7 +189,7 @@ pub fn load_phonon_interactive(
         u_stack.push(previous_state);
         can_undo = u_stack.can_undo();
         can_redo = u_stack.can_redo();
-        version = next_version;
+        version = committed_version;
     }
 
     app.emit(
@@ -245,10 +239,7 @@ pub fn load_axsf_phonon(
         let settings = settings_state
             .lock()
             .map_err(|_| IpcError::lock("settings lock poisoned"))?;
-        let next_version = cs
-            .version
-            .checked_add(1)
-            .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+        let pending_version = crate::transaction::next_version(&cs)?;
         let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
         let atom_scene = crate::renderer::instance::prepare_atom_scene(
             crate::wannier::build_atoms_with_ghosts(&new_state, &settings)?,
@@ -258,8 +249,8 @@ pub fn load_axsf_phonon(
             .lock()
             .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         renderer.clear_structure_bound_overlays();
+        let committed_version = crate::transaction::stamp_version(&mut new_state, pending_version);
         *cs = new_state;
-        cs.version = next_version;
         renderer.commit_atoms(atom_scene);
         renderer.update_lines(&line_scene);
         
@@ -274,7 +265,7 @@ pub fn load_axsf_phonon(
         u_stack.push(previous_state);
         can_undo = u_stack.can_undo();
         can_redo = u_stack.can_redo();
-        version = next_version;
+        version = committed_version;
     }
 
     app.emit(
@@ -391,6 +382,7 @@ pub fn add_measurement(
         &settings_state,
         &renderer_state,
         &undo_state,
+        |_| Ok(true),
         |cs| {
             measurement = Some(
                 cs.add_measurement(&indices)
@@ -417,9 +409,10 @@ pub fn clear_measurements(
         &settings_state,
         &renderer_state,
         &undo_state,
+        |cs| Ok(!cs.measurements.is_empty()),
         |cs| {
-        cs.clear_measurements();
-        Ok(())
+            cs.clear_measurements();
+            Ok(())
         },
     )?;
     Ok(())

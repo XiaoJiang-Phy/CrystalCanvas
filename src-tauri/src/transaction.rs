@@ -22,6 +22,43 @@ pub struct StateChangedPayload {
     pub version: u32,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct PendingVersion {
+    base: u32,
+    next: u32,
+}
+
+pub(crate) fn next_version(cs: &CrystalState) -> IpcResult<PendingVersion> {
+    let next = cs
+        .version
+        .checked_add(1)
+        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+    Ok(PendingVersion {
+        base: cs.version,
+        next,
+    })
+}
+
+pub(crate) fn commit_version(
+    cs: &mut CrystalState,
+    pending: PendingVersion,
+) -> IpcResult<u32> {
+    if cs.version != pending.base {
+        return Err(IpcError::busy("crystal state changed before version commit"));
+    }
+    cs.version = pending.next;
+    Ok(pending.next)
+}
+
+pub(crate) fn stamp_version(state: &mut CrystalState, pending: PendingVersion) -> u32 {
+    state.version = pending.next;
+    pending.next
+}
+
+pub fn stamp_next_version(source: &CrystalState, target: &mut CrystalState) -> IpcResult<u32> {
+    Ok(stamp_version(target, next_version(source)?))
+}
+
 /// A read-only transaction for querying the crystal state without mutation.
 pub fn with_state_read<F, R>(crystal_state: &State<'_, Mutex<CrystalState>>, f: F) -> IpcResult<R>
 where
@@ -49,15 +86,17 @@ where
 
 /// A state transaction that mutates the structure, records history, and updates the renderer.
 /// Lock ordering: CrystalState -> UndoStack -> AppSettings -> Renderer
-pub fn with_state_update<F>(
+pub fn with_state_update<P, F>(
     app: &AppHandle,
     crystal_state: &State<'_, Mutex<CrystalState>>,
     settings_state: &State<'_, Mutex<AppSettings>>,
     renderer_state: &State<'_, Mutex<Renderer>>,
     undo_state: &State<'_, Mutex<UndoStack>>,
+    preflight: P,
     f: F,
 ) -> IpcResult<()>
 where
+    P: FnOnce(&CrystalState) -> IpcResult<bool>,
     F: FnOnce(&mut CrystalState) -> IpcResult<()>,
 {
     _with_state_update_impl(
@@ -67,19 +106,22 @@ where
         renderer_state,
         undo_state,
         false,
+        preflight,
         f,
     )
 }
 
-pub fn with_structural_state_update<F>(
+pub fn with_structural_state_update<P, F>(
     app: &AppHandle,
     crystal_state: &State<'_, Mutex<CrystalState>>,
     settings_state: &State<'_, Mutex<AppSettings>>,
     renderer_state: &State<'_, Mutex<Renderer>>,
     undo_state: &State<'_, Mutex<UndoStack>>,
+    preflight: P,
     f: F,
 ) -> IpcResult<()>
 where
+    P: FnOnce(&CrystalState) -> IpcResult<bool>,
     F: FnOnce(&mut CrystalState) -> IpcResult<()>,
 {
     _with_state_update_impl(
@@ -89,6 +131,7 @@ where
         renderer_state,
         undo_state,
         true,
+        preflight,
         f,
     )
 }
@@ -153,11 +196,7 @@ where
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     let mut prepared = prepare(&cs)?;
-    let next_version = cs
-        .version
-        .checked_add(1)
-        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
-    prepared.version = next_version;
+    let version = stamp_version(&mut prepared, next_version(&cs)?);
     prepared.invalidate_structure_bound_data();
 
     let mut u_stack = undo_state
@@ -202,7 +241,7 @@ where
     app.emit(
         "state_changed",
         StateChangedPayload {
-            version: next_version,
+            version,
         },
     )
     .ok();
@@ -214,32 +253,34 @@ where
     Ok(())
 }
 
-fn _with_state_update_impl<F>(
+fn _with_state_update_impl<P, F>(
     app: &AppHandle,
     crystal_state: &State<'_, Mutex<CrystalState>>,
     settings_state: &State<'_, Mutex<AppSettings>>,
     renderer_state: &State<'_, Mutex<Renderer>>,
     undo_state: &State<'_, Mutex<UndoStack>>,
     invalidate_structure_bound_data: bool,
+    preflight: P,
     f: F,
 ) -> IpcResult<()>
 where
+    P: FnOnce(&CrystalState) -> IpcResult<bool>,
     F: FnOnce(&mut CrystalState) -> IpcResult<()>,
 {
     let mut cs = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    if !preflight(&cs)? {
+        return Ok(());
+    }
+    let pending_version = next_version(&cs)?;
+    let pre_mutation_snapshot = StructuralSnapshot::from_crystal_state(&cs);
     let mut u_stack = undo_state
         .lock()
         .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
     let settings = settings_state
         .lock()
         .map_err(|_| IpcError::lock("settings lock poisoned"))?;
-    let next_version = cs
-        .version
-        .checked_add(1)
-        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
-    let pre_mutation_snapshot = StructuralSnapshot::from_crystal_state(&cs);
 
     if let Err(error) = f(&mut cs) {
         pre_mutation_snapshot.restore_for_rollback(&mut cs);
@@ -295,8 +336,7 @@ where
         renderer.clear_structure_bound_overlays();
     }
 
-    cs.version = next_version;
-    let version = next_version;
+    let version = commit_version(&mut cs, pending_version)?;
     u_stack.push(pre_mutation_snapshot);
     let can_undo = u_stack.can_undo();
     let can_redo = u_stack.can_redo();
