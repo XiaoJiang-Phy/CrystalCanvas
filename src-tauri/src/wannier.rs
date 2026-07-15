@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::io::wannier_hr_parser::WannierHrData;
+use crate::ipc::{IpcError, IpcResult};
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]
@@ -35,7 +36,11 @@ pub struct WannierOverlay {
 }
 
 impl WannierOverlay {
-    pub fn new(hr_data: WannierHrData, lattice_col_major: &[f64; 9], atom_positions: &[[f32; 3]]) -> Result<Self, String> {
+    pub fn new(
+        hr_data: WannierHrData,
+        lattice_col_major: &[f64; 9],
+        atom_positions: &[[f32; 3]],
+    ) -> Result<Self, String> {
         let n_shells = hr_data.r_shells.len();
         let r_shell_map: std::collections::HashMap<[i32; 3], usize> = hr_data
             .r_shells
@@ -44,7 +49,9 @@ impl WannierOverlay {
             .map(|(i, &r)| (r, i))
             .collect();
         if hr_data.num_wann == 0 || !hr_data.t_max.is_finite() || hr_data.t_max < 0.0 {
-            return Err("Wannier dimensions must be positive and t_max finite and non-negative".to_string());
+            return Err(
+                "Wannier dimensions must be positive and t_max finite and non-negative".to_string(),
+            );
         }
         for hopping in &hr_data.hoppings {
             if hopping.m >= hr_data.num_wann || hopping.n >= hr_data.num_wann {
@@ -53,13 +60,18 @@ impl WannierOverlay {
                     hopping.m, hopping.n, hr_data.num_wann
                 ));
             }
-            if !hopping.re.is_finite() || !hopping.im.is_finite()
-                || !hopping.magnitude.is_finite() || hopping.magnitude < 0.0
+            if !hopping.re.is_finite()
+                || !hopping.im.is_finite()
+                || !hopping.magnitude.is_finite()
+                || hopping.magnitude < 0.0
             {
                 return Err("Hopping components and magnitude must be finite".to_string());
             }
             if !r_shell_map.contains_key(&hopping.r_vec) {
-                return Err(format!("Hopping R-vec {:?} not found in r_shell_map", hopping.r_vec));
+                return Err(format!(
+                    "Hopping R-vec {:?} not found in r_shell_map",
+                    hopping.r_vec
+                ));
             }
         }
         let mut overlay = Self {
@@ -75,9 +87,17 @@ impl WannierOverlay {
         Ok(overlay)
     }
 
-    pub fn filter_and_rebuild(&mut self, lattice_col_major: &[f64; 9], atom_positions: &[[f32; 3]]) -> Result<(), String> {
+    pub fn filter_and_rebuild(
+        &mut self,
+        lattice_col_major: &[f64; 9],
+        atom_positions: &[[f32; 3]],
+    ) -> Result<(), String> {
         if atom_positions.len() < self.hr_data.num_wann {
-            return Err(format!("Atom positions array size ({}) is smaller than num_wann ({})", atom_positions.len(), self.hr_data.num_wann));
+            return Err(format!(
+                "Atom positions array size ({}) is smaller than num_wann ({})",
+                atom_positions.len(),
+                self.hr_data.num_wann
+            ));
         }
 
         self.visible_hoppings.clear();
@@ -111,9 +131,12 @@ impl WannierOverlay {
             let rz = hopping.r_vec[2] as f64;
 
             // Apply unit cell translation: T = R * lattice (col-major)
-            let tx = rx * lattice_col_major[0] + ry * lattice_col_major[3] + rz * lattice_col_major[6];
-            let ty = rx * lattice_col_major[1] + ry * lattice_col_major[4] + rz * lattice_col_major[7];
-            let tz = rx * lattice_col_major[2] + ry * lattice_col_major[5] + rz * lattice_col_major[8];
+            let tx =
+                rx * lattice_col_major[0] + ry * lattice_col_major[3] + rz * lattice_col_major[6];
+            let ty =
+                rx * lattice_col_major[1] + ry * lattice_col_major[4] + rz * lattice_col_major[7];
+            let tz =
+                rx * lattice_col_major[2] + ry * lattice_col_major[5] + rz * lattice_col_major[8];
 
             let end_cart = [
                 pos_n[0] + tx as f32,
@@ -146,21 +169,16 @@ mod tests {
 
     fn get_graphene_hr_path() -> String {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
+            .parent()
+            .unwrap()
             .join("tests/fixtures/graphene_hr.dat")
-            .to_string_lossy().into_owned()
+            .to_string_lossy()
+            .into_owned()
     }
 
-    const LATTICE: [f64; 9] = [
-        2.46, 0.0, 0.0,
-        -1.23, 2.13, 0.0,
-        0.0, 0.0, 10.0
-    ];
+    const LATTICE: [f64; 9] = [2.46, 0.0, 0.0, -1.23, 2.13, 0.0, 0.0, 0.0, 10.0];
     
-    const ATOMS: [[f32; 3]; 2] = [
-        [0.0, 0.0, 0.0],
-        [1.23, 0.71, 0.0],
-    ];
+    const ATOMS: [[f32; 3]; 2] = [[0.0, 0.0, 0.0], [1.23, 0.71, 0.0]];
 
     #[test]
     fn test_wannier_filter_magnitude() {
@@ -203,7 +221,9 @@ mod tests {
         let overlay = WannierOverlay::new(hr_data, &LATTICE, &ATOMS).unwrap();
         
         // Find hopping with R = [1, 0, 0] which translates x by +2.46
-        let h = overlay.visible_hoppings.iter()
+        let h = overlay
+            .visible_hoppings
+            .iter()
             .find(|x| x.end_cart[0] > 2.0 && x.magnitude > 2.0)
             .unwrap();
         
@@ -222,7 +242,10 @@ mod tests {
         let before = serde_json::to_value(&overlay.visible_hoppings).unwrap();
 
         assert!(overlay.filter_and_rebuild(&LATTICE, &[]).is_err());
-        assert_eq!(serde_json::to_value(&overlay.visible_hoppings).unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(&overlay.visible_hoppings).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -247,60 +270,127 @@ mod tests {
 pub fn build_atoms_with_ghosts(
     cs: &crate::crystal_state::CrystalState,
     settings: &crate::settings::AppSettings,
-) -> Vec<crate::renderer::instance::AtomInstance> {
-    build_atoms_with_ghosts_displaced(cs, &cs.cart_positions, settings)
+) -> IpcResult<Vec<crate::renderer::instance::RenderAtomInstance>> {
+    build_atoms_with_ghosts_displaced_with_overlay(
+        cs,
+        &cs.cart_positions,
+        settings,
+        cs.wannier_overlay.as_ref(),
+    )
 }
 
 pub fn build_atoms_with_ghosts_displaced(
     cs: &crate::crystal_state::CrystalState,
     cart_positions: &[[f32; 3]],
     settings: &crate::settings::AppSettings,
-) -> Vec<crate::renderer::instance::AtomInstance> {
-    let mut instances = crate::renderer::instance::build_instance_data(
+) -> IpcResult<Vec<crate::renderer::instance::RenderAtomInstance>> {
+    build_atoms_with_ghosts_displaced_with_overlay(
+        cs,
+        cart_positions,
+        settings,
+        cs.wannier_overlay.as_ref(),
+    )
+}
+
+pub(crate) fn build_atoms_with_ghosts_with_overlay(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    overlay: Option<&WannierOverlay>,
+) -> IpcResult<Vec<crate::renderer::instance::RenderAtomInstance>> {
+    build_atoms_with_ghosts_displaced_with_overlay(cs, &cs.cart_positions, settings, overlay)
+}
+
+fn build_atoms_with_ghosts_displaced_with_overlay(
+    cs: &crate::crystal_state::CrystalState,
+    cart_positions: &[[f32; 3]],
+    settings: &crate::settings::AppSettings,
+    overlay: Option<&WannierOverlay>,
+) -> IpcResult<Vec<crate::renderer::instance::RenderAtomInstance>> {
+    validate_render_atom_storage(cs, cart_positions)?;
+    let intrinsic_atoms = crate::renderer::instance::build_instance_data(
         cart_positions,
         &cs.atomic_numbers,
         &cs.elements,
         &cs.occupancies,
         settings,
         &cs.selected_atoms,
-    );
+    )?;
+    let mut instances =
+        crate::renderer::instance::build_periodic_atom_instances(cs, &intrinsic_atoms)?;
 
-    if let Some(overlay) = &cs.wannier_overlay {
+    if let Some(overlay) = overlay {
         let mut ghosts = std::collections::HashSet::new();
+        ghosts
+            .try_reserve(overlay.visible_hoppings.len())
+            .map_err(|_| IpcError::render("unable to allocate Wannier ghost scene"))?;
         for h in &overlay.visible_hoppings {
             if h.r_vec != [0, 0, 0] {
                 ghosts.insert((h.dest_atom, h.r_vec));
             }
         }
+        instances
+            .try_reserve_exact(ghosts.len())
+            .map_err(|_| IpcError::render("unable to allocate Wannier ghost scene"))?;
         
         let lattice_col_major = cs.get_lattice_col_major();
         for (atom_idx, r_vec) in &ghosts {
-            let pos = cart_positions[*atom_idx];
+            let pos = cart_positions.get(*atom_idx).copied().ok_or_else(|| {
+                IpcError::invalid_argument(
+                    "Wannier ghost references an atom outside the current structure",
+                )
+            })?;
             let rx = r_vec[0] as f64;
             let ry = r_vec[1] as f64;
             let rz = r_vec[2] as f64;
-            let tx = rx * lattice_col_major[0] + ry * lattice_col_major[3] + rz * lattice_col_major[6];
-            let ty = rx * lattice_col_major[1] + ry * lattice_col_major[4] + rz * lattice_col_major[7];
-            let tz = rx * lattice_col_major[2] + ry * lattice_col_major[5] + rz * lattice_col_major[8];
+            let tx =
+                rx * lattice_col_major[0] + ry * lattice_col_major[3] + rz * lattice_col_major[6];
+            let ty =
+                rx * lattice_col_major[1] + ry * lattice_col_major[4] + rz * lattice_col_major[7];
+            let tz =
+                rx * lattice_col_major[2] + ry * lattice_col_major[5] + rz * lattice_col_major[8];
             
-            if *atom_idx < instances.len() {
-                let mut inst = instances[*atom_idx].clone();
-                inst.position = [
-                    pos[0] + tx as f32,
-                    pos[1] + ty as f32,
-                    pos[2] + tz as f32,
-                ];
-                
-                inst.radius *= 0.50;
-                inst.color[3] = 0.40;
-                inst.color[0] *= 0.8;
-                inst.color[1] *= 0.8;
-                inst.color[2] *= 0.8;
+            let mut atom = *intrinsic_atoms.get(*atom_idx).ok_or_else(|| {
+                IpcError::invalid_argument(
+                    "Wannier ghost has no matching intrinsic atom",
+                )
+            })?;
+            atom.position = [pos[0] + tx as f32, pos[1] + ty as f32, pos[2] + tz as f32];
+            atom.radius *= 0.50;
+            atom.color[3] = 0.40;
+            atom.color[0] *= 0.8;
+            atom.color[1] *= 0.8;
+            atom.color[2] *= 0.8;
 
-                instances.push(inst);
-            }
+            instances.push(crate::renderer::instance::RenderAtomInstance {
+                atom,
+                source_atom_index: *atom_idx,
+                image_shift: *r_vec,
+                pick_radius: None,
+            });
         }
     }
     
-    instances
+    Ok(instances)
+}
+
+fn validate_render_atom_storage(
+    cs: &crate::crystal_state::CrystalState,
+    cart_positions: &[[f32; 3]],
+) -> IpcResult<()> {
+    let n = cs.num_atoms();
+    if cs.intrinsic_sites != n
+        || cs.elements.len() != n
+        || cs.fract_x.len() != n
+        || cs.fract_y.len() != n
+        || cs.fract_z.len() != n
+        || cs.occupancies.len() != n
+        || cs.atomic_numbers.len() != n
+        || cs.cart_positions.len() != n
+        || cart_positions.len() != n
+    {
+        return Err(IpcError::from(
+            "invalid intrinsic atom storage for renderer scene",
+        ));
+    }
+    Ok(())
 }

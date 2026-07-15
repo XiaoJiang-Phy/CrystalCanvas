@@ -53,11 +53,16 @@ pub fn load_cif_file(
     let settings = settings_state
         .lock()
         .map_err(|e| IpcError::lock(format!("Failed to lock settings: {}", e)))?;
-    let instances = crate::wannier::build_atoms_with_ghosts(&state, &settings);
+    let atom_scene = crate::renderer::instance::prepare_atom_scene(
+        crate::wannier::build_atoms_with_ghosts(&state, &settings)?,
+    )?;
+    let line_scene = crate::renderer::instance::build_line_scene(&state, &settings)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
-    let next_version = cs.version.checked_add(1)
+    let next_version = cs
+        .version
+        .checked_add(1)
         .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
     let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
 
@@ -69,8 +74,8 @@ pub fn load_cif_file(
         .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
     renderer.clear_structure_bound_overlays();
-    renderer.update_atoms(&instances);
-    renderer.update_lines(&state, &settings);
+    renderer.commit_atoms(atom_scene);
+    renderer.update_lines(&line_scene);
 
     let center_vec = glam::Vec3::from_array(center);
     renderer.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
@@ -98,7 +103,11 @@ pub fn load_cif_file(
     drop(cs);
     drop(base);
 
-    app.emit("state_changed", crate::transaction::StateChangedPayload { version }).ok();
+    app.emit(
+        "state_changed",
+        crate::transaction::StateChangedPayload { version },
+    )
+    .ok();
     app.emit(
         "undo_stack_changed",
         crate::transaction::UndoStackPayload { can_undo, can_redo },
@@ -123,7 +132,9 @@ pub fn export_file(
         .try_lock()
         .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
     let fmt = match format {
-        ExportFileFormat::Poscar | ExportFileFormat::Vasp => crate::llm::command::ExportFormat::Poscar,
+        ExportFileFormat::Poscar | ExportFileFormat::Vasp => {
+            crate::llm::command::ExportFormat::Poscar
+        }
         ExportFileFormat::Lammps => crate::llm::command::ExportFormat::Lammps,
         ExportFileFormat::Qe => crate::llm::command::ExportFormat::Qe,
     };

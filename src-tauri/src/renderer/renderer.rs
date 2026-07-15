@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
-use super::instance::AtomInstance;
+use super::instance::{AtomInstance, PreparedAtomScene, RenderLineScene};
 use super::pipeline;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,7 @@ pub struct Renderer {
     transparent_pipeline: wgpu::RenderPipeline,
     transparent_instance_buffer: wgpu::Buffer,
     transparent_instance_count: u32,
+    atom_pick_data: Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
 
     // Depth buffers (dual-pass architecture)
     opaque_depth_texture: wgpu::Texture,
@@ -160,8 +161,8 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
             
-        let transparent_instance_buffer = gpu
-            .device
+        let transparent_instance_buffer =
+            gpu.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Transparent Instance Buffer"),
                 contents: bytemuck::cast_slice(&dummy_instance),
@@ -172,7 +173,11 @@ impl Renderer {
         let (opaque_depth_texture, opaque_depth_view) =
             pipeline::create_depth_texture(&gpu.device, gpu.config.width, gpu.config.height);
         let (transparent_depth_texture, transparent_depth_view) =
-            pipeline::create_transparent_depth_texture(&gpu.device, gpu.config.width, gpu.config.height);
+            pipeline::create_transparent_depth_texture(
+                &gpu.device,
+                gpu.config.width,
+                gpu.config.height,
+            );
 
         // default dark mode color: #0f172a
         let default_clear = wgpu::Color {
@@ -193,8 +198,8 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&dummy_line),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
-        let measurement_line_buffer = gpu
-            .device
+        let measurement_line_buffer =
+            gpu.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Measurement Line Buffer"),
                 contents: bytemuck::cast_slice(&dummy_line),
@@ -207,8 +212,8 @@ impl Renderer {
             _pad: 0.0,
             color: [0.0, 0.0, 0.0, 0.0],
         }];
-        let bond_instance_buffer = gpu
-            .device
+        let bond_instance_buffer =
+            gpu.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Bond Instance Buffer"),
                 contents: bytemuck::cast_slice(&dummy_bond),
@@ -222,15 +227,17 @@ impl Renderer {
             _pad: 0.0,
             color: [0.0, 0.0, 0.0, 0.0],
         }];
-        let hopping_instance_buffer = gpu
-            .device
+        let hopping_instance_buffer =
+            gpu.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Hopping Instance Buffer"),
                 contents: bytemuck::cast_slice(&dummy_hopping),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
 
-        let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&gpu, 400, 400));
+        let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(
+            &gpu, 400, 400,
+        ));
 
         Self {
             gpu,
@@ -244,6 +251,7 @@ impl Renderer {
             transparent_pipeline,
             transparent_instance_buffer,
             transparent_instance_count: 0,
+            atom_pick_data: Arc::new(Vec::new()),
             opaque_depth_texture,
             opaque_depth_view,
             transparent_depth_texture,
@@ -287,7 +295,11 @@ impl Renderer {
             let (opaque_depth_texture, opaque_depth_view) =
                 pipeline::create_depth_texture(&self.gpu.device, new_size.width, new_size.height);
             let (transparent_depth_texture, transparent_depth_view) =
-                pipeline::create_transparent_depth_texture(&self.gpu.device, new_size.width, new_size.height);
+                pipeline::create_transparent_depth_texture(
+                    &self.gpu.device,
+                    new_size.width,
+                    new_size.height,
+                );
             self.opaque_depth_texture = opaque_depth_texture;
             self.opaque_depth_view = opaque_depth_view;
             self.transparent_depth_texture = transparent_depth_texture;
@@ -300,42 +312,37 @@ impl Renderer {
         }
     }
 
-    /// Upload new atom instance data to the GPU (full rebuild).
-    pub fn update_atoms(&mut self, instances: &[AtomInstance]) {
-        if instances.is_empty() {
-            self.instance_count = 0;
-            self.transparent_instance_count = 0;
-            return;
+    /// Upload a CPU-prepared atom scene to the GPU.
+    pub fn commit_atoms(&mut self, scene: PreparedAtomScene) {
+        let instance_count = scene.opaque.len() as u32;
+        let transparent_instance_count = scene.transparent.len() as u32;
+        let opaque_buffer = (instance_count > 0).then(|| {
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Instance Buffer"),
+                    contents: bytemuck::cast_slice(&scene.opaque),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                })
+        });
+        let transparent_buffer = (transparent_instance_count > 0).then(|| {
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Transparent Instance Buffer"),
+                    contents: bytemuck::cast_slice(&scene.transparent),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                })
+        });
+
+        self.instance_count = instance_count;
+        self.transparent_instance_count = transparent_instance_count;
+        self.atom_pick_data = scene.pick_data;
+        if let Some(buffer) = opaque_buffer {
+            self.instance_buffer = buffer;
         }
-
-        let mut opaque = Vec::with_capacity(instances.len());
-        let mut transparent = Vec::new(); // Usually sparse, fast append
-
-        for inst in instances {
-            if inst.color[3] >= 0.999 {
-                opaque.push(*inst);
-            } else {
-                transparent.push(*inst);
-            }
-        }
-
-        self.instance_count = opaque.len() as u32;
-        self.transparent_instance_count = transparent.len() as u32;
-
-        if self.instance_count > 0 {
-            self.instance_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Instance Buffer"),
-                contents: bytemuck::cast_slice(&opaque),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
-        }
-        
-        if self.transparent_instance_count > 0 {
-            self.transparent_instance_buffer = self.gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Transparent Instance Buffer"),
-                contents: bytemuck::cast_slice(&transparent),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+        if let Some(buffer) = transparent_buffer {
+            self.transparent_instance_buffer = buffer;
         }
 
         log::debug!(
@@ -345,37 +352,47 @@ impl Renderer {
         );
     }
 
-    /// Update cell boundaries and bond lines from the CrystalState and settings.
-    pub fn update_lines(
-        &mut self,
-        state: &crate::crystal_state::CrystalState,
-        settings: &crate::settings::AppSettings,
-    ) {
-        let cell_lines = crate::renderer::instance::build_cell_lines(state);
-        self.cell_line_count = cell_lines.len() as u32;
+    pub fn clear_atoms(&mut self) {
+        self.instance_count = 0;
+        self.transparent_instance_count = 0;
+        self.atom_pick_data = Arc::new(Vec::new());
+    }
+
+    pub fn pick_scene_snapshot(&self) -> Arc<Vec<crate::renderer::ray_picking::PickAtom>> {
+        Arc::clone(&self.atom_pick_data)
+    }
+
+    pub fn is_pick_scene_current(
+        &self,
+        snapshot: &Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
+    ) -> bool {
+        Arc::ptr_eq(&self.atom_pick_data, snapshot)
+    }
+
+    /// Upload prepared cell boundaries, bonds, and measurement lines.
+    pub fn update_lines(&mut self, scene: &RenderLineScene) {
+        self.cell_line_count = scene.cell_lines.len() as u32;
         if self.cell_line_count > 0 {
             self.cell_line_buffer =
                 self.gpu
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Cell Line Buffer"),
-                        contents: bytemuck::cast_slice(&cell_lines),
+                        contents: bytemuck::cast_slice(&scene.cell_lines),
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
         }
 
-        let bond_instances = crate::renderer::instance::build_bond_instances(state, settings, &state.selected_atoms);
-        self.update_bonds(&bond_instances);
+        self.update_bonds(&scene.bond_instances);
 
-        let measurement_lines = crate::renderer::instance::build_measurement_lines(state);
-        self.measurement_line_count = measurement_lines.len() as u32;
+        self.measurement_line_count = scene.measurement_lines.len() as u32;
         if self.measurement_line_count > 0 {
             self.measurement_line_buffer =
                 self.gpu
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Measurement Line Buffer"),
-                        contents: bytemuck::cast_slice(&measurement_lines),
+                        contents: bytemuck::cast_slice(&scene.measurement_lines),
                         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     });
         }
@@ -464,7 +481,8 @@ impl Renderer {
                     &view,
                     &self.opaque_depth_view,
                     cc,
-                    w, h,
+                    w,
+                    h,
                     &self.gpu.queue,
                 );
             }
@@ -540,10 +558,13 @@ impl Renderer {
         }
 
         // ═══ Depth copy: opaque → transparent (for Pass 2 depth test) ════
-        let needs_transparent_pass = 
-            (self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both)) ||
-            (self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both)) ||
-            self.transparent_instance_count > 0;
+        let needs_transparent_pass = (self.show_volume
+            && (self.volume_render_mode == RendererVolumeMode::Volume
+                || self.volume_render_mode == RendererVolumeMode::Both))
+            || (self.show_isosurface
+                && (self.volume_render_mode == RendererVolumeMode::Isosurface
+                    || self.volume_render_mode == RendererVolumeMode::Both))
+            || self.transparent_instance_count > 0;
 
         if needs_transparent_pass {
             encoder.copy_texture_to_texture(
@@ -591,14 +612,20 @@ impl Renderer {
                 });
 
                 // Volume raycast FIRST (inner fill), then Isosurface (outer skin)
-                if self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both) {
+                if self.show_volume
+                    && (self.volume_render_mode == RendererVolumeMode::Volume
+                        || self.volume_render_mode == RendererVolumeMode::Both)
+                {
                     if let Some(vol_pipe) = &self.volume_raycast_pipeline {
                         vol_pipe.render(&mut pass, &self.camera_bind_group);
                     }
                 }
 
                 // Isosurface (semi-transparent outer envelope)
-                if self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both) {
+                if self.show_isosurface
+                    && (self.volume_render_mode == RendererVolumeMode::Isosurface
+                        || self.volume_render_mode == RendererVolumeMode::Both)
+                {
                     if let Some(iso_pipe) = &self.isosurface_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
@@ -769,10 +796,13 @@ impl Renderer {
         }
 
         // ═══ Offscreen Pass 2: Transparent ═══
-        let needs_transparent = 
-            (self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both)) ||
-            (self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both)) ||
-            self.transparent_instance_count > 0;
+        let needs_transparent = (self.show_volume
+            && (self.volume_render_mode == RendererVolumeMode::Volume
+                || self.volume_render_mode == RendererVolumeMode::Both))
+            || (self.show_isosurface
+                && (self.volume_render_mode == RendererVolumeMode::Isosurface
+                    || self.volume_render_mode == RendererVolumeMode::Both))
+            || self.transparent_instance_count > 0;
 
         if needs_transparent {
             encoder.copy_texture_to_texture(
@@ -788,7 +818,11 @@ impl Renderer {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
             );
 
             {
@@ -814,13 +848,19 @@ impl Renderer {
                     occlusion_query_set: None,
                 });
 
-                if self.show_volume && (self.volume_render_mode == RendererVolumeMode::Volume || self.volume_render_mode == RendererVolumeMode::Both) {
+                if self.show_volume
+                    && (self.volume_render_mode == RendererVolumeMode::Volume
+                        || self.volume_render_mode == RendererVolumeMode::Both)
+                {
                     if let Some(vol_pipe) = &self.volume_raycast_pipeline {
                         vol_pipe.render(&mut pass, &self.camera_bind_group);
                     }
                 }
 
-                if self.show_isosurface && (self.volume_render_mode == RendererVolumeMode::Isosurface || self.volume_render_mode == RendererVolumeMode::Both) {
+                if self.show_isosurface
+                    && (self.volume_render_mode == RendererVolumeMode::Isosurface
+                        || self.volume_render_mode == RendererVolumeMode::Both)
+                {
                     if let Some(iso_pipe) = &self.isosurface_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
@@ -933,7 +973,6 @@ impl Renderer {
         Ok(rgba_data)
     }
 
-
     /// Clear volumetric pipelines when switching to a non-volumetric file.
     pub fn clear_volumetric(&mut self) {
         self.isosurface_pipeline = None;
@@ -957,10 +996,15 @@ impl Renderer {
     }
 
     /// Update Brillouin Zone data and trigger refresh of the PiP viewport buffers.
-    pub fn update_bz_data(&mut self, bz_opt: Option<(&crate::brillouin_zone::BrillouinZone, &crate::kpath::KPath)>) {
+    pub fn update_bz_data(
+        &mut self,
+        bz_opt: Option<(&crate::brillouin_zone::BrillouinZone, &crate::kpath::KPath)>,
+    ) {
         if let Some((bz, kpath)) = bz_opt {
             if self.bz_viewport.is_none() {
-                self.bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(&self.gpu, 400, 400));
+                self.bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(
+                    &self.gpu, 400, 400,
+                ));
             }
             if let Some(viewport) = &mut self.bz_viewport {
                 viewport.update_bz(&self.gpu, bz, kpath);
@@ -985,10 +1029,13 @@ impl Renderer {
                     vol,
                 ))
             } else {
-                log::warn!("Compute shaders not supported! GPU Marching Cubes cannot run on this device.");
+                log::warn!(
+                    "Compute shaders not supported! GPU Marching Cubes cannot run on this device."
+                );
                 None
             };
-            let volume_raycast_pipeline = crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
+            let volume_raycast_pipeline =
+                crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
                 &self.gpu.device,
                 self.gpu.surface_format(),
                 &self.camera_bind_group_layout,
@@ -1014,10 +1061,14 @@ impl Renderer {
     /// Update isovalue threshold and trigger compute pass.
     pub fn update_isovalue(&mut self, grid_dims: [usize; 3], threshold: f32) {
         if let Some(iso_pipe) = &mut self.isosurface_pipeline {
-            self.isosurface_dispatch_size = iso_pipe.update_threshold(&self.gpu.queue, grid_dims, threshold);
+            self.isosurface_dispatch_size =
+                iso_pipe.update_threshold(&self.gpu.queue, grid_dims, threshold);
             
             // Dispatch compute pass immediately to update the mesh buffers
-            let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            let mut encoder =
+                self.gpu
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Isosurface Compute Encoder"),
             });
             iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);

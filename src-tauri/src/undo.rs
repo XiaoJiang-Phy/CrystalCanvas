@@ -83,6 +83,32 @@ impl StructuralSnapshot {
         cs
     }
 
+    pub fn swap_structural_fields(&mut self, cs: &mut CrystalState) {
+        std::mem::swap(&mut self.name, &mut cs.name);
+        std::mem::swap(&mut self.spacegroup_hm, &mut cs.spacegroup_hm);
+        std::mem::swap(&mut self.spacegroup_number, &mut cs.spacegroup_number);
+        std::mem::swap(&mut self.is_2d, &mut cs.is_2d);
+        std::mem::swap(&mut self.vacuum_axis, &mut cs.vacuum_axis);
+        std::mem::swap(&mut self.intrinsic_sites, &mut cs.intrinsic_sites);
+        std::mem::swap(&mut self.version, &mut cs.version);
+        std::mem::swap(&mut self.cell_a, &mut cs.cell_a);
+        std::mem::swap(&mut self.cell_b, &mut cs.cell_b);
+        std::mem::swap(&mut self.cell_c, &mut cs.cell_c);
+        std::mem::swap(&mut self.cell_alpha, &mut cs.cell_alpha);
+        std::mem::swap(&mut self.cell_beta, &mut cs.cell_beta);
+        std::mem::swap(&mut self.cell_gamma, &mut cs.cell_gamma);
+        std::mem::swap(&mut self.labels, &mut cs.labels);
+        std::mem::swap(&mut self.elements, &mut cs.elements);
+        std::mem::swap(&mut self.fract_x, &mut cs.fract_x);
+        std::mem::swap(&mut self.fract_y, &mut cs.fract_y);
+        std::mem::swap(&mut self.fract_z, &mut cs.fract_z);
+        std::mem::swap(&mut self.occupancies, &mut cs.occupancies);
+        std::mem::swap(&mut self.atomic_numbers, &mut cs.atomic_numbers);
+        std::mem::swap(&mut self.cart_positions, &mut cs.cart_positions);
+        std::mem::swap(&mut self.selected_atoms, &mut cs.selected_atoms);
+        std::mem::swap(&mut self.measurements, &mut cs.measurements);
+    }
+
     fn restore_structural_fields(self, cs: &mut CrystalState) {
         cs.name = self.name;
         cs.spacegroup_hm = self.spacegroup_hm;
@@ -144,6 +170,19 @@ impl UndoStack {
         }
     }
 
+    pub fn undo_candidate_mut(&mut self) -> Option<&mut StructuralSnapshot> {
+        self.past.back_mut()
+    }
+
+    pub fn commit_undo(&mut self) -> bool {
+        if let Some(current) = self.past.pop_back() {
+            self.future.push_front(current);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Move forward in history. We receive the `current_state` to store in `past`.
     pub fn redo(&mut self, current_state: StructuralSnapshot) -> Option<StructuralSnapshot> {
         if let Some(next) = self.future.pop_front() {
@@ -151,6 +190,19 @@ impl UndoStack {
             Some(next)
         } else {
             None
+        }
+    }
+
+    pub fn redo_candidate_mut(&mut self) -> Option<&mut StructuralSnapshot> {
+        self.future.front_mut()
+    }
+
+    pub fn commit_redo(&mut self) -> bool {
+        if let Some(current) = self.future.pop_front() {
+            self.past.push_back(current);
+            true
+        } else {
+            false
         }
     }
 

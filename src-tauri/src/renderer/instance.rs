@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use crate::ipc::{IpcError, IpcResult};
 use crate::utils::colors::get_jmol_color;
 use bytemuck::{Pod, Zeroable};
+use std::sync::Arc;
 use wgpu;
 
 /// Per-atom instance data uploaded to the GPU.
@@ -20,6 +22,75 @@ pub struct AtomInstance {
     pub radius: f32,
     /// RGBA color
     pub color: [f32; 4],
+}
+
+/// CPU-side scene data for a rendered atom.
+///
+/// The mapping remains outside the GPU vertex layout so renderer-only periodic
+/// images cannot be mistaken for physical atom storage.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderAtomInstance {
+    pub atom: AtomInstance,
+    pub source_atom_index: usize,
+    pub image_shift: [i32; 3],
+    pub pick_radius: Option<f32>,
+}
+
+pub struct PreparedAtomScene {
+    pub(crate) opaque: Vec<AtomInstance>,
+    pub(crate) transparent: Vec<AtomInstance>,
+    pub(crate) pick_data: Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
+}
+
+pub fn prepare_atom_scene(
+    instances: Vec<RenderAtomInstance>,
+) -> IpcResult<PreparedAtomScene> {
+    let transparent_count = instances
+        .iter()
+        .filter(|instance| instance.atom.color[3] < 0.999)
+        .count();
+    let opaque_count = instances
+        .len()
+        .checked_sub(transparent_count)
+        .ok_or_else(|| IpcError::render("atom scene count underflow"))?;
+    let pick_count = instances
+        .iter()
+        .filter(|instance| instance.pick_radius.is_some())
+        .count();
+
+    let mut opaque = Vec::new();
+    opaque
+        .try_reserve_exact(opaque_count)
+        .map_err(|_| IpcError::render("unable to allocate opaque atom scene"))?;
+    let mut transparent = Vec::new();
+    transparent
+        .try_reserve_exact(transparent_count)
+        .map_err(|_| IpcError::render("unable to allocate transparent atom scene"))?;
+    let mut pick_data = Vec::new();
+    pick_data
+        .try_reserve_exact(pick_count)
+        .map_err(|_| IpcError::render("unable to allocate atom pick scene"))?;
+
+    for instance in instances {
+        if let Some(radius) = instance.pick_radius {
+            pick_data.push(crate::renderer::ray_picking::PickAtom {
+                pos: instance.atom.position,
+                radius,
+                index: instance.source_atom_index,
+            });
+        }
+        if instance.atom.color[3] >= 0.999 {
+            opaque.push(instance.atom);
+        } else {
+            transparent.push(instance.atom);
+        }
+    }
+
+    Ok(PreparedAtomScene {
+        opaque,
+        transparent,
+        pick_data: Arc::new(pick_data),
+    })
 }
 
 impl AtomInstance {
@@ -78,10 +149,26 @@ pub struct BondInstance {
 impl BondInstance {
     pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
         static ATTRIBUTES: &[wgpu::VertexAttribute] = &[
-            wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
-            wgpu::VertexAttribute { offset: 12, shader_location: 1, format: wgpu::VertexFormat::Float32 },
-            wgpu::VertexAttribute { offset: 16, shader_location: 2, format: wgpu::VertexFormat::Float32x3 },
-            wgpu::VertexAttribute { offset: 32, shader_location: 3, format: wgpu::VertexFormat::Float32x4 },
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: 12,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32,
+            },
+            wgpu::VertexAttribute {
+                offset: 16,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: 32,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float32x4,
+            },
         ];
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<BondInstance>() as wgpu::BufferAddress,
@@ -237,9 +324,12 @@ pub fn element_radius(atomic_number: u8, scale_factor: f32) -> f32 {
 /// Used to prevent drawing artificial metal-metal bonds (e.g. Fe-Fe) in metallic/ionic grids.
 pub fn is_metal(z: u8) -> bool {
     // Basic heuristic: Transition metals, Lanthanides, Actinides, and some post-transition.
-    (z >= 3 && z <= 4) || (z >= 11 && z <= 13) ||
-    (z >= 19 && z <= 31) || (z >= 37 && z <= 50) ||
-    (z >= 55 && z <= 83) || (z >= 87 && z <= 103)
+    (z >= 3 && z <= 4)
+        || (z >= 11 && z <= 13)
+        || (z >= 19 && z <= 31)
+        || (z >= 37 && z <= 50)
+        || (z >= 55 && z <= 83)
+        || (z >= 87 && z <= 103)
 }
 
 /// Build an array of `AtomInstance` from a `CrystalState`.
@@ -251,9 +341,12 @@ pub fn build_instance_data(
     occupancies: &[f64],
     settings: &crate::settings::AppSettings,
     selected_atoms: &[usize],
-) -> Vec<AtomInstance> {
+) -> IpcResult<Vec<AtomInstance>> {
     let n = cart_positions.len();
-    let mut instances = Vec::with_capacity(n);
+    let mut instances = Vec::new();
+    instances
+        .try_reserve_exact(n)
+        .map_err(|_| IpcError::render("unable to allocate intrinsic atom scene"))?;
     for i in 0..n {
         let mut color = element_color(&element_symbols[i]);
         if let Some(custom_color) = settings.custom_atom_colors.get(&element_symbols[i]) {
@@ -274,13 +367,118 @@ pub fn build_instance_data(
             },
             color: if selected_atoms.contains(&i) {
                 // Highlight: mix with bright cyan
-                [color[0] * 0.4, color[1] * 0.8 + 0.4, color[2] * 0.8 + 0.8, alpha]
+                [
+                    color[0] * 0.4,
+                    color[1] * 0.8 + 0.4,
+                    color[2] * 0.8 + 0.8,
+                    alpha,
+                ]
             } else {
                 [color[0], color[1], color[2], alpha]
             },
         });
     }
+    Ok(instances)
+}
+
+pub(crate) fn build_periodic_atom_instances(
+    state: &crate::crystal_state::CrystalState,
+    intrinsic_atoms: &[AtomInstance],
+) -> crate::ipc::IpcResult<Vec<RenderAtomInstance>> {
+    let lattice = state.get_lattice_col_major();
+    let mut image_count = 0usize;
+
+    for source_atom_index in 0..intrinsic_atoms.len() {
+        let x_shifts = boundary_image_shifts(state.fract_x[source_atom_index]);
+        let y_shifts = boundary_image_shifts(state.fract_y[source_atom_index]);
+        let z_shifts = boundary_image_shifts(state.fract_z[source_atom_index]);
+        let atom_image_count = x_shifts
+            .len()
+            .checked_mul(y_shifts.len())
+            .and_then(|count| count.checked_mul(z_shifts.len()))
+            .ok_or_else(|| crate::ipc::IpcError::from("periodic image count overflow"))?;
+        image_count = image_count
+            .checked_add(atom_image_count)
+            .ok_or_else(|| crate::ipc::IpcError::from("periodic image count overflow"))?;
+    }
+
+    let mut instances = Vec::new();
     instances
+        .try_reserve_exact(image_count)
+        .map_err(|_| crate::ipc::IpcError::render("unable to allocate periodic atom scene"))?;
+
+    for (source_atom_index, atom) in intrinsic_atoms.iter().copied().enumerate() {
+        let x_shifts = boundary_image_shifts(state.fract_x[source_atom_index]);
+        let y_shifts = boundary_image_shifts(state.fract_y[source_atom_index]);
+        let z_shifts = boundary_image_shifts(state.fract_z[source_atom_index]);
+
+        for &x_shift in x_shifts.as_slice() {
+            for &y_shift in y_shifts.as_slice() {
+                for &z_shift in z_shifts.as_slice() {
+                    let translation = lattice_translation(lattice, [x_shift, y_shift, z_shift]);
+                    let mut image = atom;
+                    image.position[0] += translation[0];
+                    image.position[1] += translation[1];
+                    image.position[2] += translation[2];
+                    instances.push(RenderAtomInstance {
+                        atom: image,
+                        source_atom_index,
+                        image_shift: [x_shift, y_shift, z_shift],
+                        pick_radius: Some(atom.radius),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(instances)
+}
+
+fn lattice_translation(lattice: [f64; 9], image_shift: [i32; 3]) -> [f32; 3] {
+    let x = image_shift[0] as f64;
+    let y = image_shift[1] as f64;
+    let z = image_shift[2] as f64;
+    [
+        (x * lattice[0] + y * lattice[3] + z * lattice[6]) as f32,
+        (x * lattice[1] + y * lattice[4] + z * lattice[7]) as f32,
+        (x * lattice[2] + y * lattice[5] + z * lattice[8]) as f32,
+    ]
+}
+
+struct BoundaryImageShifts {
+    values: [i32; 2],
+    len: usize,
+}
+
+impl BoundaryImageShifts {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn as_slice(&self) -> &[i32] {
+        &self.values[..self.len]
+    }
+}
+
+fn boundary_image_shifts(coordinate: f64) -> BoundaryImageShifts {
+    const EPSILON: f64 = 1e-4;
+
+    if coordinate.abs() < EPSILON {
+        BoundaryImageShifts {
+            values: [0, 1],
+            len: 2,
+        }
+    } else if (coordinate - 1.0).abs() < EPSILON {
+        BoundaryImageShifts {
+            values: [0, -1],
+            len: 2,
+        }
+    } else {
+        BoundaryImageShifts {
+            values: [0, 0],
+            len: 1,
+        }
+    }
 }
 
 /// Build test instances: atoms arranged in a 3D grid with varying elements.
@@ -411,8 +609,25 @@ pub fn build_cell_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVert
 }
 
 /// Build lines for Measurement overlays (distance, angles).
-pub fn build_measurement_lines(cs: &crate::crystal_state::CrystalState) -> Vec<LineVertex> {
+pub fn build_measurement_lines(
+    cs: &crate::crystal_state::CrystalState,
+) -> IpcResult<Vec<LineVertex>> {
+    let line_count = cs
+        .measurements
+        .iter()
+        .try_fold(0usize, |count, measurement| {
+            let vertex_count = match measurement.kind {
+                crate::crystal_state::MeasurementKind::Distance => 2,
+                crate::crystal_state::MeasurementKind::Angle => 4,
+                crate::crystal_state::MeasurementKind::Dihedral => 6,
+            };
+            count.checked_add(vertex_count)
+        })
+        .ok_or_else(|| IpcError::render("measurement line count overflow"))?;
     let mut lines = Vec::new();
+    lines
+        .try_reserve_exact(line_count)
+        .map_err(|_| IpcError::render("unable to allocate measurement lines"))?;
     let color = [1.0, 0.4, 0.0, 0.9]; // Orange, alpha=0.9 triggers stipple effect in shader
 
     let n_atoms = cs.cart_positions.len();
@@ -423,8 +638,14 @@ pub fn build_measurement_lines(cs: &crate::crystal_state::CrystalState) -> Vec<L
                 if m.indices.len() == 2 && m.indices.iter().all(|&i| i < n_atoms) {
                     let p1 = cs.cart_positions[m.indices[0]];
                     let p2 = cs.cart_positions[m.indices[1]];
-                    lines.push(LineVertex { position: p1, color });
-                    lines.push(LineVertex { position: p2, color });
+                    lines.push(LineVertex {
+                        position: p1,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p2,
+                        color,
+                    });
                 }
             }
             crate::crystal_state::MeasurementKind::Angle => {
@@ -433,10 +654,22 @@ pub fn build_measurement_lines(cs: &crate::crystal_state::CrystalState) -> Vec<L
                     let p0 = cs.cart_positions[m.indices[0]];
                     let p1 = cs.cart_positions[m.indices[1]];
                     let p2 = cs.cart_positions[m.indices[2]];
-                    lines.push(LineVertex { position: p1, color });
-                    lines.push(LineVertex { position: p0, color });
-                    lines.push(LineVertex { position: p1, color });
-                    lines.push(LineVertex { position: p2, color });
+                    lines.push(LineVertex {
+                        position: p1,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p0,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p1,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p2,
+                        color,
+                    });
                 }
             }
             crate::crystal_state::MeasurementKind::Dihedral => {
@@ -446,18 +679,36 @@ pub fn build_measurement_lines(cs: &crate::crystal_state::CrystalState) -> Vec<L
                     let p1 = cs.cart_positions[m.indices[1]];
                     let p2 = cs.cart_positions[m.indices[2]];
                     let p3 = cs.cart_positions[m.indices[3]];
-                    lines.push(LineVertex { position: p0, color });
-                    lines.push(LineVertex { position: p1, color });
-                    lines.push(LineVertex { position: p1, color });
-                    lines.push(LineVertex { position: p2, color });
-                    lines.push(LineVertex { position: p2, color });
-                    lines.push(LineVertex { position: p3, color });
+                    lines.push(LineVertex {
+                        position: p0,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p1,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p1,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p2,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p2,
+                        color,
+                    });
+                    lines.push(LineVertex {
+                        position: p3,
+                        color,
+                    });
                 }
             }
         }
     }
-    
-    lines
+
+    Ok(lines)
 }
 
 /// Build chemical bond instances based on distance, for thick cylinder rendering.
@@ -465,9 +716,14 @@ pub fn build_bond_instances(
     cs: &crate::crystal_state::CrystalState,
     settings: &crate::settings::AppSettings,
     selected_atoms: &[usize],
-) -> Vec<BondInstance> {
+) -> IpcResult<Vec<BondInstance>> {
     let n = cs.cart_positions.len();
     let mut instances = Vec::new();
+    let pair_count = n.saturating_mul(n.saturating_sub(1)) / 2;
+    let initial_capacity = n.saturating_mul(4).min(pair_count);
+    instances
+        .try_reserve_exact(initial_capacity)
+        .map_err(|_| IpcError::render("unable to allocate bond instances"))?;
 
     for i in 0..n {
         for j in (i + 1)..n {
@@ -490,24 +746,49 @@ pub fn build_bond_instances(
                     continue; // Skip identical metal-metal bonds like Fe-Fe
                 }
 
+                if instances.len() == instances.capacity() {
+                    instances
+                        .try_reserve(1)
+                        .map_err(|_| IpcError::render("unable to grow bond instances"))?;
+                }
                 instances.push(BondInstance {
                     start: p1.into(),
                     radius: settings.bond_radius,
                     end: p2.into(),
                     _pad: 0.0,
-                    color: {
-                    if selected_atoms.contains(&i) || selected_atoms.contains(&j) {
-                        [settings.bond_color[0] * 0.5, settings.bond_color[1] * 0.9 + 0.3, settings.bond_color[2] * 0.9 + 0.5, 1.0]
+                    color: if selected_atoms.contains(&i) || selected_atoms.contains(&j) {
+                            [
+                                settings.bond_color[0] * 0.5,
+                                settings.bond_color[1] * 0.9 + 0.3,
+                                settings.bond_color[2] * 0.9 + 0.5,
+                                1.0,
+                            ]
                     } else {
                         settings.bond_color
-                    }
-                },
+                    },
                 });
             }
         }
     }
 
-    instances
+    Ok(instances)
+}
+
+pub struct RenderLineScene {
+    pub cell_lines: Vec<LineVertex>,
+    pub bond_instances: Vec<BondInstance>,
+    pub measurement_lines: Vec<LineVertex>,
+}
+
+pub fn build_line_scene(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+) -> IpcResult<RenderLineScene> {
+    Ok(RenderLineScene {
+        cell_lines: build_cell_lines(cs),
+        bond_instances: build_bond_instances(cs, settings, &cs.selected_atoms)?,
+        measurement_lines: build_measurement_lines(cs)?,
+    })
 }
 
 /// Build instances for Wannier hoppings using the bond cylinder shader.
@@ -529,9 +810,16 @@ const ORBITAL_PALETTE: [[f32; 4]; 10] = [
 pub fn build_hopping_instances(
     hoppings: &[crate::wannier::VisibleHopping],
     t_max: f64,
-) -> Vec<BondInstance> {
-    let mut instances = Vec::with_capacity(hoppings.len());
-    let safe_t_max = if t_max.abs() < 1e-12 { 1.0 } else { t_max.abs() };
+) -> IpcResult<Vec<BondInstance>> {
+    let mut instances = Vec::new();
+    instances
+        .try_reserve_exact(hoppings.len())
+        .map_err(|_| IpcError::render("unable to allocate Wannier hopping scene"))?;
+    let safe_t_max = if t_max.abs() < 1e-12 {
+        1.0
+    } else {
+        t_max.abs()
+    };
 
     for h in hoppings {
         let frac = (h.magnitude / safe_t_max).min(1.0) as f32;
@@ -547,7 +835,7 @@ pub fn build_hopping_instances(
         });
     }
 
-    instances
+    Ok(instances)
 }
 
 #[cfg(test)]
@@ -578,7 +866,7 @@ mod tests {
             },
         ];
 
-        let instances = build_hopping_instances(&hoppings, 4.0);
+        let instances = build_hopping_instances(&hoppings, 4.0).unwrap();
         assert_eq!(instances.len(), 2);
 
         // orb_m=0 → Google Blue #4285F4
@@ -606,7 +894,8 @@ mod tests {
             &occupancies,
             &settings,
             &selected_atoms,
-        );
+        )
+        .unwrap();
 
         assert_eq!(instances.len(), 2);
         // occ = 1.0 -> alpha = 1.0
