@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "crystalcanvas-v0.6.1-structure-3d",
+  "project_root": ".",
+  "system": {
+    "physical_dimension": 3,
+    "computational_periodicity": 3,
+    "periodic_axes": ["x", "y", "z"],
+    "equilibrium": false,
+    "ensemble": "unspecified"
+  },
+  "resources": {
+    "max_file_size_mb": 16,
+    "max_uncompressed_npz_mb": 64,
+    "max_matrix_dimension": 10000,
+    "max_frequency_points": 100000,
+    "max_findings_per_rule": 100
+  },
+  "settings": {
+    "report_format": "json_and_markdown",
+    "fail_fast": false,
+    "advisory_enabled": false
+  },
+  "thresholds": {
+    "coordinate_tolerance": {
+      "value": 0.00001,
+      "unit": "angstrom",
+      "source": "USER_CONFIG"
+    },
+    "physical_property_tolerance": {
+      "value": 0.000001,
+      "unit": "dimensionless",
+      "source": "USER_CONFIG"
+    },
+    "minimum_interatomic_distance": {
+      "value": 0.5,
+      "unit": "angstrom",
+      "source": "USER_CONFIG"
+    }
+  },
+  "artifacts": [
+    {
+      "id": "nacl",
+      "role": "atomic_structure",
+      "path": "tests/data/nacl.cif",
+      "format": "cif",
+      "adapter": "structure_cif_v1",
+      "units": {
+        "length": "angstrom",
+        "atom_coordinates": "fractional",
+        "occupancy": "fractional"
+      },
+      "conventions": {
+        "coordinate_basis": "fractional",
+        "periodic_axes": ["x", "y", "z"]
+      },
+      "metadata": {
+        "fixture_role": "3d_periodic_regression",
+        "source_path": "tests/data/nacl.cif",
+        "sha256": "cff7516be4caa365d3254c62b5879d611bef7faaa355edd4b9a9c31fc7fa1e7b",
+        "size_bytes": 544
+      }
+    },
+    {
+      "id": "rutile",
+      "role": "atomic_structure",
+      "path": "tests/data/rutile.cif",
+      "format": "cif",
+      "adapter": "structure_cif_v1",
+      "units": {
+        "length": "angstrom",
+        "atom_coordinates": "fractional",
+        "occupancy": "fractional"
+      },
+      "conventions": {
+        "coordinate_basis": "fractional",
+        "periodic_axes": ["x", "y", "z"]
+      },
+      "metadata": {
+        "fixture_role": "3d_periodic_regression",
+        "source_path": "tests/data/rutile.cif",
+        "sha256": "4315cc29f3ac4df9ceee46827f9f36672250eaae47b9ebbd2380b6ddcd94deb8",
+        "size_bytes": 1192
+      }
+    }
+  ],
+  "physical_context": {
+    "scope": "fixture_input_validation",
+    "declaration_provenance": {
+      "source": "USER_CONFIG",
+      "confirmed_on": "2026-07-15",
+      "fields": ["system.physical_dimension", "system.computational_periodicity", "system.periodic_axes", "system.equilibrium"]
+    },
+    "requested_rules": [
+      "STRUCTURE.LATTICE_VALIDITY",
+      "STRUCTURE.DUPLICATE_FULL_OCCUPANCY",
+      "STRUCTURE.SHARED_PARTIAL_OCCUPANCY",
+      "STRUCTURE.OCCUPANCY_SUM_EXCEEDED",
+      "STRUCTURE.CATASTROPHIC_SHORT_DISTANCE",
+      "STRUCTURE.COVALENT_RADIUS_RATIO"
+    ],
+    "determinant_threshold": "not declared; requires USER_CONFIG or registered rule default"
+  }
+}
