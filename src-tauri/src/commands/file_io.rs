@@ -60,10 +60,7 @@ pub fn load_cif_file(
     let mut renderer = renderer_state
         .lock()
         .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
-    let next_version = cs
-        .version
-        .checked_add(1)
-        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+    let pending_version = crate::transaction::next_version(&cs)?;
     let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
 
     let prepared_volumetric = state
@@ -90,12 +87,11 @@ pub fn load_cif_file(
     renderer.update_camera();
 
     *base = Some(base_snapshot);
+    let version = crate::transaction::stamp_version(&mut state, pending_version);
     *cs = state;
-    cs.version = next_version;
     u_stack.push(previous_state);
     let can_undo = u_stack.can_undo();
     let can_redo = u_stack.can_redo();
-    let version = next_version;
 
     drop(renderer);
     drop(settings);

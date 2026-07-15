@@ -124,17 +124,14 @@ pub fn element_to_atomic_number(symbol: &str) -> u8 {
 pub fn execute_command(command: CrystalCommand, state: &mut CrystalState) -> Result<(), String> {
     match command {
         CrystalCommand::DeleteAtoms(params) => {
-            // Indices should be sorted in descending order to avoid shifting issues when removing multiple,
-            // but the underlying CrystalState::delete_atoms expects a slice and handles it.
-            // Wait, looking at current `delete_atoms`:
-            // It expects a list of indices, preferably sorted descending.
-            let mut sorted_indices = params
+            let mut indices = params
                 .indices
                 .iter()
                 .map(|&x| x as usize)
                 .collect::<Vec<_>>();
-            sorted_indices.sort_unstable_by(|a, b| b.cmp(a));
-            state.delete_atoms(&sorted_indices);
+            indices.sort_unstable();
+            indices.dedup();
+            state.delete_atoms_sorted_unique(&indices);
         }
         CrystalCommand::AddAtom(params) => {
             let atomic_number = element_to_atomic_number(&params.element);

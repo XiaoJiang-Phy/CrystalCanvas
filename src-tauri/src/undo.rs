@@ -73,7 +73,9 @@ impl StructuralSnapshot {
     }
 
     pub fn restore_for_history(self, cs: &mut CrystalState) {
+        let version = cs.version;
         self.restore_structural_fields(cs);
+        cs.version = version;
         cs.invalidate_structure_bound_data();
     }
 
@@ -90,7 +92,6 @@ impl StructuralSnapshot {
         std::mem::swap(&mut self.is_2d, &mut cs.is_2d);
         std::mem::swap(&mut self.vacuum_axis, &mut cs.vacuum_axis);
         std::mem::swap(&mut self.intrinsic_sites, &mut cs.intrinsic_sites);
-        std::mem::swap(&mut self.version, &mut cs.version);
         std::mem::swap(&mut self.cell_a, &mut cs.cell_a);
         std::mem::swap(&mut self.cell_b, &mut cs.cell_b);
         std::mem::swap(&mut self.cell_c, &mut cs.cell_c);

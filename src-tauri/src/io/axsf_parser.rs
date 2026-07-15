@@ -222,7 +222,7 @@ pub fn parse_axsf(path: &str) -> Result<(CrystalState, PhononData), String> {
         occupancies: vec![1.0; elems.len()],
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
         cart_positions: Vec::new(),
-        version: 1,
+        version: 0,
         is_2d: false,
         vacuum_axis: None,
         bond_analysis: None,

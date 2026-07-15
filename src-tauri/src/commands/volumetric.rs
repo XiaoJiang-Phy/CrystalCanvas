@@ -174,10 +174,7 @@ pub fn load_volumetric_file(
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    let next_version = cs
-        .version
-        .checked_add(1)
-        .ok_or_else(|| IpcError::from("crystal state version exhausted"))?;
+    let pending_version = crate::transaction::next_version(&cs)?;
 
     let prepared_volumetric = r
         .prepare_volumetric(&vol_data)
@@ -209,10 +206,9 @@ pub fn load_volumetric_file(
         );
     }
 
+    new_state.volumetric_data = Some(vol_data);
+    let version = crate::transaction::stamp_version(&mut new_state, pending_version);
     *cs = new_state;
-    cs.volumetric_data = Some(vol_data);
-    cs.version = next_version;
-    let version = next_version;
 
     drop(r);
     drop(settings);

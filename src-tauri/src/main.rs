@@ -453,9 +453,15 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     return;
                                 }
                             };
-                            let Some(next_version) = cs.version.checked_add(1) else {
-                                log::error!("Crystal state version exhausted");
-                                return;
+                            let version = match crate::transaction::stamp_next_version(
+                                &cs,
+                                &mut state,
+                            ) {
+                                Ok(version) => version,
+                                Err(error) => {
+                                    log::error!("{}", error.message);
+                                    return;
+                                }
                             };
                             let previous_state =
                                 crate::undo::StructuralSnapshot::from_crystal_state(&cs);
@@ -476,7 +482,6 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                             renderer.update_camera();
                             *base = Some(base_snapshot);
                             *cs = state;
-                            cs.version = next_version;
                             u_stack.push(previous_state);
                             let can_undo = u_stack.can_undo();
                             let can_redo = u_stack.can_redo();
@@ -488,7 +493,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                             let _ = handle.emit(
                                 "state_changed",
                                 crate::transaction::StateChangedPayload {
-                                    version: next_version,
+                                    version,
                                 },
                             );
                             let _ = handle.emit(

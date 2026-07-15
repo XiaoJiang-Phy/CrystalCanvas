@@ -253,7 +253,6 @@ fn load_xyz(path: &str) -> Result<CrystalState, String> {
     state.cell_gamma = 90.0;
     state.spacegroup_hm = "P1".to_string();
     state.spacegroup_number = 1;
-    state.version = 1;
 
     for i in 0..elems.len() {
         let fx = (cart_pos[i][0] - min_x + padding / 2.0) / dx;
@@ -285,7 +284,7 @@ fn load_pdb(path: &str) -> Result<CrystalState, String> {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Unknown".to_string()),
-        version: 1,
+        version: 0,
         ..Default::default()
     };
 

@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 pub struct CollisionError;
 
 pub(crate) struct AtomTranslationRollback {
-    version: u32,
     atoms: Vec<AtomTranslationRollbackEntry>,
 }
 
@@ -380,7 +379,6 @@ impl CrystalState {
         self.transform_fractional_coords(&old_lattice, &new_lattice);
         self.set_lattice_col_major(&new_lattice);
         self.fractional_to_cartesian();
-        self.version += 1;
         Ok(())
     }
 
@@ -396,7 +394,6 @@ impl CrystalState {
         self.transform_fractional_coords(&old_lattice, &new_lattice);
         self.set_lattice_col_major(&new_lattice);
         self.fractional_to_cartesian();
-        self.version += 1;
         Ok(())
     }
 
@@ -560,7 +557,6 @@ impl CrystalState {
         
         self.fractional_to_cartesian();
         self.detect_spacegroup();
-        self.version += 1;
 
         Ok(())
     }
@@ -658,7 +654,6 @@ impl CrystalState {
         
         let mut atoms = Vec::new();
         atoms.try_reserve_exact(indices.len())?;
-        let version = self.version;
         for &idx in indices {
             if idx < self.num_atoms() {
                 atoms.push(AtomTranslationRollbackEntry {
@@ -674,8 +669,7 @@ impl CrystalState {
                 self.cart_positions[idx][2] += translation.z;
             }
         }
-        self.version += 1;
-        Ok(AtomTranslationRollback { version, atoms })
+        Ok(AtomTranslationRollback { atoms })
     }
 
     pub(crate) fn rollback_atom_translation(&mut self, rollback: AtomTranslationRollback) {
@@ -685,7 +679,6 @@ impl CrystalState {
             self.fract_z[atom.index] = atom.fractional[2];
             self.cart_positions[atom.index] = atom.cartesian;
         }
-        self.version = rollback.version;
     }
     /// Generate a slab based on Miller indices and layers.
     /// Returns a new CrystalState representing the slab.
@@ -791,7 +784,7 @@ impl CrystalState {
             occupancies: vec![1.0; n_actual_usize],
             atomic_numbers: Vec::with_capacity(n_actual_usize),
             cart_positions: Vec::new(),
-            version: 1,
+            version: self.version,
             is_2d: false,
             vacuum_axis: None,
             bond_analysis: None,
@@ -893,7 +886,6 @@ impl CrystalState {
         }
 
         self.fractional_to_cartesian();
-        self.version += 1;
 
         Ok(n_layers)
     }
@@ -995,7 +987,7 @@ impl CrystalState {
             occupancies: vec![1.0; n_new_usize],
             atomic_numbers: Vec::with_capacity(n_new_usize),
             cart_positions: Vec::new(),
-            version: 1,
+            version: self.version,
             is_2d: false,
             vacuum_axis: None,
             bond_analysis: None,
@@ -1078,7 +1070,6 @@ impl CrystalState {
         self.occupancies.push(1.0);
         self.atomic_numbers.push(atomic_number);
         self.intrinsic_sites += 1;
-        self.version += 1;
         self.fractional_to_cartesian();
 
         Ok(())
@@ -1086,12 +1077,15 @@ impl CrystalState {
 
     /// Delete atoms by their indices
     pub fn delete_atoms(&mut self, indices: &[usize]) {
-        // Sort in descending order and remove duplicates to safely remove by index
         let mut sorted_indices = indices.to_vec();
         sorted_indices.sort_unstable();
         sorted_indices.dedup();
 
-        for &idx in sorted_indices.iter().rev() {
+        self.delete_atoms_sorted_unique(&sorted_indices);
+    }
+
+    pub(crate) fn delete_atoms_sorted_unique(&mut self, indices: &[usize]) {
+        for &idx in indices.iter().rev() {
             if idx < self.num_atoms() {
                 self.labels.remove(idx);
                 self.elements.remove(idx);
@@ -1103,7 +1097,6 @@ impl CrystalState {
             }
         }
         self.intrinsic_sites = self.num_atoms();
-        self.version += 1;
         self.fractional_to_cartesian();
     }
 
@@ -1121,7 +1114,6 @@ impl CrystalState {
                 self.atomic_numbers[idx] = new_atomic_number;
             }
         }
-        self.version += 1;
     }
 
     // =====================================================================
@@ -1598,6 +1590,7 @@ mod tests {
     #[test]
     fn test_try_add_atom() {
         let mut c = dummy_crystal();
+        let initial_version = c.version;
         // Change cell to 5.0 to safely add atoms
         c.cell_a = 5.0;
         c.cell_b = 5.0;
@@ -1608,7 +1601,11 @@ mod tests {
         assert_eq!(c.labels[2], "C3", "Label should be C3");
         assert_eq!(c.elements[2], "C", "Element should be C");
         assert_eq!(c.atomic_numbers[2], 6, "Atomic number should be 6");
-        assert_eq!(c.version, 2, "Version should be incremented");
+        assert_eq!(
+            c.version,
+            initial_version,
+            "Low-level mutation must not commit the state version"
+        );
         assert_eq!(
             c.cart_positions.len(),
             3,
@@ -1619,10 +1616,15 @@ mod tests {
     #[test]
     fn test_delete_atoms() {
         let mut c = dummy_crystal();
+        let initial_version = c.version;
         c.delete_atoms(&[0]); // Delete H1
         assert_eq!(c.num_atoms(), 1, "Should have 1 atom remaining");
         assert_eq!(c.labels[0], "O1", "Remaining atom should be O1");
-        assert_eq!(c.version, 2, "Version should be incremented");
+        assert_eq!(
+            c.version,
+            initial_version,
+            "Low-level mutation must not commit the state version"
+        );
         assert_eq!(
             c.cart_positions.len(),
             1,
@@ -1637,12 +1639,17 @@ mod tests {
     #[test]
     fn test_substitute_atoms() {
         let mut c = dummy_crystal();
+        let initial_version = c.version;
         c.substitute_atoms(&[1], "S", 16); // Substitute O1 with S
         assert_eq!(c.num_atoms(), 2, "Should still have 2 atoms");
         assert_eq!(c.labels[1], "S2", "Label should be S2");
         assert_eq!(c.elements[1], "S", "Element should be S");
         assert_eq!(c.atomic_numbers[1], 16, "Atomic number should be 16");
-        assert_eq!(c.version, 2, "Version should be incremented");
+        assert_eq!(
+            c.version,
+            initial_version,
+            "Low-level mutation must not commit the state version"
+        );
     }
 
     #[test]

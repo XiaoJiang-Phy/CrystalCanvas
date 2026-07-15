@@ -119,7 +119,7 @@ pub fn parse_scf_out(path: &str) -> Result<CrystalState, String> {
         // Simplistic atomic number mapping
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
         cart_positions: Vec::new(),
-        version: 1,
+        version: 0,
         is_2d: false,
         vacuum_axis: None,
         bond_analysis: None,
@@ -302,7 +302,7 @@ pub fn parse_scf_in(path: &str) -> Result<CrystalState, String> {
         labels: elems.iter().enumerate().map(|(i, e)| format!("{}{}", e, i+1)).collect(),
         occupancies: vec![1.0; elems.len()],
         atomic_numbers: elems.iter().map(|e| crate::io::import::get_atomic_number(e)).collect(),
-        version: 1,
+        version: 0,
         is_2d: false,
         vacuum_axis: None,
         intrinsic_sites: elems.len(),
