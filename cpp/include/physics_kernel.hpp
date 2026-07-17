@@ -62,21 +62,30 @@ struct SupercellResult {
 /// @param n_atoms Original number of atoms
 /// @param expansion 3x3 expansion matrix (integer)
 /// @return Number of new atoms (n_atoms * determinant(expansion))
-int get_supercell_size(size_t n_atoms, const int32_t *expansion);
+[[nodiscard]] int get_supercell_size(size_t n_atoms, const int32_t *expansion);
 
-/// Build a supercell.
+/// Build a supercell using the caller-provided output capacity.
 /// @param lattice Input 3x3 lattice
 /// @param positions Input fractional positions (n_atoms x 3)
 /// @param types Input atomic types (n_atoms)
 /// @param n_atoms Number of original atoms
 /// @param expansion 3x3 integer expansion matrix
+/// @param output_capacity Number of atoms available in the output buffers
 /// @param out_lattice Output 3x3 lattice
 /// @param out_positions Output fractional positions (pre-allocated)
 /// @param out_types Output array of atomic types (pre-allocated)
-void build_supercell(const double *lattice, const double *positions,
-                     const int *types, size_t n_atoms, const int32_t *expansion,
-                     double *out_lattice, double *out_positions,
-                     int *out_types);
+/// @return Number of atoms written, or 0 on failure.
+[[nodiscard]] int build_supercell_checked(
+    const double* lattice, const double* positions,
+    const int* types, size_t n_atoms, const int32_t* expansion,
+    size_t output_capacity, double* out_lattice,
+    double* out_positions, int* out_types);
+
+/// Legacy two-step supercell builder.
+void build_supercell(
+    const double* lattice, const double* positions,
+    const int* types, size_t n_atoms, const int32_t* expansion,
+    double* out_lattice, double* out_positions, int* out_types);
 
 /// Get the number of atoms for a specific slab cleavage
 /// @param lattice Original 3x3 lattice
@@ -111,12 +120,18 @@ void build_slab(const double *lattice, const double *positions,
                 double *out_positions, int *out_types);
 
 /// Build slab with deduplication and vacuum injection.
-/// @return Actual number of unique atoms written to out_positions/out_types.
+/// The output lattice is c-axis orthogonalized and QR-standardized, so its
+/// Cartesian frame may be rigidly rotated relative to the input frame.
+/// out_positions are fractional coordinates in out_lattice; consumers must
+/// derive Cartesian directions and surface normals from out_lattice.
+/// @param output_capacity Number of atoms available in the output buffers.
+/// @return Actual number of unique atoms written, or 0 on failure.
 [[nodiscard]] int build_slab_v2(
     const double* lattice, const double* positions,
     const int* types, size_t n_atoms,
     const int32_t* miller, int n_layers, double vacuum_a,
-    double* out_lattice, double* out_positions, int* out_types);
+    size_t output_capacity, double* out_lattice,
+    double* out_positions, int* out_types) noexcept;
 
 /// Identify distinct atomic layers along the slab normal.
 /// @param positions Fractional positions (n_atoms x 3, flat)

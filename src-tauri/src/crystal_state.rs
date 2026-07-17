@@ -10,6 +10,300 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollisionError;
 
+pub(crate) const MAX_STRUCTURAL_ATOMS: usize = 10_000;
+
+const MIN_LATTICE_VOLUME_A3: f64 = 1.0e-12;
+const MAX_LATTICE_CONDITION: f64 = 1.0e12;
+const MAX_MILLER_INDEX_ABS: i64 = 128;
+const MAX_ENUMERATION_OVERHEAD: usize = 256;
+
+pub fn validate_fractional_position(position: [f64; 3]) -> Result<(), &'static str> {
+    if position.iter().all(|component| component.is_finite()) {
+        Ok(())
+    } else {
+        Err("fractional position components must be finite")
+    }
+}
+
+impl CrystalState {
+    pub(crate) fn validate_cartesian_positions(&self) -> Result<(), &'static str> {
+        if self
+            .cart_positions
+            .iter()
+            .flatten()
+            .all(|component| component.is_finite())
+        {
+            Ok(())
+        } else {
+            Err("Cartesian position cannot be represented as finite f32")
+        }
+    }
+}
+
+pub fn validate_lattice_parameters(
+    a: f64,
+    b: f64,
+    c: f64,
+    alpha: f64,
+    beta: f64,
+    gamma: f64,
+) -> Result<(), &'static str> {
+    if ![a, b, c]
+        .iter()
+        .all(|length| length.is_finite() && *length > 0.0)
+    {
+        return Err("lattice lengths must be finite and positive");
+    }
+    if ![alpha, beta, gamma]
+        .iter()
+        .all(|angle| angle.is_finite() && *angle > 0.0 && *angle < 180.0)
+    {
+        return Err("lattice angles must be finite and between 0 and 180 degrees");
+    }
+    if alpha + beta <= gamma
+        || alpha + gamma <= beta
+        || beta + gamma <= alpha
+        || alpha + beta + gamma >= 360.0
+    {
+        return Err("lattice angles do not define a three-dimensional cell");
+    }
+
+    let alpha = alpha.to_radians();
+    let beta = beta.to_radians();
+    let gamma = gamma.to_radians();
+    let sin_gamma = gamma.sin();
+    if !sin_gamma.is_finite() || sin_gamma.abs() <= f64::EPSILON {
+        return Err("lattice angles produce a singular basis");
+    }
+
+    let cx = c * beta.cos();
+    let cy = c * (alpha.cos() - beta.cos() * gamma.cos()) / sin_gamma;
+    let cz_squared = c * c - cx * cx - cy * cy;
+    if !cz_squared.is_finite() || cz_squared <= 0.0 {
+        return Err("lattice parameters do not define a three-dimensional cell");
+    }
+    let cz = cz_squared.sqrt();
+    let matrix = [
+        a, 0.0, 0.0,
+        b * gamma.cos(), b * sin_gamma, 0.0,
+        cx, cy, cz,
+    ];
+    if !matrix.iter().all(|value| value.is_finite()) {
+        return Err("lattice basis must be finite");
+    }
+
+    let determinant = a * b * sin_gamma * cz;
+    if !determinant.is_finite() || determinant.abs() <= MIN_LATTICE_VOLUME_A3 {
+        return Err("lattice volume is too small or non-finite");
+    }
+
+    let inverse = [
+        (matrix[4] * matrix[8] - matrix[7] * matrix[5]) / determinant,
+        (matrix[7] * matrix[2] - matrix[1] * matrix[8]) / determinant,
+        (matrix[1] * matrix[5] - matrix[4] * matrix[2]) / determinant,
+        (matrix[6] * matrix[5] - matrix[3] * matrix[8]) / determinant,
+        (matrix[0] * matrix[8] - matrix[6] * matrix[2]) / determinant,
+        (matrix[3] * matrix[2] - matrix[0] * matrix[5]) / determinant,
+        (matrix[3] * matrix[7] - matrix[6] * matrix[4]) / determinant,
+        (matrix[6] * matrix[1] - matrix[0] * matrix[7]) / determinant,
+        (matrix[0] * matrix[4] - matrix[3] * matrix[1]) / determinant,
+    ];
+    if !inverse.iter().all(|value| value.is_finite()) {
+        return Err("lattice inverse must be finite");
+    }
+
+    let matrix_norm = matrix[0].abs() + matrix[3].abs() + matrix[6].abs();
+    let matrix_norm = matrix_norm.max(matrix[1].abs() + matrix[4].abs() + matrix[7].abs());
+    let matrix_norm = matrix_norm.max(matrix[2].abs() + matrix[5].abs() + matrix[8].abs());
+    let inverse_norm = inverse[0].abs() + inverse[3].abs() + inverse[6].abs();
+    let inverse_norm = inverse_norm.max(inverse[1].abs() + inverse[4].abs() + inverse[7].abs());
+    let inverse_norm = inverse_norm.max(inverse[2].abs() + inverse[5].abs() + inverse[8].abs());
+    let condition = matrix_norm * inverse_norm;
+    if !condition.is_finite() || condition > MAX_LATTICE_CONDITION {
+        return Err("lattice basis is too ill-conditioned");
+    }
+
+    Ok(())
+}
+
+fn lattice_parameters_from_col_major(lattice: &[f64; 9]) -> Result<[f64; 6], &'static str> {
+    if !lattice.iter().all(|value| value.is_finite()) {
+        return Err("FFI lattice output must be finite");
+    }
+    let vectors = [
+        [lattice[0], lattice[1], lattice[2]],
+        [lattice[3], lattice[4], lattice[5]],
+        [lattice[6], lattice[7], lattice[8]],
+    ];
+    let norms = vectors.map(|vector| vector[0].hypot(vector[1]).hypot(vector[2]));
+    if !norms.iter().all(|norm| norm.is_finite() && *norm > 0.0) {
+        return Err("FFI lattice output vectors must be finite and non-zero");
+    }
+    let angle = |left: usize, right: usize| -> Result<f64, &'static str> {
+        let cosine = (0..3)
+            .map(|component| {
+                (vectors[left][component] / norms[left])
+                    * (vectors[right][component] / norms[right])
+            })
+            .sum::<f64>();
+        if !cosine.is_finite() {
+            return Err("FFI lattice output angle must be finite");
+        }
+        let angle = cosine.clamp(-1.0, 1.0).acos().to_degrees();
+        if angle.is_finite() {
+            Ok(angle)
+        } else {
+            Err("FFI lattice output angle must be finite")
+        }
+    };
+    let alpha = angle(1, 2)?;
+    let beta = angle(2, 0)?;
+    let gamma = angle(0, 1)?;
+    validate_lattice_parameters(norms[0], norms[1], norms[2], alpha, beta, gamma)?;
+    Ok([norms[0], norms[1], norms[2], alpha, beta, gamma])
+}
+
+fn atomic_number_sources(
+    atomic_numbers: &[u8],
+) -> Result<[Option<usize>; 256], &'static str> {
+    let mut sources = [None; 256];
+    for (index, atomic_number) in atomic_numbers.iter().copied().enumerate() {
+        if atomic_number == 0 {
+            return Err("input structure contains an invalid atomic number");
+        }
+        sources[usize::from(atomic_number)].get_or_insert(index);
+    }
+    Ok(sources)
+}
+
+pub fn validate_slab_request(
+    miller: [i32; 3],
+    layers: i32,
+    vacuum_a: f64,
+) -> Result<(), &'static str> {
+    if miller == [0, 0, 0] {
+        return Err("Miller indices must not all be zero");
+    }
+    if miller
+        .iter()
+        .any(|component| i64::from(*component).abs() > MAX_MILLER_INDEX_ABS)
+    {
+        return Err("Miller indices exceed the supported resource range");
+    }
+    if layers <= 0 || layers as usize > MAX_STRUCTURAL_ATOMS {
+        return Err("slab layers must be positive and within the structural resource limit");
+    }
+    if !vacuum_a.is_finite() || vacuum_a < 0.0 {
+        return Err("vacuum thickness must be finite and non-negative");
+    }
+    Ok(())
+}
+
+fn validate_slab_output_size(atom_count: usize, layers: i32) -> Result<usize, &'static str> {
+    let output_atoms = atom_count
+        .checked_mul(layers as usize)
+        .ok_or("slab atom count overflow")?;
+    if output_atoms > MAX_STRUCTURAL_ATOMS {
+        return Err("slab exceeds the structural atom limit");
+    }
+    Ok(output_atoms)
+}
+
+pub fn validate_supercell_request(
+    expansion: &[i32; 9],
+    atom_count: usize,
+) -> Result<usize, &'static str> {
+    if atom_count == 0 {
+        return Err("cannot generate a supercell from an empty crystal");
+    }
+
+    let matrix = expansion.map(i128::from);
+    let product = |left: i128, right: i128| {
+        left.checked_mul(right)
+            .ok_or("supercell determinant overflow")
+    };
+    let subtract = |left: i128, right: i128| {
+        left.checked_sub(right)
+            .ok_or("supercell determinant overflow")
+    };
+    let add = |left: i128, right: i128| {
+        left.checked_add(right)
+            .ok_or("supercell determinant overflow")
+    };
+    let minor_00 = subtract(product(matrix[4], matrix[8])?, product(matrix[5], matrix[7])?)?;
+    let minor_01 = subtract(product(matrix[3], matrix[8])?, product(matrix[5], matrix[6])?)?;
+    let minor_02 = subtract(product(matrix[3], matrix[7])?, product(matrix[4], matrix[6])?)?;
+    let determinant = add(
+        subtract(product(matrix[0], minor_00)?, product(matrix[1], minor_01)?)?,
+        product(matrix[2], minor_02)?,
+    )?;
+    if determinant <= 0 {
+        return Err("supercell transformation determinant must be positive");
+    }
+
+    let copies = usize::try_from(determinant)
+        .map_err(|_| "supercell determinant exceeds platform capacity")?;
+    let output_atoms = atom_count
+        .checked_mul(copies)
+        .ok_or("supercell atom count overflow")?;
+    if output_atoms > MAX_STRUCTURAL_ATOMS {
+        return Err("supercell exceeds the structural atom limit");
+    }
+
+    let mut enumeration_width = 1usize;
+    for row in 0..3 {
+        let mut minimum = 0i128;
+        let mut maximum = 0i128;
+        for column in 0..3 {
+            let value = matrix[column * 3 + row];
+            minimum = minimum
+                .checked_add(value.min(0))
+                .ok_or("supercell enumeration bound overflow")?;
+            maximum = maximum
+                .checked_add(value.max(0))
+                .ok_or("supercell enumeration bound overflow")?;
+        }
+        if minimum < i128::from(i32::MIN) + 1 || maximum > i128::from(i32::MAX) - 1 {
+            return Err("supercell enumeration bounds exceed the FFI integer range");
+        }
+        let width = maximum
+            .checked_sub(minimum)
+            .and_then(|span| span.checked_add(3))
+            .and_then(|span| usize::try_from(span).ok())
+            .ok_or("supercell enumeration width overflow")?;
+        enumeration_width = enumeration_width
+            .checked_mul(width)
+            .ok_or("supercell enumeration volume overflow")?;
+    }
+    let work_items = atom_count
+        .checked_mul(enumeration_width)
+        .ok_or("supercell enumeration work overflow")?;
+    let work_limit = output_atoms
+        .checked_mul(MAX_ENUMERATION_OVERHEAD)
+        .ok_or("supercell enumeration work limit overflow")?;
+    if work_items > work_limit {
+        return Err("supercell enumeration overhead exceeds the resource limit");
+    }
+
+    Ok(output_atoms)
+}
+
+pub fn validate_atom_request(
+    element_symbol: &str,
+    atomic_number: u8,
+    fract_pos: [f64; 3],
+    atom_count: usize,
+) -> Result<(), &'static str> {
+    validate_fractional_position(fract_pos)?;
+    if element_symbol.is_empty() || atomic_number == 0 {
+        return Err("atom element identity is invalid");
+    }
+    if atom_count >= MAX_STRUCTURAL_ATOMS {
+        return Err("adding an atom would exceed the structural atom limit");
+    }
+    Ok(())
+}
+
 pub(crate) struct AtomTranslationRollback {
     atoms: Vec<AtomTranslationRollbackEntry>,
 }
@@ -692,6 +986,17 @@ impl CrystalState {
         if n_atoms == 0 {
             return Err("Cannot generate slab from empty crystal".to_string());
         }
+        validate_slab_request(miller, layers, vacuum_a).map_err(str::to_string)?;
+        let expected_upper = validate_slab_output_size(n_atoms, layers).map_err(str::to_string)?;
+        validate_lattice_parameters(
+            self.cell_a,
+            self.cell_b,
+            self.cell_c,
+            self.cell_alpha,
+            self.cell_beta,
+            self.cell_gamma,
+        )
+        .map_err(str::to_string)?;
 
         if self.spacegroup_number == 1 {
             return Err(
@@ -704,7 +1009,10 @@ impl CrystalState {
 
         let lattice_col_major = self.get_lattice_col_major();
 
-        let mut flat_positions = Vec::with_capacity(n_atoms * 3);
+        let input_components = n_atoms
+            .checked_mul(3)
+            .ok_or_else(|| "slab input capacity overflow".to_string())?;
+        let mut flat_positions = Vec::with_capacity(input_components);
         let mut types = Vec::with_capacity(n_atoms);
         for i in 0..n_atoms {
             flat_positions.push(self.fract_x[i]);
@@ -717,13 +1025,16 @@ impl CrystalState {
             ffi::get_slab_size_v2(lattice_col_major.as_ptr(), miller.as_ptr(), layers, n_atoms)
         };
 
-        if n_upper <= 0 {
+        if n_upper <= 0 || n_upper as usize != expected_upper {
             return Err("Invalid slab size calculation".to_string());
         }
 
         let n_upper_usize = n_upper as usize;
-        let mut out_lattice = vec![0.0f64; 9];
-        let mut out_positions = vec![0.0f64; n_upper_usize * 3];
+        let output_components = n_upper_usize
+            .checked_mul(3)
+            .ok_or_else(|| "slab output capacity overflow".to_string())?;
+        let mut out_lattice = [0.0f64; 9];
+        let mut out_positions = vec![0.0f64; output_components];
         let mut out_types = vec![0i32; n_upper_usize];
 
         let n_actual = unsafe {
@@ -735,33 +1046,22 @@ impl CrystalState {
                 miller.as_ptr(),
                 layers,
                 vacuum_a,
+                n_upper_usize,
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
                 out_types.as_mut_ptr(),
             )
         };
 
-        if n_actual <= 0 {
+        if n_actual <= 0 || n_actual as usize > n_upper_usize {
             return Err("build_slab_v2 returned 0 atoms".to_string());
         }
         let n_actual_usize = n_actual as usize;
 
-        // Reconstruct lattice parameters from ColMajor 3x3
-        let vx = [out_lattice[0], out_lattice[1], out_lattice[2]];
-        let vy = [out_lattice[3], out_lattice[4], out_lattice[5]];
-        let vz = [out_lattice[6], out_lattice[7], out_lattice[8]];
-
-        let new_a = (vx[0] * vx[0] + vx[1] * vx[1] + vx[2] * vx[2]).sqrt();
-        let new_b = (vy[0] * vy[0] + vy[1] * vy[1] + vy[2] * vy[2]).sqrt();
-        let new_c = (vz[0] * vz[0] + vz[1] * vz[1] + vz[2] * vz[2]).sqrt();
-
-        let dot_ab = vx[0] * vy[0] + vx[1] * vy[1] + vx[2] * vy[2];
-        let dot_bc = vy[0] * vz[0] + vy[1] * vz[1] + vy[2] * vz[2];
-        let dot_ca = vz[0] * vx[0] + vz[1] * vx[1] + vz[2] * vx[2];
-
-        let new_gamma = (dot_ab / (new_a * new_b)).acos().to_degrees();
-        let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
-        let new_beta = (dot_ca / (new_c * new_a)).acos().to_degrees();
+        let [new_a, new_b, new_c, new_alpha, new_beta, new_gamma] =
+            lattice_parameters_from_col_major(&out_lattice).map_err(str::to_string)?;
+        let type_sources = atomic_number_sources(&self.atomic_numbers[..n_atoms])
+            .map_err(str::to_string)?;
 
         let mut new_state = CrystalState {
             name: format!(
@@ -800,27 +1100,29 @@ impl CrystalState {
         };
 
         for i in 0..n_actual_usize {
-            let t = out_types[i] as u8;
-            let mut label = format!("Element{}", t);
-            let mut elem = "Unknown".to_string();
+            let position = [
+                out_positions[3 * i],
+                out_positions[3 * i + 1],
+                out_positions[3 * i + 2],
+            ];
+            validate_fractional_position(position).map_err(str::to_string)?;
+            let t = u8::try_from(out_types[i])
+                .map_err(|_| "FFI slab output contains an invalid atomic number".to_string())?;
+            let source_index = type_sources[usize::from(t)]
+                .ok_or_else(|| "FFI slab output contains an unknown atomic number".to_string())?;
 
-            for j in 0..n_atoms {
-                if self.atomic_numbers[j] == t {
-                    label = self.labels[j].clone();
-                    elem = self.elements[j].clone();
-                    break;
-                }
-            }
-
-            new_state.labels.push(label);
-            new_state.elements.push(elem);
-            new_state.fract_x.push(out_positions[3 * i]);
-            new_state.fract_y.push(out_positions[3 * i + 1]);
-            new_state.fract_z.push(out_positions[3 * i + 2]);
+            new_state.labels.push(self.labels[source_index].clone());
+            new_state.elements.push(self.elements[source_index].clone());
+            new_state.fract_x.push(position[0]);
+            new_state.fract_y.push(position[1]);
+            new_state.fract_z.push(position[2]);
             new_state.atomic_numbers.push(t);
         }
 
         new_state.fractional_to_cartesian();
+        new_state
+            .validate_cartesian_positions()
+            .map_err(str::to_string)?;
         new_state.detect_spacegroup();
 
         Ok(new_state)
@@ -896,6 +1198,17 @@ impl CrystalState {
         if n_atoms == 0 {
             return Err("Cannot generate supercell from empty crystal".to_string());
         }
+        let expected_atoms =
+            validate_supercell_request(expansion, n_atoms).map_err(str::to_string)?;
+        validate_lattice_parameters(
+            self.cell_a,
+            self.cell_b,
+            self.cell_c,
+            self.cell_alpha,
+            self.cell_beta,
+            self.cell_gamma,
+        )
+        .map_err(str::to_string)?;
 
         let alpha = self.cell_alpha.to_radians();
         let beta = self.cell_beta.to_radians();
@@ -920,7 +1233,10 @@ impl CrystalState {
             cz,
         ];
 
-        let mut flat_positions = Vec::with_capacity(n_atoms * 3);
+        let input_components = n_atoms
+            .checked_mul(3)
+            .ok_or_else(|| "supercell input capacity overflow".to_string())?;
+        let mut flat_positions = Vec::with_capacity(input_components);
         let mut types = Vec::with_capacity(n_atoms);
         for i in 0..n_atoms {
             flat_positions.push(self.fract_x[i]);
@@ -929,45 +1245,35 @@ impl CrystalState {
             types.push(self.atomic_numbers[i] as i32);
         }
 
-        let n_new = unsafe { ffi::get_supercell_size(n_atoms, expansion.as_ptr()) };
+        let output_components = expected_atoms
+            .checked_mul(3)
+            .ok_or_else(|| "supercell output capacity overflow".to_string())?;
+        let mut out_lattice = [0.0f64; 9];
+        let mut out_positions = vec![0.0f64; output_components];
+        let mut out_types = vec![0i32; expected_atoms];
 
-        if n_new <= 0 {
-            return Err("Invalid supercell size calculation".to_string());
-        }
-
-        let n_new_usize = n_new as usize;
-        let mut out_lattice = vec![0.0f64; 9];
-        let mut out_positions = vec![0.0f64; n_new_usize * 3];
-        let mut out_types = vec![0i32; n_new_usize];
-
-        unsafe {
-            ffi::build_supercell(
+        let n_new = unsafe {
+            ffi::build_supercell_checked(
                 lattice_col_major.as_ptr(),
                 flat_positions.as_ptr(),
                 types.as_ptr(),
                 n_atoms,
                 expansion.as_ptr(),
+                expected_atoms,
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
                 out_types.as_mut_ptr(),
-            );
+            )
+        };
+        if n_new <= 0 || n_new as usize != expected_atoms {
+            return Err("supercell build returned an unexpected atom count".to_string());
         }
+        let n_new_usize = n_new as usize;
 
-        let vx = [out_lattice[0], out_lattice[1], out_lattice[2]];
-        let vy = [out_lattice[3], out_lattice[4], out_lattice[5]];
-        let vz = [out_lattice[6], out_lattice[7], out_lattice[8]];
-
-        let new_a = (vx[0] * vx[0] + vx[1] * vx[1] + vx[2] * vx[2]).sqrt();
-        let new_b = (vy[0] * vy[0] + vy[1] * vy[1] + vy[2] * vy[2]).sqrt();
-        let new_c = (vz[0] * vz[0] + vz[1] * vz[1] + vz[2] * vz[2]).sqrt();
-
-        let dot_ab = vx[0] * vy[0] + vx[1] * vy[1] + vx[2] * vy[2];
-        let dot_bc = vy[0] * vz[0] + vy[1] * vz[1] + vy[2] * vz[2];
-        let dot_ca = vz[0] * vx[0] + vz[1] * vx[1] + vz[2] * vx[2];
-
-        let new_gamma = (dot_ab / (new_a * new_b)).acos().to_degrees();
-        let new_alpha = (dot_bc / (new_b * new_c)).acos().to_degrees();
-        let new_beta = (dot_ca / (new_c * new_a)).acos().to_degrees();
+        let [new_a, new_b, new_c, new_alpha, new_beta, new_gamma] =
+            lattice_parameters_from_col_major(&out_lattice).map_err(str::to_string)?;
+        let type_sources = atomic_number_sources(&self.atomic_numbers[..n_atoms])
+            .map_err(str::to_string)?;
 
         let mut new_state = CrystalState {
             name: format!("{}_supercell", self.name),
@@ -1003,27 +1309,31 @@ impl CrystalState {
         };
 
         for i in 0..n_new_usize {
-            let t = out_types[i] as u8;
-            let mut label = format!("Element{}", t);
-            let mut elem = "Unknown".to_string();
+            let position = [
+                out_positions[3 * i],
+                out_positions[3 * i + 1],
+                out_positions[3 * i + 2],
+            ];
+            validate_fractional_position(position).map_err(str::to_string)?;
+            let t = u8::try_from(out_types[i]).map_err(|_| {
+                "FFI supercell output contains an invalid atomic number".to_string()
+            })?;
+            let source_index = type_sources[usize::from(t)].ok_or_else(|| {
+                "FFI supercell output contains an unknown atomic number".to_string()
+            })?;
 
-            for j in 0..n_atoms {
-                if self.atomic_numbers[j] == t {
-                    label = self.labels[j].clone();
-                    elem = self.elements[j].clone();
-                    break;
-                }
-            }
-
-            new_state.labels.push(label);
-            new_state.elements.push(elem);
-            new_state.fract_x.push(out_positions[3 * i]);
-            new_state.fract_y.push(out_positions[3 * i + 1]);
-            new_state.fract_z.push(out_positions[3 * i + 2]);
+            new_state.labels.push(self.labels[source_index].clone());
+            new_state.elements.push(self.elements[source_index].clone());
+            new_state.fract_x.push(position[0]);
+            new_state.fract_y.push(position[1]);
+            new_state.fract_z.push(position[2]);
             new_state.atomic_numbers.push(t);
         }
 
         new_state.fractional_to_cartesian();
+        new_state
+            .validate_cartesian_positions()
+            .map_err(str::to_string)?;
         new_state.detect_spacegroup();
 
         Ok(new_state)
@@ -1036,29 +1346,41 @@ impl CrystalState {
         atomic_number: u8,
         fract_pos: [f64; 3],
     ) -> Result<(), CollisionError> {
-        let lattice_col_major = self.get_lattice_col_major();
-
-        // Prepare flat positions of intrinsic atoms for MIC overlap check
+        validate_atom_request(element_symbol, atomic_number, fract_pos, self.num_atoms())
+            .map_err(|_| CollisionError)?;
         let n_intrinsic = self.intrinsic_sites;
-        let mut flat_intrinsic = Vec::with_capacity(n_intrinsic * 3);
-        for i in 0..n_intrinsic {
-            flat_intrinsic.push(self.fract_x[i]);
-            flat_intrinsic.push(self.fract_y[i]);
-            flat_intrinsic.push(self.fract_z[i]);
-        }
-
-        let is_overlap = unsafe {
-            ffi::check_overlap_mic(
-                lattice_col_major.as_ptr(),
-                flat_intrinsic.as_ptr(),
-                n_intrinsic,
-                fract_pos.as_ptr(),
-                0.5, // 0.5Å threshold
+        if n_intrinsic > 0 {
+            validate_lattice_parameters(
+                self.cell_a,
+                self.cell_b,
+                self.cell_c,
+                self.cell_alpha,
+                self.cell_beta,
+                self.cell_gamma,
             )
-        };
+            .map_err(|_| CollisionError)?;
+            let lattice_col_major = self.get_lattice_col_major();
+            let intrinsic_components = n_intrinsic.checked_mul(3).ok_or(CollisionError)?;
+            let mut flat_intrinsic = Vec::with_capacity(intrinsic_components);
+            for i in 0..n_intrinsic {
+                flat_intrinsic.push(self.fract_x[i]);
+                flat_intrinsic.push(self.fract_y[i]);
+                flat_intrinsic.push(self.fract_z[i]);
+            }
 
-        if is_overlap {
-            return Err(CollisionError);
+            let is_overlap = unsafe {
+                ffi::check_overlap_mic(
+                    lattice_col_major.as_ptr(),
+                    flat_intrinsic.as_ptr(),
+                    n_intrinsic,
+                    fract_pos.as_ptr(),
+                    0.5, // 0.5Å threshold
+                )
+            };
+
+            if is_overlap {
+                return Err(CollisionError);
+            }
         }
 
         let label = format!("{}{}", element_symbol, self.num_atoms() + 1);

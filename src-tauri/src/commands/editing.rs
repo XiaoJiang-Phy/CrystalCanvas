@@ -32,6 +32,8 @@ pub fn update_lattice_params(
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
 ) -> IpcResult<()> {
+    crate::crystal_state::validate_lattice_parameters(a, b, c, alpha, beta, gamma)
+        .map_err(IpcError::invalid_argument)?;
     log::info!(
         "update_lattice_params: a={}, b={}, c={}, alpha={}, beta={}, gamma={}",
         a,
@@ -74,6 +76,8 @@ pub fn add_atom(
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
 ) -> IpcResult<()> {
+    crate::crystal_state::validate_fractional_position(fract_pos)
+        .map_err(IpcError::invalid_argument)?;
     log::info!("add_atom: {} at {:?}", element_symbol, fract_pos);
     let (formatted_symbol, atomic_number) = resolve_element(&element_symbol, atomic_number)?;
     crate::transaction::with_structural_state_update(
@@ -82,7 +86,16 @@ pub fn add_atom(
         &settings_state,
         &renderer_state,
         &undo_state,
-        |_| Ok(true),
+        |cs| {
+            crate::crystal_state::validate_atom_request(
+                &formatted_symbol,
+                atomic_number,
+                fract_pos,
+                cs.num_atoms(),
+            )
+            .map_err(IpcError::invalid_argument)?;
+            Ok(true)
+        },
         |cs| {
             cs.try_add_atom(&formatted_symbol, atomic_number, fract_pos)
                 .map_err(|_| {
