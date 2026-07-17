@@ -9,6 +9,7 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <numeric>
 
 // Include spglib
@@ -147,167 +148,477 @@ int standardize_cell(double* lattice, double* positions, int* types,
 
 #include <Eigen/Dense>
 
-int get_supercell_size(size_t n_atoms, const int32_t* expansion) {
-    Eigen::Map<const Eigen::Matrix3i> exp_mat(expansion);
-    int det = std::abs(exp_mat.determinant());
-    return n_atoms * det;
-}
-
-void build_supercell(
-    const double* lattice,
-    const double* positions,
-    const int* types,
-    size_t n_atoms,
-    const int32_t* expansion,
-    double* out_lattice,
-    double* out_positions,
-    int* out_types
-) {
-    // Both lattice and P are mapped as ColMajor by default in Eigen
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
-    Eigen::Map<const Eigen::Matrix3i> P(expansion);
-    
-    Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
-    // New lattice L_out = L * P (assuming basis vectors are columns of L)
-    L_out = L * P.cast<double>();
-    
-    Eigen::Matrix3d P_inv = P.cast<double>().inverse();
-    
-    // Determine bounds for integer shifts
-    Eigen::Matrix<double, 3, 8> corners;
-    corners << 0, 1, 0, 1, 0, 1, 0, 1,
-               0, 0, 1, 1, 0, 0, 1, 1,
-               0, 0, 0, 0, 1, 1, 1, 1;
-    Eigen::Matrix<double, 3, 8> mapped_corners = P.cast<double>() * corners;
-    Eigen::Vector3d min_b = mapped_corners.rowwise().minCoeff();
-    Eigen::Vector3d max_b = mapped_corners.rowwise().maxCoeff();
-    
-    int min_nx = std::floor(min_b.x()) - 1;
-    int max_nx = std::ceil(max_b.x()) + 1;
-    int min_ny = std::floor(min_b.y()) - 1;
-    int max_ny = std::ceil(max_b.y()) + 1;
-    int min_nz = std::floor(min_b.z()) - 1;
-    int max_nz = std::ceil(max_b.z()) + 1;
-
-    size_t out_idx = 0;
-    
-    for (size_t i = 0; i < n_atoms; ++i) {
-        Eigen::Vector3d f(positions[3*i], positions[3*i+1], positions[3*i+2]);
-        int type = types[i];
-        
-        for (int nx = min_nx; nx <= max_nx; ++nx) {
-            for (int ny = min_ny; ny <= max_ny; ++ny) {
-                for (int nz = min_nz; nz <= max_nz; ++nz) {
-                    Eigen::Vector3d shift(nx, ny, nz);
-                    Eigen::Vector3d v = f + shift;
-                    Eigen::Vector3d f_new = P_inv * v;
-                    
-                    const double eps = 1e-5;
-                    // Check if f_new is within [0, 1) bounds for the new cell
-                    if (f_new.x() >= -eps && f_new.x() < 1.0 - eps &&
-                        f_new.y() >= -eps && f_new.y() < 1.0 - eps &&
-                        f_new.z() >= -eps && f_new.z() < 1.0 - eps) {
-                        
-                        // Wrap precisely into [0, 1) to avoid -0.00000 
-                        f_new.x() = f_new.x() - std::floor(f_new.x());
-                        f_new.y() = f_new.y() - std::floor(f_new.y());
-                        f_new.z() = f_new.z() - std::floor(f_new.z());
-                        
-                        out_positions[out_idx * 3 + 0] = f_new.x();
-                        out_positions[out_idx * 3 + 1] = f_new.y();
-                        out_positions[out_idx * 3 + 2] = f_new.z();
-                        out_types[out_idx] = type;
-                        out_idx++;
-                    }
-                }
-            }
-        }
-    }
-}
-
 namespace {
 
-int gcd(int a, int b) {
-    if (b == 0) return std::abs(a);
-    return gcd(b, a % b);
+using ColMajorMatrix3d = Eigen::Matrix<double, 3, 3, Eigen::ColMajor>;
+using ColMajorMatrix3i = Eigen::Matrix<int, 3, 3, Eigen::ColMajor>;
+using ColMajorMatrix3i64 = Eigen::Matrix<int64_t, 3, 3, Eigen::ColMajor>;
+using Vector3i64 = Eigen::Matrix<int64_t, 3, 1>;
+
+constexpr int MAX_MILLER_INDEX_ABS = 128;
+constexpr size_t MAX_STRUCTURAL_ATOMS = 10'000;
+constexpr size_t MAX_ENUMERATION_OVERHEAD = 256;
+
+struct SupercellPlan {
+    int min_shift[3];
+    int max_shift[3];
+    size_t output_atoms;
+};
+
+[[nodiscard]] bool checked_add_i64(int64_t left, int64_t right, int64_t& output)
+{
+    if ((right > 0 && left > std::numeric_limits<int64_t>::max() - right)
+        || (right < 0 && left < std::numeric_limits<int64_t>::min() - right)) {
+        return false;
+    }
+    output = left + right;
+    return true;
 }
 
-void ext_gcd(int h, int k, int& u, int& v, int& g) {
+[[nodiscard]] bool checked_sub_i64(int64_t left, int64_t right, int64_t& output)
+{
+    if ((right > 0 && left < std::numeric_limits<int64_t>::min() + right)
+        || (right < 0 && left > std::numeric_limits<int64_t>::max() + right)) {
+        return false;
+    }
+    output = left - right;
+    return true;
+}
+
+[[nodiscard]] bool checked_mul_i64(int64_t left, int64_t right, int64_t& output)
+{
+    if (left == 0 || right == 0) {
+        output = 0;
+        return true;
+    }
+    if (left == -1) {
+        if (right == std::numeric_limits<int64_t>::min()) return false;
+        output = -right;
+        return true;
+    }
+    if (right == -1) {
+        if (left == std::numeric_limits<int64_t>::min()) return false;
+        output = -left;
+        return true;
+    }
+    if ((left > 0 && right > 0 && left > std::numeric_limits<int64_t>::max() / right)
+        || (left > 0 && right < 0 && right < std::numeric_limits<int64_t>::min() / left)
+        || (left < 0 && right > 0 && left < std::numeric_limits<int64_t>::min() / right)
+        || (left < 0 && right < 0 && left < std::numeric_limits<int64_t>::max() / right)) {
+        return false;
+    }
+    output = left * right;
+    return true;
+}
+
+[[nodiscard]] bool checked_size_mul(size_t left, size_t right, size_t& output)
+{
+    if (left != 0 && right > std::numeric_limits<size_t>::max() / left) {
+        return false;
+    }
+    output = left * right;
+    return true;
+}
+
+[[nodiscard]] bool checked_round_i64(double value, int64_t& output)
+{
+    const double rounded = std::round(value);
+    constexpr double INT64_LOWER_EXCLUSIVE = -9'223'372'036'854'775'808.0;
+    constexpr double INT64_UPPER_EXCLUSIVE = 9'223'372'036'854'775'808.0;
+    if (!std::isfinite(rounded)
+        || rounded <= INT64_LOWER_EXCLUSIVE
+        || rounded >= INT64_UPPER_EXCLUSIVE) {
+        return false;
+    }
+    output = static_cast<int64_t>(rounded);
+    return true;
+}
+
+[[nodiscard]] bool subtract_scaled(
+    Vector3i64& target, int64_t scale, const Vector3i64& basis)
+{
+    Vector3i64 next;
+    for (int row = 0; row < 3; ++row) {
+        int64_t product = 0;
+        if (!checked_mul_i64(scale, basis[row], product)
+            || !checked_sub_i64(target[row], product, next[row])) {
+            return false;
+        }
+    }
+    target = next;
+    return true;
+}
+
+[[nodiscard]] bool determinant_i64(const ColMajorMatrix3i& matrix, int64_t& output)
+{
+    const auto value = [&matrix](int row, int column) {
+        return static_cast<int64_t>(matrix(row, column));
+    };
+    int64_t first_minor = 0;
+    int64_t second_minor = 0;
+    int64_t third_minor = 0;
+    int64_t product = 0;
+    if (!checked_mul_i64(value(1, 1), value(2, 2), first_minor)
+        || !checked_mul_i64(value(1, 2), value(2, 1), product)
+        || !checked_sub_i64(first_minor, product, first_minor)
+        || !checked_mul_i64(value(1, 0), value(2, 2), second_minor)
+        || !checked_mul_i64(value(1, 2), value(2, 0), product)
+        || !checked_sub_i64(second_minor, product, second_minor)
+        || !checked_mul_i64(value(1, 0), value(2, 1), third_minor)
+        || !checked_mul_i64(value(1, 1), value(2, 0), product)
+        || !checked_sub_i64(third_minor, product, third_minor)
+        || !checked_mul_i64(value(0, 0), first_minor, first_minor)
+        || !checked_mul_i64(value(0, 1), second_minor, second_minor)
+        || !checked_mul_i64(value(0, 2), third_minor, third_minor)
+        || !checked_sub_i64(first_minor, second_minor, output)
+        || !checked_add_i64(output, third_minor, output)) {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool determinant_i64(const ColMajorMatrix3i64& matrix, int64_t& output)
+{
+    int64_t first_minor = 0;
+    int64_t second_minor = 0;
+    int64_t third_minor = 0;
+    int64_t product = 0;
+    if (!checked_mul_i64(matrix(1, 1), matrix(2, 2), first_minor)
+        || !checked_mul_i64(matrix(1, 2), matrix(2, 1), product)
+        || !checked_sub_i64(first_minor, product, first_minor)
+        || !checked_mul_i64(matrix(1, 0), matrix(2, 2), second_minor)
+        || !checked_mul_i64(matrix(1, 2), matrix(2, 0), product)
+        || !checked_sub_i64(second_minor, product, second_minor)
+        || !checked_mul_i64(matrix(1, 0), matrix(2, 1), third_minor)
+        || !checked_mul_i64(matrix(1, 1), matrix(2, 0), product)
+        || !checked_sub_i64(third_minor, product, third_minor)
+        || !checked_mul_i64(matrix(0, 0), first_minor, first_minor)
+        || !checked_mul_i64(matrix(0, 1), second_minor, second_minor)
+        || !checked_mul_i64(matrix(0, 2), third_minor, third_minor)
+        || !checked_sub_i64(first_minor, second_minor, output)
+        || !checked_add_i64(output, third_minor, output)) {
+        return false;
+    }
+    return true;
+}
+
+void ext_gcd(int64_t h, int64_t k, int64_t& u, int64_t& v, int64_t& g)
+{
     if (k == 0) {
-        u = 1; v = 0; g = std::abs(h);
-        if (h < 0) u = -1;
+        u = h < 0 ? -1 : 1;
+        v = 0;
+        g = std::abs(h);
         return;
     }
-    int u1, v1;
+    int64_t u1 = 0;
+    int64_t v1 = 0;
     ext_gcd(k, h % k, u1, v1, g);
     u = v1;
     v = u1 - (h / k) * v1;
 }
 
-} // namespace
-
-/// Compute surface-oriented transformation matrix P via Diophantine equations.
-/// Properties:  det(P) = 1  (unimodular — no atom duplication or collapse)
-///   P.col(0)·G = P.col(1)·G = 0   (in-plane, G = [h,k,l])
-///   P.col(2)·G = 1                 (single interplanar step)
-/// Ref: Extended Euclidean construction for crystal surface basis.
-[[nodiscard]] Eigen::Matrix3i get_surface_basis(
-    const Eigen::Ref<const Eigen::Matrix3d>& lattice, int h, int k, int l)
+[[nodiscard]] bool try_get_surface_basis(
+    const ColMajorMatrix3d& lattice, int64_t h, int64_t k, int64_t l,
+    ColMajorMatrix3i& output)
 {
-    int g_all = gcd(gcd(std::abs(h), std::abs(k)), std::abs(l));
-    if (g_all > 0) { h /= g_all; k /= g_all; l /= g_all; }
+    if (!lattice.allFinite() || (h == 0 && k == 0 && l == 0)) return false;
+    const double lattice_determinant = lattice.determinant();
+    if (!std::isfinite(lattice_determinant) || lattice_determinant == 0.0) return false;
 
-    Eigen::Vector3i v1, v2, v3;
+    const int64_t g_all = std::gcd(std::gcd(std::abs(h), std::abs(k)), std::abs(l));
+    h /= g_all;
+    k /= g_all;
+    l /= g_all;
 
-    int y_kl = 0, z_kl = 0, g_kl = 0;
-    ext_gcd(k, l, y_kl, z_kl, g_kl);  // k·y + l·z = g_kl
+    Vector3i64 v1;
+    Vector3i64 v2;
+    Vector3i64 v3;
+    int64_t y_kl = 0;
+    int64_t z_kl = 0;
+    int64_t g_kl = 0;
+    ext_gcd(k, l, y_kl, z_kl, g_kl);
 
     if (g_kl == 0) {
-        // k = l = 0  →  surface normal ∥ â₁,  h = ±1 after coprime reduction
-        v1 = {0, 1, 0};
-        v2 = {0, 0, 1};
-        v3 = {(h > 0 ? 1 : -1), 0, 0};
+        v1 << 0, 1, 0;
+        v2 << 0, 0, 1;
+        v3 << (h > 0 ? 1 : -1), 0, 0;
     } else {
-        int x_hg = 0, p_hg = 0, dummy = 0;
-        ext_gcd(h, g_kl, x_hg, p_hg, dummy);  // h·x + g·p = 1
-
-        v1 = {0, l / g_kl, -k / g_kl};
-        v2 = {-g_kl, h * y_kl, h * z_kl};
-        v3 = {x_hg, p_hg * y_kl, p_hg * z_kl};
+        int64_t x_hg = 0;
+        int64_t p_hg = 0;
+        int64_t unused = 0;
+        ext_gcd(h, g_kl, x_hg, p_hg, unused);
+        int64_t hy = 0;
+        int64_t hz = 0;
+        int64_t py = 0;
+        int64_t pz = 0;
+        if (!checked_mul_i64(h, y_kl, hy)
+            || !checked_mul_i64(h, z_kl, hz)
+            || !checked_mul_i64(p_hg, y_kl, py)
+            || !checked_mul_i64(p_hg, z_kl, pz)) {
+            return false;
+        }
+        v1 << 0, l / g_kl, -k / g_kl;
+        v2 << -g_kl, hy, hz;
+        v3 << x_hg, py, pz;
     }
 
-    // 2D Gauss reduction: shorten in-plane vectors v1, v2 using lattice metric
-    for (int iter = 0; iter < 20; ++iter) {
+    for (int iteration = 0; iteration < 20; ++iteration) {
         Eigen::Vector3d c1 = lattice * v1.cast<double>();
         Eigen::Vector3d c2 = lattice * v2.cast<double>();
-        if (c2.squaredNorm() < c1.squaredNorm()) { std::swap(v1, v2); std::swap(c1, c2); }
-        int n = static_cast<int>(std::round(c1.dot(c2) / c1.squaredNorm()));
-        if (n == 0) break;
-        v2 -= n * v1;
+        if (!c1.allFinite() || !c2.allFinite()) return false;
+        if (c2.squaredNorm() < c1.squaredNorm()) {
+            std::swap(v1, v2);
+            std::swap(c1, c2);
+        }
+        const double denominator = c1.squaredNorm();
+        if (!std::isfinite(denominator) || denominator <= 0.0) return false;
+        int64_t reduction = 0;
+        if (!checked_round_i64(c1.dot(c2) / denominator, reduction)) return false;
+        if (reduction == 0) break;
+        if (!subtract_scaled(v2, reduction, v1)) return false;
     }
 
-    // Reduce v3 inclination: project out in-plane components
-    {
-        Eigen::Vector3d c1 = lattice * v1.cast<double>();
-        Eigen::Vector3d c2 = lattice * v2.cast<double>();
-        Eigen::Vector3d c3 = lattice * v3.cast<double>();
-        int p1 = (c1.squaredNorm() > 1e-12)
-            ? static_cast<int>(std::round(c3.dot(c1) / c1.squaredNorm())) : 0;
-        int p2 = (c2.squaredNorm() > 1e-12)
-            ? static_cast<int>(std::round(c3.dot(c2) / c2.squaredNorm())) : 0;
-        v3 -= p1 * v1 + p2 * v2;
+    Eigen::Vector3d c1 = lattice * v1.cast<double>();
+    Eigen::Vector3d c2 = lattice * v2.cast<double>();
+    Eigen::Vector3d c3 = lattice * v3.cast<double>();
+    if (!c1.allFinite() || !c2.allFinite() || !c3.allFinite()) return false;
+    const double c1_norm = c1.squaredNorm();
+    const double c2_norm = c2.squaredNorm();
+    int64_t p1 = 0;
+    int64_t p2 = 0;
+    if (c1_norm > 1e-12 && !checked_round_i64(c3.dot(c1) / c1_norm, p1)) return false;
+    if (c2_norm > 1e-12 && !checked_round_i64(c3.dot(c2) / c2_norm, p2)) return false;
+    if (!subtract_scaled(v3, p1, v1) || !subtract_scaled(v3, p2, v2)) return false;
+
+    ColMajorMatrix3i64 basis;
+    basis.col(0) = v1;
+    basis.col(1) = v2;
+    basis.col(2) = v3;
+    int64_t determinant = 0;
+    if (!determinant_i64(basis, determinant)) return false;
+    if (determinant == -1) {
+        for (int row = 0; row < 3; ++row) {
+            if (basis(row, 0) == std::numeric_limits<int64_t>::min()) return false;
+            basis(row, 0) = -basis(row, 0);
+        }
+        determinant = 1;
+    }
+    if (determinant != 1) return false;
+
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            const int64_t value = basis(row, column);
+            if (value < std::numeric_limits<int>::min()
+                || value > std::numeric_limits<int>::max()) {
+                return false;
+            }
+            output(row, column) = static_cast<int>(value);
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool valid_miller_indices(const int32_t* miller)
+{
+    const auto h = static_cast<int64_t>(miller[0]);
+    const auto k = static_cast<int64_t>(miller[1]);
+    const auto l = static_cast<int64_t>(miller[2]);
+    return (h != 0 || k != 0 || l != 0)
+        && std::abs(h) <= MAX_MILLER_INDEX_ABS
+        && std::abs(k) <= MAX_MILLER_INDEX_ABS
+        && std::abs(l) <= MAX_MILLER_INDEX_ABS;
+}
+
+[[nodiscard]] bool make_supercell_plan(
+    const int32_t* expansion, size_t n_atoms, size_t output_atoms,
+    SupercellPlan& output)
+{
+    if (n_atoms == 0 || output_atoms == 0 || output_atoms > MAX_STRUCTURAL_ATOMS) {
+        return false;
     }
 
-    Eigen::Matrix3i P;
-    P.col(0) = v1;
-    P.col(1) = v2;
-    P.col(2) = v3;
-
-    if (P.determinant() < 0) {
-        P.col(0) = -P.col(0);
+    size_t enumeration_width = 1;
+    for (int row = 0; row < 3; ++row) {
+        int64_t minimum = 0;
+        int64_t maximum = 0;
+        for (int column = 0; column < 3; ++column) {
+            const int64_t value = expansion[column * 3 + row];
+            if (!checked_add_i64(minimum, std::min(value, int64_t{0}), minimum)
+                || !checked_add_i64(maximum, std::max(value, int64_t{0}), maximum)) {
+                return false;
+            }
+        }
+        if (minimum < static_cast<int64_t>(std::numeric_limits<int>::min()) + 1
+            || maximum > static_cast<int64_t>(std::numeric_limits<int>::max()) - 2) {
+            return false;
+        }
+        int64_t span = 0;
+        if (!checked_sub_i64(maximum, minimum, span)
+            || !checked_add_i64(span, 3, span)
+            || span <= 0) {
+            return false;
+        }
+        size_t width = static_cast<size_t>(span);
+        if (!checked_size_mul(enumeration_width, width, enumeration_width)) return false;
+        output.min_shift[row] = static_cast<int>(minimum) - 1;
+        output.max_shift[row] = static_cast<int>(maximum) + 1;
     }
 
-    return P;
+    size_t work_items = 0;
+    size_t work_limit = 0;
+    if (!checked_size_mul(n_atoms, enumeration_width, work_items)
+        || !checked_size_mul(output_atoms, MAX_ENUMERATION_OVERHEAD, work_limit)
+        || work_items > work_limit) {
+        return false;
+    }
+    output.output_atoms = output_atoms;
+    return true;
+}
+
+[[nodiscard]] bool supercell_output_atoms(
+    const int32_t* expansion, size_t n_atoms, size_t& output)
+{
+    if (expansion == nullptr || n_atoms == 0) return false;
+    const ColMajorMatrix3i matrix = Eigen::Map<const ColMajorMatrix3i>(expansion);
+    int64_t determinant = 0;
+    if (!determinant_i64(matrix, determinant)
+        || determinant <= 0) {
+        return false;
+    }
+    const auto copies = static_cast<size_t>(determinant);
+    return checked_size_mul(n_atoms, copies, output) && output != 0;
+}
+
+[[nodiscard]] bool make_slab_plan(
+    const ColMajorMatrix3d& lattice, const int32_t* miller,
+    int n_layers, size_t n_atoms, SupercellPlan& plan,
+    ColMajorMatrix3i& expansion)
+{
+    if (!valid_miller_indices(miller) || n_layers <= 0) return false;
+    size_t output_atoms = 0;
+    if (!checked_size_mul(n_atoms, static_cast<size_t>(n_layers), output_atoms)
+        || output_atoms > MAX_STRUCTURAL_ATOMS) {
+        return false;
+    }
+
+    ColMajorMatrix3i surface_basis;
+    if (!try_get_surface_basis(
+            lattice, miller[0], miller[1], miller[2], surface_basis)) {
+        return false;
+    }
+    expansion = surface_basis;
+    for (int row = 0; row < 3; ++row) {
+        int64_t scaled = 0;
+        if (!checked_mul_i64(surface_basis(row, 2), n_layers, scaled)
+            || scaled < std::numeric_limits<int>::min()
+            || scaled > std::numeric_limits<int>::max()) {
+            return false;
+        }
+        expansion(row, 2) = static_cast<int>(scaled);
+    }
+    if (!make_supercell_plan(expansion.data(), n_atoms, output_atoms, plan)) return false;
+    int64_t determinant = 0;
+    return determinant_i64(expansion, determinant) && determinant == n_layers;
+}
+
+}
+
+[[nodiscard]] int get_supercell_size(size_t n_atoms, const int32_t* expansion) {
+    size_t output_atoms = 0;
+    if (!supercell_output_atoms(expansion, n_atoms, output_atoms)) return 0;
+    const auto max_output = static_cast<size_t>(std::numeric_limits<int>::max());
+    return output_atoms <= max_output ? static_cast<int>(output_atoms) : 0;
+}
+
+[[nodiscard]] int build_supercell_checked(
+    const double* lattice,
+    const double* positions,
+    const int* types,
+    size_t n_atoms,
+    const int32_t* expansion,
+    size_t output_capacity,
+    double* out_lattice,
+    double* out_positions,
+    int* out_types
+) {
+    try {
+        if (lattice == nullptr || positions == nullptr || types == nullptr
+            || expansion == nullptr || out_lattice == nullptr
+            || out_positions == nullptr || out_types == nullptr) {
+            return 0;
+        }
+        size_t output_atoms = 0;
+        if (!supercell_output_atoms(expansion, n_atoms, output_atoms)
+            || output_atoms > output_capacity) {
+            return 0;
+        }
+        SupercellPlan plan;
+        if (!make_supercell_plan(expansion, n_atoms, output_atoms, plan)) return 0;
+
+        Eigen::Map<const ColMajorMatrix3d> L(lattice);
+        Eigen::Map<const ColMajorMatrix3i> P(expansion);
+        if (!L.allFinite()) return 0;
+        const ColMajorMatrix3d p_double = P.cast<double>();
+        const Eigen::FullPivLU<ColMajorMatrix3d> p_lu(p_double);
+        if (!p_lu.isInvertible()) return 0;
+
+        size_t out_idx = 0;
+        for (size_t i = 0; i < n_atoms; ++i) {
+            Eigen::Vector3d f(positions[3*i], positions[3*i+1], positions[3*i+2]);
+            if (!f.allFinite()) return 0;
+            const int type = types[i];
+            for (int nx = plan.min_shift[0]; nx <= plan.max_shift[0]; ++nx) {
+                for (int ny = plan.min_shift[1]; ny <= plan.max_shift[1]; ++ny) {
+                    for (int nz = plan.min_shift[2]; nz <= plan.max_shift[2]; ++nz) {
+                        Eigen::Vector3d shift(nx, ny, nz);
+                        Eigen::Vector3d f_new = p_lu.solve(f + shift);
+                        if (!f_new.allFinite()) return 0;
+                        const double eps = 1e-5;
+                        if (f_new.x() >= -eps && f_new.x() < 1.0 - eps &&
+                            f_new.y() >= -eps && f_new.y() < 1.0 - eps &&
+                            f_new.z() >= -eps && f_new.z() < 1.0 - eps) {
+                            if (out_idx >= plan.output_atoms) return 0;
+                            f_new.x() -= std::floor(f_new.x());
+                            f_new.y() -= std::floor(f_new.y());
+                            f_new.z() -= std::floor(f_new.z());
+                            out_positions[out_idx * 3] = f_new.x();
+                            out_positions[out_idx * 3 + 1] = f_new.y();
+                            out_positions[out_idx * 3 + 2] = f_new.z();
+                            out_types[out_idx] = type;
+                            ++out_idx;
+                        }
+                    }
+                }
+            }
+        }
+        if (out_idx != plan.output_atoms) return 0;
+        const ColMajorMatrix3d output_lattice = L * p_double;
+        if (!output_lattice.allFinite()) return 0;
+        Eigen::Map<ColMajorMatrix3d> L_out(out_lattice);
+        L_out = output_lattice;
+        return static_cast<int>(out_idx);
+    } catch (...) {
+        return 0;
+    }
+}
+
+void build_supercell(
+    const double* lattice, const double* positions,
+    const int* types, size_t n_atoms, const int32_t* expansion,
+    double* out_lattice, double* out_positions, int* out_types)
+{
+    const int expected = get_supercell_size(n_atoms, expansion);
+    if (expected <= 0) return;
+    static_cast<void>(build_supercell_checked(
+        lattice, positions, types, n_atoms, expansion,
+        static_cast<size_t>(expected), out_lattice, out_positions, out_types));
+}
+
+[[nodiscard]] bool get_surface_basis(
+    const Eigen::Ref<const ColMajorMatrix3d>& lattice, int h, int k, int l,
+    ColMajorMatrix3i& output)
+{
+    return try_get_surface_basis(lattice, h, k, l, output);
 }
 
 int get_slab_size(
@@ -317,15 +628,13 @@ int get_slab_size(
     double vacuum_A,
     size_t n_atoms
 ) {
-    if (layers <= 0) return 0;
-    
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
-    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
-    
-    Eigen::Matrix3i exp_mat = P;
-    exp_mat.col(2) *= layers;
-    
-    return get_supercell_size(n_atoms, exp_mat.data());
+    (void)vacuum_A;
+    if (lattice == nullptr || miller == nullptr) return 0;
+    Eigen::Map<const ColMajorMatrix3d> lattice_matrix(lattice);
+    SupercellPlan plan;
+    ColMajorMatrix3i expansion;
+    if (!make_slab_plan(lattice_matrix, miller, layers, n_atoms, plan, expansion)) return 0;
+    return static_cast<int>(plan.output_atoms);
 }
 
 void build_slab(
@@ -340,22 +649,29 @@ void build_slab(
     double* out_positions,
     int* out_types
 ) {
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
-    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
-    Eigen::Matrix3i exp_mat = P;
-    exp_mat.col(2) *= layers;
-    
-    build_supercell(lattice, positions, types, n_atoms, exp_mat.data(), out_lattice, out_positions, out_types);
-    
-    Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
+    if (lattice == nullptr || positions == nullptr || types == nullptr
+        || miller == nullptr || out_lattice == nullptr
+        || out_positions == nullptr || out_types == nullptr) {
+        return;
+    }
+    Eigen::Map<const ColMajorMatrix3d> lattice_matrix(lattice);
+    SupercellPlan plan;
+    ColMajorMatrix3i expansion;
+    if (!make_slab_plan(lattice_matrix, miller, layers, n_atoms, plan, expansion)) return;
+    const int actual_atoms = build_supercell_checked(
+        lattice, positions, types, n_atoms, expansion.data(), plan.output_atoms,
+        out_lattice, out_positions, out_types);
+    if (actual_atoms <= 0 || static_cast<size_t>(actual_atoms) != plan.output_atoms) return;
+
+    Eigen::Map<ColMajorMatrix3d> L_out(out_lattice);
     Eigen::Vector3d c_vec = L_out.col(2);
     double c_len = c_vec.norm();
-    
+    if (!std::isfinite(c_len) || c_len <= 0.0) return;
     double scale = (c_len + vacuum_A) / c_len;
+    if (!std::isfinite(scale) || scale <= 0.0) return;
     L_out.col(2) *= scale;
-    
-    int total_new_atoms = n_atoms * std::abs(exp_mat.determinant());
-    for (int i = 0; i < total_new_atoms; ++i) {
+
+    for (size_t i = 0; i < plan.output_atoms; ++i) {
         out_positions[3*i+2] /= scale;
         out_positions[3*i+2] += (vacuum_A / 2.0) / (c_len + vacuum_A);
     }
@@ -365,143 +681,166 @@ void build_slab(
     const double* lattice, const int32_t* miller,
     int n_layers, size_t n_atoms)
 {
-    if (n_layers <= 0) return 0;
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
-    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
-    Eigen::Matrix3i exp_mat = P;
-    exp_mat.col(2) *= n_layers;
-    return get_supercell_size(n_atoms, exp_mat.data());
+    if (lattice == nullptr || miller == nullptr) return 0;
+    Eigen::Map<const ColMajorMatrix3d> L(lattice);
+    SupercellPlan plan;
+    ColMajorMatrix3i expansion;
+    if (!make_slab_plan(L, miller, n_layers, n_atoms, plan, expansion)) return 0;
+    return static_cast<int>(plan.output_atoms);
 }
 
 [[nodiscard]] int build_slab_v2(
     const double* lattice, const double* positions,
     const int* types, size_t n_atoms,
     const int32_t* miller, int n_layers, double vacuum_a,
-    double* out_lattice, double* out_positions, int* out_types)
+    size_t output_capacity, double* out_lattice,
+    double* out_positions, int* out_types) noexcept
 {
-    vacuum_a = std::max(0.0, vacuum_a);
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
-    Eigen::Matrix3i P = get_surface_basis(L, miller[0], miller[1], miller[2]);
-    Eigen::Matrix3i exp_mat = P;
-    exp_mat.col(2) *= n_layers;
-    
-    build_supercell(lattice, positions, types, n_atoms, exp_mat.data(), out_lattice, out_positions, out_types);
-    
-    Eigen::Map<Eigen::Matrix3d> L_out(out_lattice);
-    int total_new_atoms = n_atoms * std::abs(exp_mat.determinant());
-    
-    std::vector<int> indices(total_new_atoms);
-    std::iota(indices.begin(), indices.end(), 0);
-    
-    std::vector<Eigen::Vector3d> cart_pos(total_new_atoms);
-    for (int i = 0; i < total_new_atoms; ++i) {
-        Eigen::Vector3d f(out_positions[3*i], out_positions[3*i+1], out_positions[3*i+2]);
-        cart_pos[i] = L_out * f;
-    }
+    try {
+        if (lattice == nullptr || positions == nullptr || types == nullptr
+            || miller == nullptr || out_lattice == nullptr
+            || out_positions == nullptr || out_types == nullptr
+            || !std::isfinite(vacuum_a) || vacuum_a < 0.0) {
+            return 0;
+        }
+        Eigen::Map<const ColMajorMatrix3d> L(lattice);
+        SupercellPlan plan;
+        ColMajorMatrix3i expansion;
+        if (!make_slab_plan(L, miller, n_layers, n_atoms, plan, expansion)) return 0;
+        if (plan.output_atoms > output_capacity) return 0;
+        const int total_new_atoms = build_supercell_checked(
+            lattice, positions, types, n_atoms, expansion.data(), output_capacity,
+            out_lattice, out_positions, out_types);
+        if (total_new_atoms <= 0
+            || static_cast<size_t>(total_new_atoms) != plan.output_atoms) {
+            return 0;
+        }
 
-    std::sort(indices.begin(), indices.end(), [&](int a, int b) {
-        long long ax = std::round(cart_pos[a].x() * 1e4);
-        long long bx = std::round(cart_pos[b].x() * 1e4);
-        if (ax != bx) return ax < bx;
-        long long ay = std::round(cart_pos[a].y() * 1e4);
-        long long by = std::round(cart_pos[b].y() * 1e4);
-        if (ay != by) return ay < by;
-        long long az = std::round(cart_pos[a].z() * 1e4);
-        long long bz = std::round(cart_pos[b].z() * 1e4);
-        return az < bz;
-    });
+        Eigen::Map<ColMajorMatrix3d> L_out(out_lattice);
+        if (!L_out.allFinite()) return 0;
+        std::vector<int> indices(total_new_atoms);
+        std::iota(indices.begin(), indices.end(), 0);
+        std::vector<Eigen::Vector3d> cart_pos(total_new_atoms);
+        for (int i = 0; i < total_new_atoms; ++i) {
+            const Eigen::Vector3d fractional(
+                out_positions[3 * i], out_positions[3 * i + 1], out_positions[3 * i + 2]);
+            if (!fractional.allFinite()) return 0;
+            cart_pos[i] = L_out * fractional;
+            if (!cart_pos[i].allFinite()) return 0;
+        }
 
-    std::vector<int> unique_indices;
-    unique_indices.reserve(total_new_atoms);
-    
-    for (int idx : indices) {
-        bool duplicate = false;
-        for (auto it = unique_indices.rbegin(); it != unique_indices.rend(); ++it) {
-            int u_idx = *it;
-            if (cart_pos[idx].x() - cart_pos[u_idx].x() > 1e-3) break;
-            if ((cart_pos[idx] - cart_pos[u_idx]).norm() < 1e-4) {
-                duplicate = true;
-                break;
+        std::sort(indices.begin(), indices.end(), [&](int left, int right) {
+            const Eigen::Vector3d& lhs = cart_pos[left];
+            const Eigen::Vector3d& rhs = cart_pos[right];
+            if (lhs.x() != rhs.x()) return lhs.x() < rhs.x();
+            if (lhs.y() != rhs.y()) return lhs.y() < rhs.y();
+            if (lhs.z() != rhs.z()) return lhs.z() < rhs.z();
+            return left < right;
+        });
+
+        std::vector<int> unique_indices;
+        unique_indices.reserve(total_new_atoms);
+        for (const int index : indices) {
+            bool duplicate = false;
+            for (auto it = unique_indices.rbegin(); it != unique_indices.rend(); ++it) {
+                const int unique_index = *it;
+                if (cart_pos[index].x() - cart_pos[unique_index].x() > 1e-3) break;
+                const double distance = (cart_pos[index] - cart_pos[unique_index]).stableNorm();
+                if (!std::isfinite(distance)) return 0;
+                if (distance < 1e-4) {
+                    duplicate = true;
+                    break;
+                }
             }
+            if (!duplicate) unique_indices.push_back(index);
         }
-        if (!duplicate) {
-            unique_indices.push_back(idx);
+        if (unique_indices.empty()
+            || unique_indices.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+            return 0;
         }
+
+        const int n_unique = static_cast<int>(unique_indices.size());
+        std::vector<double> final_pos(static_cast<size_t>(n_unique) * 3);
+        std::vector<int> final_types(n_unique);
+        for (int i = 0; i < n_unique; ++i) {
+            const int original_index = unique_indices[i];
+            final_pos[3 * i] = out_positions[3 * original_index];
+            final_pos[3 * i + 1] = out_positions[3 * original_index + 1];
+            final_pos[3 * i + 2] = out_positions[3 * original_index + 2];
+            final_types[i] = out_types[original_index];
+        }
+        std::copy(final_pos.begin(), final_pos.end(), out_positions);
+        std::copy(final_types.begin(), final_types.end(), out_types);
+
+        const Eigen::Vector3d a_vec = L_out.col(0);
+        const Eigen::Vector3d b_vec = L_out.col(1);
+        const Eigen::Vector3d c_vec = L_out.col(2);
+        const Eigen::Vector3d normal = a_vec.cross(b_vec);
+        if (!normal.allFinite()) return 0;
+        const double normal_len = normal.stableNorm();
+        if (!std::isfinite(normal_len) || normal_len <= 0.0) return 0;
+        Eigen::Vector3d n_hat = normal / normal_len;
+        if (!n_hat.allFinite()) return 0;
+
+        double height = c_vec.dot(n_hat);
+        if (!std::isfinite(height)) return 0;
+        if (height < 0.0) {
+            n_hat = -n_hat;
+            height = -height;
+        }
+        if (!std::isfinite(height) || height <= 0.0) return 0;
+
+        const double aa = a_vec.squaredNorm();
+        const double ab = a_vec.dot(b_vec);
+        const double bb = b_vec.squaredNorm();
+        const double ac = a_vec.dot(c_vec);
+        const double bc = b_vec.dot(c_vec);
+        if (!std::isfinite(aa) || !std::isfinite(ab) || !std::isfinite(bb)
+            || !std::isfinite(ac) || !std::isfinite(bc)) {
+            return 0;
+        }
+        const double det_g = aa * bb - ab * ab;
+        if (!std::isfinite(det_g) || det_g <= 0.0) return 0;
+        const double alpha = (bb * ac - ab * bc) / det_g;
+        const double beta = (aa * bc - ab * ac) / det_g;
+        const double c_new_len = height + vacuum_a;
+        if (!std::isfinite(alpha) || !std::isfinite(beta)
+            || !std::isfinite(c_new_len) || c_new_len <= 0.0) {
+            return 0;
+        }
+
+        for (int i = 0; i < n_unique; ++i) {
+            const double fx = out_positions[3 * i];
+            const double fy = out_positions[3 * i + 1];
+            const double fz = out_positions[3 * i + 2];
+            if (!std::isfinite(fx) || !std::isfinite(fy) || !std::isfinite(fz)) return 0;
+            double nx = fx + alpha * fz;
+            double ny = fy + beta * fz;
+            const double nz = fz * height / c_new_len + vacuum_a / (2.0 * c_new_len);
+            if (!std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz)) return 0;
+            nx -= std::floor(nx);
+            ny -= std::floor(ny);
+            if (!std::isfinite(nx) || !std::isfinite(ny)) return 0;
+            out_positions[3 * i] = nx;
+            out_positions[3 * i + 1] = ny;
+            out_positions[3 * i + 2] = nz;
+        }
+
+        const Eigen::Vector3d new_c = n_hat * c_new_len;
+        if (!new_c.allFinite()) return 0;
+        L_out.col(2) = new_c;
+        Eigen::HouseholderQR<ColMajorMatrix3d> qr(L_out);
+        ColMajorMatrix3d upper = qr.matrixQR().triangularView<Eigen::Upper>();
+        if (!upper.allFinite()) return 0;
+        for (int i = 0; i < 3; ++i) {
+            if (upper(i, i) < 0.0) upper.row(i) *= -1.0;
+        }
+        if (!upper.allFinite()) return 0;
+        L_out = upper;
+        return n_unique;
+    } catch (...) {
+        return 0;
     }
-    
-    int n_unique = unique_indices.size();
-    
-    std::vector<double> final_pos(n_unique * 3);
-    std::vector<int> final_types(n_unique);
-    for (int i = 0; i < n_unique; ++i) {
-        int original_idx = unique_indices[i];
-        final_pos[3*i]   = out_positions[3*original_idx];
-        final_pos[3*i+1] = out_positions[3*original_idx+1];
-        final_pos[3*i+2] = out_positions[3*original_idx+2];
-        final_types[i]   = out_types[original_idx];
-    }
-    std::copy(final_pos.begin(), final_pos.end(), out_positions);
-    std::copy(final_types.begin(), final_types.end(), out_types);
-    
-    // --- Orthogonalize c-axis: force c ⊥ surface (α = β = 90°) ---
-    // Decompose: c_tilted = α·a + β·b + h·n̂
-    // Absorb (α, β) into fractional (x, y); replace c with h·n̂ + vacuum.
-    Eigen::Vector3d a_vec = L_out.col(0);
-    Eigen::Vector3d b_vec = L_out.col(1);
-    Eigen::Vector3d c_vec = L_out.col(2);
-
-    Eigen::Vector3d normal = a_vec.cross(b_vec);
-    double normal_len = normal.norm();
-    Eigen::Vector3d n_hat = normal / normal_len;
-
-    double height = c_vec.dot(n_hat);       // slab thickness along normal
-    if (height < 0.0) { n_hat = -n_hat; height = -height; }
-
-    // Solve Gram system for in-plane decomposition:
-    //   [|a|²   a·b ] [α]   [a·c]
-    //   [a·b   |b|² ] [β] = [b·c]
-    double aa = a_vec.squaredNorm();
-    double ab = a_vec.dot(b_vec);
-    double bb = b_vec.squaredNorm();
-    double ac = a_vec.dot(c_vec);
-    double bc = b_vec.dot(c_vec);
-    double det_G = aa * bb - ab * ab;
-    double alpha = (bb * ac - ab * bc) / det_G;
-    double beta  = (aa * bc - ab * ac) / det_G;
-
-    double c_new_len = height + vacuum_a;
-
-    for (int i = 0; i < n_unique; ++i) {
-        double fx = out_positions[3*i+0];
-        double fy = out_positions[3*i+1];
-        double fz = out_positions[3*i+2];
-
-        // Absorb c-tilt into (x, y), wrap to [0, 1)
-        double nx = fx + alpha * fz;
-        double ny = fy + beta  * fz;
-        nx -= std::floor(nx);
-        ny -= std::floor(ny);
-
-        // Scale z for vacuum and center slab in the middle
-        double nz = fz * height / c_new_len + vacuum_a / (2.0 * c_new_len);
-
-        out_positions[3*i+0] = nx;
-        out_positions[3*i+1] = ny;
-        out_positions[3*i+2] = nz;
-    }
-
-    // Set c perpendicular to surface
-    L_out.col(2) = n_hat * c_new_len;
-
-    // QR standardize to PDB convention (a‖X, b in XY, c along Z)
-    Eigen::HouseholderQR<Eigen::Matrix3d> qr(L_out);
-    Eigen::Matrix3d R = qr.matrixQR().triangularView<Eigen::Upper>();
-    for (int i = 0; i < 3; ++i) {
-        if (R(i, i) < 0.0) R.row(i) *= -1.0;
-    }
-    L_out = R;
-    
-    return n_unique;
 }
 
 [[nodiscard]] int cluster_slab_layers(
@@ -512,7 +851,7 @@ void build_slab(
 {
     if (n_atoms == 0 || max_layers == 0) return 0;
     
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Map<const ColMajorMatrix3d> L(lattice);
     double c_len = L.col(2).norm();
 
     std::vector<double> z_carts(n_atoms);
@@ -556,7 +895,7 @@ void shift_slab_termination(
 {
     if (n_atoms == 0 || target_layer_idx < 0 || target_layer_idx >= n_layers) return;
 
-    Eigen::Map<const Eigen::Matrix3d> L(lattice);
+    Eigen::Map<const ColMajorMatrix3d> L(lattice);
     double c_len = L.col(2).norm();
 
     double z_target = layer_centers[target_layer_idx];

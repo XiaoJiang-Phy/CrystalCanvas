@@ -135,6 +135,13 @@ pub fn execute_command(command: CrystalCommand, state: &mut CrystalState) -> Res
         }
         CrystalCommand::AddAtom(params) => {
             let atomic_number = element_to_atomic_number(&params.element);
+            crate::crystal_state::validate_atom_request(
+                &params.element,
+                atomic_number,
+                params.frac_pos,
+                state.num_atoms(),
+            )
+            .map_err(str::to_string)?;
             state
                 .try_add_atom(&params.element, atomic_number, params.frac_pos)
                 .map_err(|e| format!("Collision Error: {:?}", e))?;
@@ -146,11 +153,15 @@ pub fn execute_command(command: CrystalCommand, state: &mut CrystalState) -> Res
                 .map(|&x| x as usize)
                 .collect::<Vec<_>>();
             let atomic_number = element_to_atomic_number(&params.new_element);
+            if atomic_number == 0 {
+                return Err("substitute element identity is invalid".to_string());
+            }
             state.substitute_atoms(&indices, &params.new_element, atomic_number);
         }
         CrystalCommand::CleaveSlab(params) => {
-            let new_state =
-                state.generate_slab(params.miller, params.layers as i32, params.vacuum_a)?;
+            let layers = i32::try_from(params.layers)
+                .map_err(|_| "slab layers exceed the supported range".to_string())?;
+            let new_state = state.generate_slab(params.miller, layers, params.vacuum_a)?;
             *state = new_state;
         }
         CrystalCommand::MakeSupercell(params) => {

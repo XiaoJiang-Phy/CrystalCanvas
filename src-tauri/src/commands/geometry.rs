@@ -15,6 +15,8 @@ pub fn preview_slab(
     vacuum_a: f64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> IpcResult<crate::crystal_state::CrystalState> {
+    crate::crystal_state::validate_slab_request(miller, layers, vacuum_a)
+        .map_err(IpcError::invalid_argument)?;
     log::info!(
         "preview_slab: miller={:?} layers={} vacuum={}",
         miller,
@@ -83,6 +85,8 @@ pub fn apply_slab(
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
 ) -> IpcResult<()> {
+    crate::crystal_state::validate_slab_request(miller, layers, vacuum_a)
+        .map_err(IpcError::invalid_argument)?;
     log::info!(
         "apply_slab: miller={:?} layers={} vacuum={}",
         miller,
