@@ -1543,12 +1543,6 @@
       "response_type": null
     },
     {
-      "command": "get_crystal_state",
-      "file": "src/components/panels/AtomOperationsPanel.tsx",
-      "args": [],
-      "response_type": null
-    },
-    {
       "command": "get_measurement_labels_screen",
       "file": "src/components/panels/MeasurementPanel.tsx",
       "args": [
@@ -2096,8 +2090,7 @@
       "src/components/panels/BrillouinZonePanel.tsx"
     ],
     "get_crystal_state": [
-      "src/App.tsx",
-      "src/components/panels/AtomOperationsPanel.tsx"
+      "src/App.tsx"
     ],
     "get_measurement_labels_screen": [
       "src/components/panels/MeasurementPanel.tsx"

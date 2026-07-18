@@ -7,7 +7,6 @@ interface UseCameraInteractionProps {
     selectedAtoms: number[];
     updateSelection: (sel: number[] | ((prev: number[]) => number[])) => void;
     setContextMenu: (pos: { x: number, y: number } | null) => void;
-    onStateChange: () => void;
 }
 
 export function useCameraInteraction({
@@ -15,8 +14,7 @@ export function useCameraInteraction({
     interactionMode,
     selectedAtoms,
     updateSelection,
-    setContextMenu,
-    onStateChange
+    setContextMenu
 }: UseCameraInteractionProps) {
     const isDraggingCamera = useRef(false);
     const lastMousePos = useRef({ x: 0, y: 0 });
@@ -53,7 +51,6 @@ export function useCameraInteraction({
 
             if (e.buttons === 1 && interactionMode === 'move' && selectedAtoms.length > 0) {
                 safeInvoke('translate_atoms_screen', { indices: selectedAtoms, dx, dy })
-                    .then(onStateChange)
                     .catch(console.error);
             } else if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
                 safeInvoke('pan_camera', { dx, dy }).catch(console.error);
@@ -135,5 +132,5 @@ export function useCameraInteraction({
             el.removeEventListener('pointercancel', onPointerUp);
             el.removeEventListener('wheel', onWheel);
         };
-    }, [interactionMode, selectedAtoms, updateSelection, setContextMenu, onStateChange, viewportRef]);
+    }, [interactionMode, selectedAtoms, updateSelection, setContextMenu, viewportRef]);
 }

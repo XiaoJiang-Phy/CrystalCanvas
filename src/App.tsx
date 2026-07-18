@@ -115,7 +115,7 @@ function App() {
     }, [fetch_crystal_state]);
 
     // Menu and File drop event listener
-    useFileDrop({ setIsDragging, onFileLoaded: fetch_crystal_state });
+    useFileDrop({ setIsDragging });
 
     useTauriMenu({
         setShowAssistant,
@@ -124,7 +124,6 @@ function App() {
         selectedAtomsRef,
         updateSelection,
         setPromptConfig,
-        onStateChange: fetch_crystal_state,
         renderFlagsRef,
         setShowCell,
         setShowBonds,
@@ -158,8 +157,7 @@ function App() {
         interactionMode,
         selectedAtoms,
         updateSelection,
-        setContextMenu,
-        onStateChange: fetch_crystal_state
+        setContextMenu
     });
 
     const handle_context_menu = (e: React.MouseEvent) => {
@@ -240,7 +238,6 @@ function App() {
                             }}
                             onBondCountUpdate={setBondCount}
                             onActivePhononModeUpdate={setActivePhononMode}
-                            onStructureUpdate={fetch_crystal_state}
                             interactionMode={interactionMode}
                             setInteractionMode={setInteractionMode}
                         />
@@ -287,7 +284,6 @@ function App() {
                                                 atomicNumber: 0,
                                                 fractPos: [0.5, 0.5, 0.5]
                                             })
-                                                .then(fetch_crystal_state)
                                                 .catch(e => alert(e));
                                         }
                                     }
