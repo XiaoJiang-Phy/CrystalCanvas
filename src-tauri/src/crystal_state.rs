@@ -38,6 +38,46 @@ impl CrystalState {
             Err("Cartesian position cannot be represented as finite f32")
         }
     }
+
+    pub fn validate_structural_invariants(&self) -> Result<(), &'static str> {
+        let atom_count = self.labels.len();
+        if atom_count > MAX_STRUCTURAL_ATOMS {
+            return Err("structure exceeds the atom limit");
+        }
+        if self.elements.len() != atom_count
+            || self.fract_x.len() != atom_count
+            || self.fract_y.len() != atom_count
+            || self.fract_z.len() != atom_count
+            || self.occupancies.len() != atom_count
+            || self.atomic_numbers.len() != atom_count
+            || self.cart_positions.len() != atom_count
+        {
+            return Err("structural arrays must have identical lengths");
+        }
+        if self.intrinsic_sites != atom_count {
+            return Err("intrinsic site count must match structural arrays");
+        }
+        validate_lattice_parameters(
+            self.cell_a,
+            self.cell_b,
+            self.cell_c,
+            self.cell_alpha,
+            self.cell_beta,
+            self.cell_gamma,
+        )?;
+        for index in 0..atom_count {
+            validate_fractional_position([self.fract_x[index], self.fract_y[index], self.fract_z[index]])?;
+            if !self.occupancies[index].is_finite()
+                || !(0.0..=1.0).contains(&self.occupancies[index])
+            {
+                return Err("occupancy must be finite and between zero and one");
+            }
+            if self.atomic_numbers[index] == 0 {
+                return Err("atomic number must be non-zero");
+            }
+        }
+        self.validate_cartesian_positions()
+    }
 }
 
 pub fn validate_lattice_parameters(

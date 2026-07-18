@@ -146,6 +146,9 @@ pub fn load_volumetric_file(
             }
         }
     };
+    new_state
+        .validate_structural_invariants()
+        .map_err(IpcError::parse)?;
     
     let vol_data = new_state
         .volumetric_data

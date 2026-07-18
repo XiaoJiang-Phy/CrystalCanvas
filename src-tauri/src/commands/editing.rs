@@ -199,6 +199,10 @@ pub fn translate_atoms_screen(
     let rollback = cs
         .translate_atoms_cartesian(&indices, translation)
         .map_err(|_| IpcError::render("unable to allocate atom translation rollback"))?;
+    if let Err(error) = cs.validate_structural_invariants() {
+        cs.rollback_atom_translation(rollback);
+        return Err(IpcError::invalid_argument(error));
+    }
     let atom_scene = match crate::wannier::build_atoms_with_ghosts(&cs, &settings)
         .and_then(crate::renderer::instance::prepare_atom_scene)
     {
@@ -338,6 +342,12 @@ pub fn undo(
     };
     let pending_version = crate::transaction::next_version(&cs)?;
     candidate.swap_structural_fields(&mut cs);
+    if let Err(error) = cs.validate_structural_invariants() {
+        if let Some(candidate) = u_stack.undo_candidate_mut() {
+            candidate.swap_structural_fields(&mut cs);
+        }
+        return Err(IpcError::invalid_argument(error));
+    }
 
     let atom_scene = match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
         .and_then(crate::renderer::instance::prepare_atom_scene)
@@ -418,6 +428,12 @@ pub fn redo(
     };
     let pending_version = crate::transaction::next_version(&cs)?;
     candidate.swap_structural_fields(&mut cs);
+    if let Err(error) = cs.validate_structural_invariants() {
+        if let Some(candidate) = u_stack.redo_candidate_mut() {
+            candidate.swap_structural_fields(&mut cs);
+        }
+        return Err(IpcError::invalid_argument(error));
+    }
 
     let atom_scene = match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
         .and_then(crate::renderer::instance::prepare_atom_scene)
