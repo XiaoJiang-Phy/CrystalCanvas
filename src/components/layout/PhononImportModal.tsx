@@ -1,95 +1,186 @@
-import React, { useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { safeDialogOpen } from '../../utils/tauri-mock';
 
 interface PhononImportModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSubmit: (paths: { scfIn: string, scfOut: string, modes: string, axsf: string }) => void;
+    onSubmit: (paths: { scfIn: string; scfOut: string; modes: string; axsf: string }) => void | Promise<void>;
 }
 
 export const PhononImportModal: React.FC<PhononImportModalProps> = ({ isOpen, onClose, onSubmit }) => {
+    const titleId = useId();
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const previousFocusRef = useRef<HTMLElement | null>(null);
+    const onCloseRef = useRef(onClose);
+    const busyRef = useRef(false);
     const [scfIn, setScfIn] = useState('');
     const [scfOut, setScfOut] = useState('');
     const [modes, setModes] = useState('');
     const [axsf, setAxsf] = useState('');
+    const [selectingField, setSelectingField] = useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    onCloseRef.current = onClose;
+    busyRef.current = selectingField !== null || isSubmitting;
+
+    useEffect(() => {
+        if (!isOpen) return;
+        previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        setScfIn('');
+        setScfOut('');
+        setModes('');
+        setAxsf('');
+        setError(null);
+        dialogRef.current?.focus();
+
+        const handleKeydown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && !busyRef.current) onCloseRef.current();
+            if (event.key === 'Tab') {
+                const focusable = dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+                if (!focusable || focusable.length === 0) {
+                    event.preventDefault();
+                    return;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+        return () => {
+            document.removeEventListener('keydown', handleKeydown);
+            previousFocusRef.current?.focus();
+        };
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
-    const handleSelectFile = async (setter: (val: string) => void, title: string, extensions: string[]) => {
-        const path = await safeDialogOpen({
-            title,
-            filters: [{ name: title, extensions }],
-            multiple: false,
-            directory: false
-        });
-        if (path && typeof path === 'string') {
-            setter(path);
+    const handleSelectFile = async (field: string, setter: (value: string) => void, title: string, extensions: string[]) => {
+        if (busyRef.current) return;
+        setError(null);
+        setSelectingField(field);
+        try {
+            const path = await safeDialogOpen({
+                title,
+                filters: [{ name: title, extensions }],
+                multiple: false,
+                directory: false,
+            });
+            if (path && typeof path === 'string') {
+                setter(path);
+            }
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : `Unable to select ${title}.`);
+        } finally {
+            setSelectingField(null);
         }
     };
 
+    const canSubmit = Boolean(axsf || (scfIn && scfOut && modes));
+    const isBusy = selectingField !== null || isSubmitting;
+
+    const handleSubmit = async () => {
+        if (!canSubmit || isBusy) return;
+        setError(null);
+        setIsSubmitting(true);
+        try {
+            await onSubmit({ scfIn, scfOut, modes, axsf });
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : 'Unable to load the selected phonon data.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const fileRow = (
+        id: string,
+        label: string,
+        value: string,
+        setter: (value: string) => void,
+        title: string,
+        extensions: string[],
+    ) => (
+        <div className="space-y-1">
+            <label htmlFor={id} className="text-xs font-medium text-[var(--cc-text)]">{label}</label>
+            <div className="flex gap-2">
+                <input
+                    id={id}
+                    type="text"
+                    readOnly
+                    value={value}
+                    placeholder={`Select ${label}…`}
+                    className="min-w-0 flex-1 rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-xs text-[var(--cc-text)] outline-none"
+                />
+                <button
+                    type="button"
+                    onClick={() => void handleSelectFile(id, setter, title, extensions)}
+                    disabled={isBusy}
+                    aria-busy={selectingField === id}
+                    className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                    {selectingField === id ? 'Selecting…' : 'Browse'}
+                </button>
+            </div>
+        </div>
+    );
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 pointer-events-auto">
-            <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 w-[500px] overflow-hidden">
-                <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
-                    <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Load Phonon Data (Quantum ESPRESSO)</h3>
-                    <p className="text-xs text-slate-500 mt-1">Select the required files to reconstruct the structure and modes.</p>
-                </div>
+        <div className="pointer-events-auto fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+            <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                aria-busy={isBusy}
+                tabIndex={-1}
+                className="w-full max-w-lg overflow-hidden rounded border border-[var(--cc-border)] bg-[var(--cc-chrome)] text-[var(--cc-text)] shadow-sm outline-none"
+            >
+                <header className="border-b border-[var(--cc-border)] px-4 py-3">
+                    <h2 id={titleId} className="text-sm font-semibold">Load Phonon Data</h2>
+                    <p className="mt-1 text-xs text-[var(--cc-muted)]">Select a Quantum ESPRESSO file set or one AXSF animation file.</p>
+                </header>
 
-                <div className="px-5 py-5 space-y-4">
-                    <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300">scf.in (Input)</label>
-                        <div className="flex gap-2">
-                            <input type="text" readOnly value={scfIn} placeholder="Select scf.in file..." className="flex-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-3 text-xs dark:text-slate-300" />
-                            <button onClick={() => handleSelectFile(setScfIn, "Select scf.in", ["in", "txt", ""])} className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-xs rounded transition-colors text-slate-800 dark:text-slate-200">Browse</button>
-                        </div>
+                <div className="max-h-[65vh] space-y-4 overflow-y-auto p-4">
+                    {fileRow('phonon-scf-in', 'scf.in', scfIn, setScfIn, 'Select scf.in', ['in', 'txt', ''])}
+                    {fileRow('phonon-scf-out', 'scf.out', scfOut, setScfOut, 'Select scf.out', ['out', 'txt', ''])}
+                    {fileRow('phonon-modes', 'matdyn.modes or dynmat.dat', modes, setModes, 'Select modes file', ['modes', 'dat', 'mold', ''])}
+
+                    <div className="flex items-center gap-3" aria-hidden="true">
+                        <div className="h-px flex-1 bg-[var(--cc-border)]" />
+                        <span className="text-[10px] font-medium uppercase text-[var(--cc-muted)]">or</span>
+                        <div className="h-px flex-1 bg-[var(--cc-border)]" />
                     </div>
 
-                    <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300">scf.out (Output)</label>
-                        <div className="flex gap-2">
-                            <input type="text" readOnly value={scfOut} placeholder="Select scf.out file..." className="flex-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-3 text-xs dark:text-slate-300" />
-                            <button onClick={() => handleSelectFile(setScfOut, "Select scf.out", ["out", "txt", ""])} className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-xs rounded transition-colors text-slate-800 dark:text-slate-200">Browse</button>
-                        </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300">matdyn.modes or dynmat.dat</label>
-                        <div className="flex gap-2">
-                            <input type="text" readOnly value={modes} placeholder="Select modes file..." className="flex-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-3 text-xs dark:text-slate-300" />
-                            <button onClick={() => handleSelectFile(setModes, "Select modes file", ["modes", "dat", "mold", ""])} className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-xs rounded transition-colors text-slate-800 dark:text-slate-200">Browse</button>
-                        </div>
-                    </div>
+                    {fileRow('phonon-axsf', 'AXSF animation file', axsf, setAxsf, 'Select AXSF file', ['axsf', ''])}
+                    <p className="text-[11px] text-[var(--cc-muted)]">When AXSF is selected, the Quantum ESPRESSO inputs are ignored.</p>
+                    {error && <div role="alert" className="rounded border border-[var(--cc-danger)] bg-[var(--cc-panel)] px-2 py-1.5 text-xs">{error}</div>}
                 </div>
 
-                <div className="flex items-center gap-4 py-2">
-                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700"></div>
-                    <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">OR</span>
-                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700"></div>
-                </div>
-
-                <div className="px-5 pb-5 space-y-4">
-                    <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300">AXSF Animation File</label>
-                        <div className="flex gap-2">
-                            <input type="text" readOnly value={axsf} placeholder="Select .axsf file..." className="flex-1 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-3 text-xs dark:text-slate-300" />
-                            <button onClick={() => handleSelectFile(setAxsf, "Select AXSF file", ["axsf", ""])} className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-xs rounded transition-colors text-slate-800 dark:text-slate-200">Browse</button>
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-1">If an AXSF file is provided, the inputs above will be ignored.</p>
-                    </div>
-                </div>
-
-                <div className="px-5 py-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/30">
-                    <button onClick={onClose} className="px-4 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-medium transition-colors">
+                <footer className="flex justify-end gap-2 border-t border-[var(--cc-border)] bg-[var(--cc-panel)] px-4 py-3">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={isBusy}
+                        className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
                         Cancel
                     </button>
                     <button
-                        onClick={() => onSubmit({ scfIn, scfOut, modes, axsf })}
-                        disabled={!axsf && (!scfIn || !scfOut || !modes)}
-                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors shadow-sm"
+                        type="button"
+                        onClick={() => void handleSubmit()}
+                        disabled={!canSubmit || isBusy}
+                        className="rounded border border-[var(--cc-accent)] bg-[var(--cc-accent)] px-3 py-1.5 text-xs font-medium text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        Load Data
+                        {isSubmitting ? 'Loading…' : 'Load Data'}
                     </button>
-                </div>
+                </footer>
             </div>
         </div>
     );

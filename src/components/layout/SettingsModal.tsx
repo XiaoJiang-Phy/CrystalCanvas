@@ -1,18 +1,10 @@
-// [Overview: Modal dialog for configuring global rendering and visual settings.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import React, { useState, useEffect } from 'react';
-import { X, Settings as SettingsIcon, Sliders, Palette, Zap } from 'lucide-react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Palette, Settings as SettingsIcon, Sliders, X, Zap } from 'lucide-react';
+import { IpcException, type AppSettingsDto, type IpcError } from '../../ipc/contracts';
 import { cn } from '../../utils/cn';
 import { safeInvoke } from '../../utils/tauri-mock';
-
-interface AppSettings {
-    atom_scale: number;
-    bond_tolerance: number;
-    bond_radius: number;
-    bond_color: [number, number, number, number];
-    custom_atom_colors: Record<string, [number, number, number, number]>;
-}
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -21,41 +13,123 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, elements }) => {
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const titleId = useId();
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const previousFocusRef = useRef<HTMLElement | null>(null);
+    const onCloseRef = useRef(onClose);
+    const busyRef = useRef(false);
+    const [settings, setSettings] = useState<AppSettingsDto | null>(null);
     const [activeTab, setActiveTab] = useState<'general' | 'bonds' | 'elements'>('general');
+    const [isLoading, setIsLoading] = useState(false);
+    const [activeOperation, setActiveOperation] = useState<'apply' | 'ok' | null>(null);
+    const [error, setError] = useState<IpcError | null>(null);
+
+    const isSaving = activeOperation !== null;
+    const isBusy = isLoading || isSaving;
+    onCloseRef.current = onClose;
+    busyRef.current = isSaving;
+
+    const setModalError = (cause: unknown, fallback: string) => {
+        if (cause instanceof IpcException) {
+            setError({ code: cause.code, message: cause.message, recoverable: cause.recoverable });
+            return;
+        }
+        setError({ code: 'internal_error', message: fallback, recoverable: false });
+    };
 
     useEffect(() => {
-        if (isOpen) {
-            safeInvoke('get_settings')
-                .then(s => s && setSettings(s))
-                .catch(console.error);
-        }
+        if (!isOpen) return;
+        previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        dialogRef.current?.focus();
+
+        const handleKeydown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && !busyRef.current) onCloseRef.current();
+            if (event.key === 'Tab') {
+                const focusable = dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+                if (!focusable || focusable.length === 0) {
+                    event.preventDefault();
+                    return;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+        return () => {
+            document.removeEventListener('keydown', handleKeydown);
+            previousFocusRef.current?.focus();
+        };
     }, [isOpen]);
 
-    if (!isOpen || !settings) return null;
+    useEffect(() => {
+        if (!isOpen) return;
+        setSettings(null);
+        setActiveTab('general');
+        setError(null);
+        setIsLoading(true);
+        let active = true;
+        safeInvoke('get_settings')
+            .then((nextSettings) => {
+                if (active) setSettings(nextSettings ?? null);
+            })
+            .catch((cause) => {
+                if (active) setModalError(cause, 'Unable to load application settings.');
+            })
+            .finally(() => {
+                if (active) setIsLoading(false);
+            });
+        return () => {
+            active = false;
+        };
+    }, [isOpen]);
 
-    const handleApply = () => {
-        safeInvoke('update_settings', { newSettings: settings })
-            .catch(err => alert("Failed to apply settings: " + err));
+    if (!isOpen) return null;
+
+    const handleApply = async () => {
+        if (!settings || isBusy) return;
+        setError(null);
+        setActiveOperation('apply');
+        try {
+            await safeInvoke('update_settings', { newSettings: settings });
+        } catch (cause) {
+            setModalError(cause, 'Unable to apply application settings.');
+        } finally {
+            setActiveOperation(null);
+        }
     };
 
-    const handleOk = () => {
-        safeInvoke('update_settings', { newSettings: settings })
-            .then(onClose)
-            .catch(err => alert("Failed to update settings: " + err));
+    const handleOk = async () => {
+        if (!settings || isBusy) return;
+        setError(null);
+        setActiveOperation('ok');
+        try {
+            await safeInvoke('update_settings', { newSettings: settings });
+            onClose();
+        } catch (cause) {
+            setModalError(cause, 'Unable to update application settings.');
+        } finally {
+            setActiveOperation(null);
+        }
     };
 
-    const updateColor = (elem: string, hex: string) => {
+    const updateColor = (element: string, hex: string) => {
+        if (!settings) return;
         const r = parseInt(hex.slice(1, 3), 16) / 255;
         const g = parseInt(hex.slice(3, 5), 16) / 255;
         const b = parseInt(hex.slice(5, 7), 16) / 255;
-
         setSettings({
             ...settings,
             custom_atom_colors: {
                 ...settings.custom_atom_colors,
-                [elem]: [r, g, b, 1.0]
-            }
+                [element]: [r, g, b, 1],
+            },
         });
     };
 
@@ -67,195 +141,131 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, e
     };
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300">
-            <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-300">
-                {/* Header */}
-                <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-600 dark:text-emerald-400">
-                            <SettingsIcon className="w-5 h-5" />
-                        </div>
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">CrystalCanvas Settings</h2>
+        <div className="pointer-events-auto fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+            <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                aria-busy={isBusy}
+                tabIndex={-1}
+                className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded border border-[var(--cc-border)] bg-[var(--cc-chrome)] text-[var(--cc-text)] shadow-sm outline-none"
+            >
+                <header className="flex items-center justify-between border-b border-[var(--cc-border)] px-4 py-3">
+                    <div className="flex items-center gap-2">
+                        <SettingsIcon aria-hidden="true" className="h-4 w-4 text-[var(--cc-accent)]" />
+                        <h2 id={titleId} className="text-sm font-semibold">CrystalCanvas Settings</h2>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors">
-                        <X className="w-5 h-5 text-slate-500" />
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={isSaving}
+                        aria-label="Close settings"
+                        className="rounded border border-transparent p-1 text-[var(--cc-muted)] transition-colors duration-150 hover:border-[var(--cc-border)] hover:text-[var(--cc-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        <X aria-hidden="true" className="h-4 w-4" />
                     </button>
-                </div>
+                </header>
 
-                <div className="flex flex-1 overflow-hidden">
-                    {/* Sidebar */}
-                    <div className="w-48 border-r border-slate-100 dark:border-slate-800 p-2 bg-slate-50/30 dark:bg-slate-900/30">
-                        <TabButton
-                            active={activeTab === 'general'}
-                            onClick={() => setActiveTab('general')}
-                            icon={<Sliders className="w-4 h-4" />}
-                            label="General"
-                        />
-                        <TabButton
-                            active={activeTab === 'bonds'}
-                            onClick={() => setActiveTab('bonds')}
-                            icon={<Zap className="w-4 h-4" />}
-                            label="Bonds"
-                        />
-                        <TabButton
-                            active={activeTab === 'elements'}
-                            onClick={() => setActiveTab('elements')}
-                            icon={<Palette className="w-4 h-4" />}
-                            label="Elements"
-                        />
-                    </div>
+                <div className="flex min-h-0 flex-1">
+                    <nav aria-label="Settings categories" className="w-40 shrink-0 space-y-1 border-r border-[var(--cc-border)] bg-[var(--cc-panel)] p-2">
+                        <TabButton active={activeTab === 'general'} onClick={() => setActiveTab('general')} icon={<Sliders className="h-4 w-4" />} label="General" />
+                        <TabButton active={activeTab === 'bonds'} onClick={() => setActiveTab('bonds')} icon={<Zap className="h-4 w-4" />} label="Bonds" />
+                        <TabButton active={activeTab === 'elements'} onClick={() => setActiveTab('elements')} icon={<Palette className="h-4 w-4" />} label="Elements" />
+                    </nav>
 
-                    {/* Content */}
-                    <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                        {activeTab === 'general' && (
-                            <div className="space-y-4">
-                                <section className="space-y-3">
-                                    <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Atom Display</h3>
-                                    <div className="space-y-2">
-                                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300 flex justify-between">
-                                            <span>Global Atom Scale</span>
-                                            <span className="text-emerald-500 font-mono">{settings.atom_scale.toFixed(2)}x</span>
-                                        </label>
-                                        <input
-                                            type="range" min="0.1" max="2.0" step="0.05"
-                                            value={settings.atom_scale}
-                                            onChange={(e) => setSettings({ ...settings, atom_scale: parseFloat(e.target.value) })}
-                                            className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                                        />
-                                    </div>
-                                </section>
+                    <div className="min-w-0 flex-1 overflow-y-auto p-4">
+                        {error && (
+                            <div role="alert" data-error-code={error.code} className="mb-3 rounded border border-[var(--cc-danger)] bg-[var(--cc-panel)] px-2 py-1.5 text-xs">
+                                {error.message}
                             </div>
                         )}
+                        {isLoading && <div role="status" className="text-xs text-[var(--cc-muted)]">Loading settings…</div>}
+                        {!isLoading && !settings && !error && <div role="status" className="text-xs text-[var(--cc-muted)]">Settings are unavailable.</div>}
 
-                        {activeTab === 'bonds' && (
-                            <div className="space-y-6">
-                                <section className="space-y-4">
-                                    <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Bonding Parameters</h3>
-
-                                    <div className="space-y-2">
-                                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300 flex justify-between">
-                                            <span>Search Tolerance (Å)</span>
-                                            <span className="text-emerald-500 font-mono">+{settings.bond_tolerance.toFixed(2)}</span>
-                                        </label>
-                                        <input
-                                            type="range" min="0.1" max="1.5" step="0.05"
-                                            value={settings.bond_tolerance}
-                                            onChange={(e) => setSettings({ ...settings, bond_tolerance: parseFloat(e.target.value) })}
-                                            className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                                        />
-                                        <p className="text-[10px] text-slate-400">Increases the search radius beyond the sum of covalent radii.</p>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300 flex justify-between">
-                                            <span>Bond Visual Radius (Å)</span>
-                                            <span className="text-emerald-500 font-mono">{settings.bond_radius.toFixed(2)}</span>
-                                        </label>
-                                        <input
-                                            type="range" min="0.01" max="0.3" step="0.01"
-                                            value={settings.bond_radius}
-                                            onChange={(e) => setSettings({ ...settings, bond_radius: parseFloat(e.target.value) })}
-                                            className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center justify-between pt-2">
-                                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Bond Color</label>
-                                        <div className="flex items-center gap-3">
-                                            <div
-                                                className="w-6 h-6 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm"
-                                                style={{ backgroundColor: rgbToHex(settings.bond_color) }}
-                                            />
-                                            <input
-                                                type="color"
-                                                value={rgbToHex(settings.bond_color)}
-                                                onChange={(e) => {
-                                                    const hex = e.target.value;
-                                                    const r = parseInt(hex.slice(1, 3), 16) / 255;
-                                                    const g = parseInt(hex.slice(3, 5), 16) / 255;
-                                                    const b = parseInt(hex.slice(5, 7), 16) / 255;
-                                                    setSettings({ ...settings, bond_color: [r, g, b, 1.0] });
-                                                }}
-                                                className="opacity-0 absolute w-6 h-6 cursor-pointer"
-                                            />
-                                        </div>
-                                    </div>
-                                </section>
-                            </div>
+                        {settings && activeTab === 'general' && (
+                            <section aria-labelledby="settings-general" className="space-y-3">
+                                <h3 id="settings-general" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Atom display</h3>
+                                <label className="block space-y-1 text-xs">
+                                    <span className="flex justify-between"><span>Global atom scale</span><span className="tabular-nums text-[var(--cc-muted)]">{settings.atom_scale.toFixed(2)}×</span></span>
+                                    <input type="range" min="0.1" max="2" step="0.05" value={settings.atom_scale} disabled={isBusy} onChange={(event) => setSettings({ ...settings, atom_scale: parseFloat(event.target.value) })} className="w-full accent-[var(--cc-accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--cc-accent)] disabled:opacity-60" />
+                                </label>
+                            </section>
                         )}
 
-                        {activeTab === 'elements' && (
-                            <div className="space-y-4">
-                                <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Element Customization</h3>
-                                <div className="grid grid-cols-2 gap-4">
-                                    {elements.map(elem => {
-                                        const currentColor = settings.custom_atom_colors[elem] || [0.5, 0.5, 0.5, 1.0]; // Fallback
+                        {settings && activeTab === 'bonds' && (
+                            <section aria-labelledby="settings-bonds" className="space-y-4">
+                                <h3 id="settings-bonds" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Bonding parameters</h3>
+                                <label className="block space-y-1 text-xs">
+                                    <span className="flex justify-between"><span>Search tolerance (Å)</span><span className="tabular-nums text-[var(--cc-muted)]">+{settings.bond_tolerance.toFixed(2)}</span></span>
+                                    <input type="range" min="0.1" max="1.5" step="0.05" value={settings.bond_tolerance} disabled={isBusy} onChange={(event) => setSettings({ ...settings, bond_tolerance: parseFloat(event.target.value) })} className="w-full accent-[var(--cc-accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--cc-accent)] disabled:opacity-60" />
+                                </label>
+                                <label className="block space-y-1 text-xs">
+                                    <span className="flex justify-between"><span>Bond visual radius (Å)</span><span className="tabular-nums text-[var(--cc-muted)]">{settings.bond_radius.toFixed(2)}</span></span>
+                                    <input type="range" min="0.01" max="0.3" step="0.01" value={settings.bond_radius} disabled={isBusy} onChange={(event) => setSettings({ ...settings, bond_radius: parseFloat(event.target.value) })} className="w-full accent-[var(--cc-accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--cc-accent)] disabled:opacity-60" />
+                                </label>
+                                <label className="flex items-center justify-between text-xs">
+                                    <span>Bond color</span>
+                                    <input
+                                        type="color"
+                                        value={rgbToHex(settings.bond_color)}
+                                        disabled={isBusy}
+                                        onChange={(event) => {
+                                            const hex = event.target.value;
+                                            const r = parseInt(hex.slice(1, 3), 16) / 255;
+                                            const g = parseInt(hex.slice(3, 5), 16) / 255;
+                                            const b = parseInt(hex.slice(5, 7), 16) / 255;
+                                            setSettings({ ...settings, bond_color: [r, g, b, 1] });
+                                        }}
+                                        className="h-7 w-9 cursor-pointer rounded border border-[var(--cc-border)] bg-[var(--cc-field)] disabled:cursor-not-allowed disabled:opacity-60"
+                                    />
+                                </label>
+                            </section>
+                        )}
+
+                        {settings && activeTab === 'elements' && (
+                            <section aria-labelledby="settings-elements" className="space-y-3">
+                                <h3 id="settings-elements" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Element customization</h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {elements.map((element) => {
+                                        const currentColor: [number, number, number, number] = settings.custom_atom_colors[element] || [0.5, 0.5, 0.5, 1];
                                         return (
-                                            <div key={elem} className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center justify-between group hover:border-emerald-200 dark:hover:border-emerald-900/50 transition-colors">
-                                                <div className="flex items-center gap-3">
-                                                    <div
-                                                        className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs shadow-sm bg-white dark:bg-slate-800"
-                                                        style={{ color: rgbToHex(currentColor as [number, number, number, number]) }}
-                                                    >
-                                                        {elem}
-                                                    </div>
-                                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 font-mono tracking-tight">{elem} Detail</span>
-                                                </div>
-                                                <input
-                                                    type="color"
-                                                    value={rgbToHex(currentColor as [number, number, number, number])}
-                                                    onChange={(e) => updateColor(elem, e.target.value)}
-                                                    className="w-6 h-6 rounded-md cursor-pointer bg-transparent border-none appearance-none"
-                                                />
-                                            </div>
+                                            <label key={element} className="flex items-center justify-between rounded border border-[var(--cc-border)] bg-[var(--cc-panel)] p-2 text-xs">
+                                                <span className="font-mono">{element}</span>
+                                                <input type="color" value={rgbToHex(currentColor)} disabled={isBusy} onChange={(event) => updateColor(element, event.target.value)} className="h-7 w-9 cursor-pointer rounded border border-[var(--cc-border)] bg-[var(--cc-field)] disabled:cursor-not-allowed disabled:opacity-60" />
+                                            </label>
                                         );
                                     })}
-                                    {elements.length === 0 && (
-                                        <p className="col-span-2 text-center py-8 text-slate-400 text-sm italic">No structure loaded to list elements.</p>
-                                    )}
+                                    {elements.length === 0 && <p className="col-span-2 text-xs text-[var(--cc-muted)]">No structure elements are available.</p>}
                                 </div>
-                            </div>
+                            </section>
                         )}
                     </div>
                 </div>
 
-                {/* Footer Actions */}
-                <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={handleApply}
-                        className="px-4 py-2 text-sm font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 rounded-xl transition-colors"
-                    >
-                        Apply
-                    </button>
-                    <button
-                        onClick={handleOk}
-                        className="px-6 py-2 text-sm font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
-                    >
-                        OK
-                    </button>
-                </div>
+                <footer className="flex justify-end gap-2 border-t border-[var(--cc-border)] bg-[var(--cc-panel)] px-4 py-3">
+                    <button type="button" onClick={onClose} disabled={isSaving} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                    <button type="button" onClick={() => void handleApply()} disabled={!settings || isBusy} aria-busy={activeOperation === 'apply'} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60">{activeOperation === 'apply' ? 'Applying…' : 'Apply'}</button>
+                    <button type="button" onClick={() => void handleOk()} disabled={!settings || isBusy} aria-busy={activeOperation === 'ok'} className="rounded border border-[var(--cc-accent)] bg-[var(--cc-accent)] px-3 py-1.5 text-xs font-medium text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60">{activeOperation === 'ok' ? 'Saving…' : 'OK'}</button>
+                </footer>
             </div>
         </div>
     );
 };
 
-const TabButton = ({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
+const TabButton = ({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) => (
     <button
+        type="button"
         onClick={onClick}
+        aria-pressed={active}
         className={cn(
-            "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 mb-1",
+            'flex w-full items-center gap-2 rounded border px-3 py-2 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)]',
             active
-                ? "bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-slate-700"
-                : "text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50 hover:text-slate-800 dark:hover:text-slate-200"
+                ? 'border-[var(--cc-border)] bg-[var(--cc-field)] text-[var(--cc-text)]'
+                : 'border-transparent text-[var(--cc-muted)] hover:border-[var(--cc-border)] hover:text-[var(--cc-text)]',
         )}
     >
-        {icon}
+        <span aria-hidden="true">{icon}</span>
         {label}
     </button>
 );

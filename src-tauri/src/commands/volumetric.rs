@@ -197,12 +197,12 @@ pub fn load_volumetric_file(
     r.commit_volumetric(prepared_volumetric);
 
     let has_negative = vol_data.data_min < -0.01 * vol_data.data_max.abs();
+    r.active_colormap_mode = if has_negative { 4 } else { 0 };
     if has_negative {
         if let Some(vol) = &r.volume_raycast_pipeline {
             vol.set_signed_mapping(&r.gpu.queue, true);
             vol.set_colormap(&r.gpu.queue, 4);
         }
-        r.active_colormap_mode = 4;
         log::info!(
             "Signed volumetric data detected (min={:.3e}). Enabled signed mapping + Coolwarm.",
             vol_data.data_min

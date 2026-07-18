@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, Suspense, useEffect, lazy } from 'react';
+import React, { useState, useCallback, useEffect, useRef, Suspense, lazy } from 'react';
 import { cn } from '../../utils/cn';
 import { CrystalState, PhononModeSummary } from '../../types/crystal';
 import { lazyConfig } from '../panels';
@@ -49,6 +49,7 @@ export const RightSidebar: React.FC<{
         });
     }, [props.setInteractionMode, props.interactionMode]);
 
+    const activeTool = openAccordion;
     const fallbackSpinner = (
         <div className="flex justify-center py-6">
             <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
@@ -57,47 +58,54 @@ export const RightSidebar: React.FC<{
 
     return (
         <div className="shrink-0 h-full flex flex-row pointer-events-none">
-            {/* Sliding Panel */}
-            <div className={cn("transition-[width,opacity] duration-150 ease-in-out overflow-hidden", openAccordion ? "w-[240px] opacity-100" : "w-0 opacity-0")}>
-                <div className="w-[240px] h-full flex flex-col gap-3 p-3 overflow-y-auto custom-scrollbar pointer-events-none">
-                    
-                    <Accordion title="Structural Analysis" isOpen={openAccordion === 'Structural Analysis'}>
+            <div className={cn(
+                "h-full overflow-hidden transition-[width,opacity] duration-150 ease-in-out",
+                activeTool ? "w-[260px] opacity-100" : "w-0 opacity-0",
+            )}>
+                <div className="w-[260px] h-full p-3 pointer-events-none">
+                    <PersistentInspector title="Bonds & Polyhedra" active={activeTool === 'Structural Analysis'}>
                         <Suspense fallback={fallbackSpinner}><BondAnalysisPanel {...props} /></Suspense>
-                    </Accordion>
-                    <Accordion title="Volumetric Data" isOpen={openAccordion === 'Volumetric'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Isosurface / Volume" active={activeTool === 'Volumetric'}>
                         <Suspense fallback={fallbackSpinner}><VolumetricPanel {...props} setOpenAccordion={setOpenAccordion} /></Suspense>
-                    </Accordion>
-                    <Accordion title="Phonon Animation" isOpen={openAccordion === 'Phonon Animation'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Phonon Modes" active={activeTool === 'Phonon Animation'}>
                         <Suspense fallback={fallbackSpinner}><PhononPanel {...props} /></Suspense>
-                    </Accordion>
-                    <Accordion title="Reciprocal Space" isOpen={openAccordion === 'Reciprocal Space'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Brillouin Zone" active={activeTool === 'Reciprocal Space'}>
                         <Suspense fallback={fallbackSpinner}><BrillouinZonePanel {...props} /></Suspense>
-                    </Accordion>
-                    <Accordion title="Tight-Binding (Wannier)" isOpen={openAccordion === 'Tight-Binding'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Wannier / Hopping" active={activeTool === 'Tight-Binding'}>
                         <Suspense fallback={fallbackSpinner}><WannierPanel {...props} /></Suspense>
-                    </Accordion>
-                    <Accordion title="Supercell Construction" isOpen={openAccordion === 'Supercell'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Supercell" active={activeTool === 'Supercell'}>
                         <Suspense fallback={fallbackSpinner}><SupercellPanel /></Suspense>
-                    </Accordion>
-                    <Accordion title="Cutting Plane (hkl)" isOpen={openAccordion === 'Cutting Plane'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Slab (hkl)" active={activeTool === 'Cutting Plane'}>
                         <Suspense fallback={fallbackSpinner}><SlabPanel /></Suspense>
-                    </Accordion>
-                    <Accordion title="Atom Operations" isOpen={openAccordion === 'Atom Operations'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Add / Delete Atoms" active={activeTool === 'Atom Operations'}>
                         <Suspense fallback={fallbackSpinner}><AtomOperationsPanel {...props} /></Suspense>
-                    </Accordion>
-                    <Accordion title="Measurements Library" isOpen={openAccordion === 'Measurements'}>
+                    </PersistentInspector>
+                    <PersistentInspector title="Measurements Tool" active={activeTool === 'Measurements'}>
                         <Suspense fallback={fallbackSpinner}><MeasurementPanel {...props} /></Suspense>
-                    </Accordion>
-
+                    </PersistentInspector>
                 </div>
             </div>
 
-            {/* Icon Toolbar */}
-            <div className="w-[44px] shrink-0 h-full flex flex-col items-center pt-2 pb-2 gap-1 pointer-events-auto">
+            <div
+                className="w-[44px] shrink-0 h-full min-h-0 flex flex-col items-center gap-1 overflow-y-auto py-2 pointer-events-auto custom-scrollbar"
+                data-tool-rail="scientific-tools"
+                role="toolbar"
+                aria-label="Scientific tools"
+            >
                 {TOOL_SECTIONS.map((section) => (
                     <button
+                        type="button"
                         key={section.key}
                         title={section.label}
+                        aria-label={section.label}
+                        aria-pressed={openAccordion === section.key}
                         onClick={() => setOpenAccordion(openAccordion === section.key ? null : section.key)}
                         className={cn(
                             "w-9 h-9 flex items-center justify-center rounded-lg transition-colors duration-150",
@@ -114,22 +122,23 @@ export const RightSidebar: React.FC<{
     );
 };
 
-const Accordion: React.FC<{ title: string; isOpen: boolean; children: React.ReactNode }> = ({ title, isOpen, children }) => {
-    const [hasOpened, setHasOpened] = useState(isOpen);
+const PersistentInspector: React.FC<{ title: string; active: boolean; children: React.ReactNode }> = ({ title, active, children }) => {
+    const [hasOpened, setHasOpened] = useState(active);
+
     useEffect(() => {
-        if (isOpen) setHasOpened(true);
-    }, [isOpen]);
+        if (active) setHasOpened(true);
+    }, [active]);
 
     if (!hasOpened) return null;
 
     return (
-        <div className={cn("cc-panel pointer-events-auto shrink-0 border rounded-lg overflow-hidden", !isOpen && "hidden")}>
-            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
-                <span className="font-medium text-sm text-slate-800 dark:text-slate-200">{title}</span>
-            </div>
-            <div className="px-3 py-3">
-                {children}
-            </div>
+    <section className={cn("cc-panel h-full flex flex-col overflow-hidden pointer-events-auto", !active && "hidden")} aria-label={title} aria-hidden={!active}>
+        <header className="shrink-0 border-b border-slate-100 px-3 py-2 dark:border-slate-800">
+            <h2 className="text-sm font-medium text-slate-800 dark:text-slate-200">{title}</h2>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 custom-scrollbar">
+            {children}
         </div>
+    </section>
     );
 };
