@@ -1,15 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { safeInvoke, safeListen, safeDialogOpen } from '../../utils/tauri-mock';
+import {
+    is_isosurface_sign_mode,
+    is_volume_colormap,
+    is_volume_render_mode,
+    type VolumetricInfo,
+} from '../../ipc/contracts';
 import { PanelProps } from './index';
 
-export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }: PanelProps) {
-    const [volumetricInfo, setVolumetricInfo] = useState<any | null>(null);
+export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
+    const [volumetricInfo, setVolumetricInfo] = useState<VolumetricInfo | null>(null);
     const [volumetricRange, setVolumetricRange] = useState<{min: number, max: number}>({min: -1.0, max: 1.0});
     const [isovalue, setIsovalue] = useState(0.05);
 
     useEffect(() => {
         let unlisten = () => {};
-        safeListen<any>('volumetric_loaded', (event: any) => {
+        safeListen('volumetric_loaded', (event) => {
             const info = event.payload;
             if (info) {
                 setVolumetricInfo(info);
@@ -34,7 +40,7 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 safeInvoke('set_volume_render_mode', { mode: 'both' }).catch(console.warn);
                 safeInvoke('set_isosurface_sign_mode', { mode: 'both' }).catch(console.warn);
             }
-        }).then((f: any) => unlisten = f).catch(console.warn);
+        }).then((f) => unlisten = f).catch(console.warn);
         
         return () => {
             unlisten();
@@ -47,7 +53,7 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 try {
                     const file = await safeDialogOpen({ title: 'Open Volumetric File' });
                     if (file && typeof file === 'string') {
-                        const info = await safeInvoke<any>('load_volumetric_file', { path: file });
+                        const info = await safeInvoke('load_volumetric_file', { path: file });
                         if (info) {
                             setVolumetricInfo(info);
                             let dMin = info.data_min;
@@ -55,7 +61,6 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                             setVolumetricRange({ min: dMin, max: dMax });
                             setIsovalue((dMax - dMin) * 0.1 + dMin);
                         }
-                        if (onStructureUpdate) onStructureUpdate();
                     }
                 } catch (e: any) {
                     alert(String(e));
@@ -89,7 +94,11 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 <label className="text-[11px] text-slate-500 dark:text-slate-400">Render Mode</label>
                 <select
                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
-                    onChange={(e) => safeInvoke('set_volume_render_mode', { mode: e.target.value }).catch((e: any) => alert(String(e)))}
+                    onChange={(e) => {
+                        const mode = e.target.value;
+                        if (!is_volume_render_mode(mode)) return;
+                        safeInvoke('set_volume_render_mode', { mode }).catch((err: unknown) => alert(String(err)));
+                    }}
                     defaultValue="both"
                 >
                     <option value="both">Both (Isosurface + Volume)</option>
@@ -132,7 +141,9 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 <select
                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
                     onChange={(e) => {
-                        safeInvoke('set_isosurface_sign_mode', { mode: e.target.value }).catch((err: any) => alert(String(err)));
+                        const mode = e.target.value;
+                        if (!is_isosurface_sign_mode(mode)) return;
+                        safeInvoke('set_isosurface_sign_mode', { mode }).catch((err: unknown) => alert(String(err)));
                     }}
                     defaultValue="both"
                 >
@@ -146,7 +157,11 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                 <label className="text-[11px] text-slate-500 dark:text-slate-400">Volume Colormap</label>
                 <select
                     className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
-                    onChange={(e) => safeInvoke('set_volume_colormap', { mode: e.target.value }).catch((err: any) => alert(String(err)))}
+                    onChange={(e) => {
+                        const mode = e.target.value;
+                        if (!is_volume_colormap(mode)) return;
+                        safeInvoke('set_volume_colormap', { mode }).catch((err: unknown) => alert(String(err)));
+                    }}
                     defaultValue="viridis"
                 >
                     <option value="viridis">Viridis</option>

@@ -1,6 +1,6 @@
 [package]
 name = "crystal-canvas"
-version = "0.6.0"
+version = "0.6.1"
 authors = ["Xiao Jiang and CrystalCanvas Contributors"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -63,4 +63,14 @@ path = "bin/render_demo.rs"
 
 [[bench]]
 name = "bench_volumetric"
+harness = false
+
+[[test]]
+name = "test_phys_1c_real_failure_atomicity"
+path = "tests/test_phys_1c_real_failure_atomicity.rs"
+harness = false
+
+[[test]]
+name = "test_sync_1c_tauri_smoke"
+path = "tests/test_sync_1c_tauri_smoke.rs"
 harness = false

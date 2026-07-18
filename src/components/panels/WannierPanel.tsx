@@ -18,7 +18,7 @@ export default function WannierPanel({}: PanelProps) {
                 filters: [{ name: 'Wannier Hopping', extensions: ['dat'] }]
             });
             if (file && typeof file === 'string') {
-                const info = await safeInvoke<WannierInfo>('load_wannier_hr', { path: file });
+                const info = await safeInvoke('load_wannier_hr', { path: file });
                 if (info) {
                     setWannierInfo(info);
                     setActiveRShells(new Array(info.r_shells.length).fill(true));
@@ -109,20 +109,18 @@ export default function WannierPanel({}: PanelProps) {
                         </label>
 
                         <div className="flex flex-col gap-1">
-                            {wannierInfo.r_shells.filter((r: any) => r.rx !== 0 || r.ry !== 0 || r.rz !== 0).map((r: any, i: number) => {
-                                const offset = wannierInfo.r_shells.findIndex((x: any) => x.rx===0 && x.ry===0 && x.rz===0) > -1 ? 1 : 0;
-                                const originalIdx = wannierInfo.r_shells.findIndex((x: any) => x.rx === r.rx && x.ry === r.ry && x.rz === r.rz);
+                            {wannierInfo.r_shells.map(([rx, ry, rz], shellIdx) => {
+                                if (rx === 0 && ry === 0 && rz === 0) return null;
                                 return (
-                                <label key={`R-${i}`} className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer pointer-events-auto">
-                                    <input type="checkbox" checked={activeRShells[originalIdx]} onChange={(e) => {
+                                <label key={`R-${shellIdx}`} className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer pointer-events-auto">
+                                    <input type="checkbox" checked={activeRShells[shellIdx]} onChange={(e) => {
                                         const checked = e.target.checked;
                                         const next = [...activeRShells];
-                                        next[originalIdx] = checked;
+                                        next[shellIdx] = checked;
                                         setActiveRShells(next);
-                                        safeInvoke('set_wannier_r_shell', { shellIdx: originalIdx, active: checked }).catch(console.error);
+                                        safeInvoke('set_wannier_r_shell', { shellIdx, active: checked }).catch(console.error);
                                     }} className="accent-emerald-500 rounded-sm" />
-                                    R = [{r.rx}, {r.ry}, {r.rz}] 
-                                    <span className="text-slate-400 text-[9px] ml-auto">({r.hopping_count} hops)</span>
+                                    R = [{rx}, {ry}, {rz}]
                                 </label>
                             )})}
                         </div>

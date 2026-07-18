@@ -3,10 +3,9 @@ import { safeInvoke, safeListen } from '../utils/tauri-mock';
 
 interface UseFileDropProps {
     setIsDragging: (isDragging: boolean) => void;
-    onFileLoaded: () => void;
 }
 
-export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
+export function useFileDrop({ setIsDragging }: UseFileDropProps) {
     useEffect(() => {
         let unlistenDrop = () => { };
         let unlistenHover = () => { };
@@ -17,19 +16,18 @@ export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
             if (path) {
                 console.log('Got drop path:', path);
                 safeInvoke('load_cif_file', { path })
-                    .then(onFileLoaded)
                     .catch(e => alert(`Failed to load structure:\n${e}`));
             }
         };
 
         // Tauri v1 / fallback file drop event
-        safeListen<{ paths: string[] }>('tauri://file-drop', (event) => {
+        safeListen('tauri://file-drop', (event) => {
             setIsDragging(false);
             handleDrop(event.payload.paths?.[0]);
         }).then(f => unlistenDrop = f).catch(console.warn);
 
         // Tauri v2 drag-drop event
-        safeListen<{ paths: string[] }>('tauri://drag-drop', (event) => {
+        safeListen('tauri://drag-drop', (event) => {
             setIsDragging(false);
             handleDrop(event.payload.paths?.[0]);
         }).then(f => unlistenDragDrop = f).catch(console.warn);
@@ -46,5 +44,5 @@ export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
             unlistenCancel();
             unlistenDragDrop();
         };
-    }, [setIsDragging, onFileLoaded]);
+    }, [setIsDragging]);
 }

@@ -4,7 +4,6 @@ export interface PanelProps {
     crystalState: CrystalState | null;
     selectedAtoms?: number[];
     onSelectionChange?: (indices: number[]) => void;
-    onStructureUpdate?: () => void;
     onBondCountUpdate?: (count: number) => void;
     onActivePhononModeUpdate?: (mode: PhononModeSummary | null) => void;
     interactionMode?: 'select' | 'move' | 'rotate' | 'measure';

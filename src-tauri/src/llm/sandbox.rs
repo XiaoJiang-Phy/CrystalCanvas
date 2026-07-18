@@ -2,7 +2,10 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::crystal_state::CrystalState;
+use crate::crystal_state::{
+    validate_atom_request, validate_slab_request, validate_supercell_request, CrystalState,
+    MAX_STRUCTURAL_ATOMS,
+};
 use crate::llm::command::CrystalCommand;
 
 #[derive(Debug, PartialEq)]
@@ -11,6 +14,7 @@ pub enum SandboxError {
     VacuumOutOfRange { vacuum: f64, min: f64, max: f64 },
     NegativeDeterminant,
     TooManyAtomsEstimated { estimated: usize, max: usize },
+    InvalidStructuralRequest { message: &'static str },
 }
 
 impl std::fmt::Display for SandboxError {
@@ -36,11 +40,10 @@ impl std::fmt::Display for SandboxError {
                 "Operation would create {} atoms, exceeding the safety limit of {}",
                 estimated, max
             ),
+            SandboxError::InvalidStructuralRequest { message } => write!(f, "{}", message),
         }
     }
 }
-
-const MAX_ATOMS: usize = 10_000;
 
 /// Validate a command against the current crystal state.
 pub fn validate_command(
@@ -58,16 +61,22 @@ pub fn validate_command(
                 }
             }
         }
-        CrystalCommand::AddAtom(_) => {
-            // Check projected atom count
-            if state.num_atoms() + 1 > MAX_ATOMS {
-                return Err(SandboxError::TooManyAtomsEstimated {
-                    estimated: state.num_atoms() + 1,
-                    max: MAX_ATOMS,
-                });
-            }
+        CrystalCommand::AddAtom(params) => {
+            let atomic_number = crate::llm::router::element_to_atomic_number(&params.element);
+            validate_atom_request(
+                &params.element,
+                atomic_number,
+                params.frac_pos,
+                state.num_atoms(),
+            )
+            .map_err(|message| SandboxError::InvalidStructuralRequest { message })?;
         }
         CrystalCommand::Substitute(params) => {
+            if crate::llm::router::element_to_atomic_number(&params.new_element) == 0 {
+                return Err(SandboxError::InvalidStructuralRequest {
+                    message: "substitute element identity is invalid",
+                });
+            }
             for &idx in &params.indices {
                 if idx as usize >= state.num_atoms() {
                     return Err(SandboxError::IndexOutOfBounds {
@@ -78,32 +87,42 @@ pub fn validate_command(
             }
         }
         CrystalCommand::CleaveSlab(params) => {
-            if params.vacuum_a < 5.0 || params.vacuum_a > 100.0 {
+            if !params.vacuum_a.is_finite() || params.vacuum_a < 5.0 || params.vacuum_a > 100.0 {
                 return Err(SandboxError::VacuumOutOfRange {
                     vacuum: params.vacuum_a,
                     min: 5.0,
                     max: 100.0,
                 });
             }
+            let layers = i32::try_from(params.layers).map_err(|_| {
+                SandboxError::InvalidStructuralRequest {
+                    message: "slab layers exceed the supported range",
+                }
+            })?;
+            validate_slab_request(params.miller, layers, params.vacuum_a)
+                .map_err(|message| SandboxError::InvalidStructuralRequest { message })?;
+            let estimated = state
+                .num_atoms()
+                .checked_mul(params.layers as usize)
+                .ok_or(SandboxError::InvalidStructuralRequest {
+                    message: "slab atom count overflow",
+                })?;
+            if estimated > MAX_STRUCTURAL_ATOMS {
+                return Err(SandboxError::TooManyAtomsEstimated {
+                    estimated,
+                    max: MAX_STRUCTURAL_ATOMS,
+                });
+            }
         }
         CrystalCommand::MakeSupercell(params) => {
             let m = params.matrix;
-            // Det = i00 * (i11*i22 - i12*i21) - i01 * (i10*i22 - i12*i20) + i02 * (i10*i21 - i11*i20)
-            let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-                - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-
-            if det <= 0 {
-                return Err(SandboxError::NegativeDeterminant);
-            }
-
-            let estimated = state.num_atoms() * (det as usize);
-            if estimated > MAX_ATOMS {
-                return Err(SandboxError::TooManyAtomsEstimated {
-                    estimated,
-                    max: MAX_ATOMS,
-                });
-            }
+            let expansion = [
+                m[0][0], m[1][0], m[2][0],
+                m[0][1], m[1][1], m[2][1],
+                m[0][2], m[1][2], m[2][2],
+            ];
+            validate_supercell_request(&expansion, state.num_atoms())
+                .map_err(|message| SandboxError::InvalidStructuralRequest { message })?;
         }
         CrystalCommand::ExportFile(_) => {
             // File exports are safe from a physics constraint perspective

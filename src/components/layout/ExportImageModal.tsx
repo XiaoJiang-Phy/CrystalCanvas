@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import { X, Image as ImageIcon } from 'lucide-react';
 import { safeInvoke, safeDialogSave } from '../../utils/tauri-mock';
+import type { ExportImageBackground } from '../../ipc/contracts';
 
 interface ExportImageModalProps {
     isOpen: boolean;
@@ -12,8 +13,6 @@ interface ExportImageModalProps {
     viewportHeight: number;
 }
 
-type BgMode = 'transparent' | 'white' | 'black' | 'default';
-
 const SCALE_OPTIONS = [
     { label: '1x (Screen)', value: 1 },
     { label: '2x (Hi-DPI)', value: 2 },
@@ -21,7 +20,7 @@ const SCALE_OPTIONS = [
     { label: '8x (Ultra)', value: 8 },
 ];
 
-const BG_OPTIONS: { label: string; value: BgMode; preview: string }[] = [
+const BG_OPTIONS: { label: string; value: ExportImageBackground; preview: string }[] = [
     { label: 'Transparent', value: 'transparent', preview: 'bg-[conic-gradient(#e2e8f0_25%,#f1f5f9_25%_50%,#e2e8f0_50%_75%,#f1f5f9_75%)]' },
     { label: 'White', value: 'white', preview: 'bg-white border border-slate-200' },
     { label: 'Black', value: 'black', preview: 'bg-black' },
@@ -35,7 +34,7 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
     viewportHeight,
 }) => {
     const [scale, setScale] = useState(2);
-    const [bgMode, setBgMode] = useState<BgMode>('transparent');
+    const [bgMode, setBgMode] = useState<ExportImageBackground>('transparent');
     const [format, setFormat] = useState<'png' | 'jpeg'>('png');
     const [customWidth, setCustomWidth] = useState<number | null>(null);
     const [customHeight, setCustomHeight] = useState<number | null>(null);

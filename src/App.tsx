@@ -39,6 +39,9 @@ function App() {
 
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
     const [crystalState, setCrystalState] = useState<CrystalState | null>(null);
+    const lastAppliedVersionRef = useRef(-1);
+    const pendingStateVersionsRef = useRef(new Set<number>());
+    const initialStateLoadStartedRef = useRef(false);
     const [selectedAtoms, setSelectedAtoms] = useState<number[]>([]);
     const selectedAtomsRef = useRef<number[]>([]);
 
@@ -62,29 +65,57 @@ function App() {
         onSubmit: (value: string) => void;
     }>({ isOpen: false, title: "", onSubmit: () => { } });
 
-    const fetch_crystal_state = useCallback(async () => {
+    const fetch_crystal_state = useCallback(async (requestedVersion: number | null = null) => {
         try {
-            const state = await safeInvoke<CrystalState>('get_crystal_state');
-            if (state) setCrystalState(state);
+            const state = await safeInvoke('get_crystal_state');
+            if (state && state.version > lastAppliedVersionRef.current) {
+                lastAppliedVersionRef.current = state.version;
+                setCrystalState(state);
+            }
         } catch (e) {
             console.error(e);
+        } finally {
+            if (requestedVersion !== null) {
+                pendingStateVersionsRef.current.delete(requestedVersion);
+            }
         }
     }, []);
 
     useEffect(() => {
-        fetch_crystal_state();
         let unlistenStateChanged = () => { };
-        safeListen('state_changed', () => {
-            fetch_crystal_state();
-        }).then(f => unlistenStateChanged = f).catch(console.warn);
+        let disposed = false;
+        safeListen('state_changed', ({ payload }) => {
+            const { version } = payload;
+            if (version <= lastAppliedVersionRef.current
+                || pendingStateVersionsRef.current.has(version)) return;
+            pendingStateVersionsRef.current.add(version);
+            void fetch_crystal_state(version);
+        }).then((unlisten) => {
+            if (disposed) {
+                unlisten();
+            } else {
+                unlistenStateChanged = unlisten;
+                if (!initialStateLoadStartedRef.current) {
+                    initialStateLoadStartedRef.current = true;
+                    void fetch_crystal_state();
+                }
+            }
+        }).catch((error) => {
+            console.warn(error);
+            if (!disposed && !initialStateLoadStartedRef.current) {
+                initialStateLoadStartedRef.current = true;
+                void fetch_crystal_state();
+            }
+        });
 
         return () => {
+            disposed = true;
             unlistenStateChanged();
         };
-    }, []);
+    }, [fetch_crystal_state]);
 
     // Menu and File drop event listener
-    useFileDrop({ setIsDragging, onFileLoaded: fetch_crystal_state });
+    useFileDrop({ setIsDragging });
 
     useTauriMenu({
         setShowAssistant,
@@ -93,7 +124,6 @@ function App() {
         selectedAtomsRef,
         updateSelection,
         setPromptConfig,
-        onStateChange: fetch_crystal_state,
         renderFlagsRef,
         setShowCell,
         setShowBonds,
@@ -127,8 +157,7 @@ function App() {
         interactionMode,
         selectedAtoms,
         updateSelection,
-        setContextMenu,
-        onStateChange: fetch_crystal_state
+        setContextMenu
     });
 
     const handle_context_menu = (e: React.MouseEvent) => {
@@ -209,7 +238,6 @@ function App() {
                             }}
                             onBondCountUpdate={setBondCount}
                             onActivePhononModeUpdate={setActivePhononMode}
-                            onStructureUpdate={fetch_crystal_state}
                             interactionMode={interactionMode}
                             setInteractionMode={setInteractionMode}
                         />
@@ -256,7 +284,6 @@ function App() {
                                                 atomicNumber: 0,
                                                 fractPos: [0.5, 0.5, 0.5]
                                             })
-                                                .then(fetch_crystal_state)
                                                 .catch(e => alert(e));
                                         }
                                     }

@@ -34,9 +34,9 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
             setIsPhononModalOpen(false);
             let modesData;
             if (paths.axsf) {
-                modesData = await safeInvoke<PhononModeSummary[]>('load_axsf_phonon', { path: paths.axsf });
+                modesData = await safeInvoke('load_axsf_phonon', { path: paths.axsf });
             } else {
-                modesData = await safeInvoke<PhononModeSummary[]>('load_phonon_interactive', {
+                modesData = await safeInvoke('load_phonon_interactive', {
                     scfIn: paths.scfIn,
                     scfOut: paths.scfOut,
                     modes: paths.modes

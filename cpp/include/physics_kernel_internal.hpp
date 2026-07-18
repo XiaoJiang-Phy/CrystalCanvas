@@ -13,7 +13,8 @@
 /// @param h Miller index h
 /// @param k Miller index k
 /// @param l Miller index l
-/// @return Integer transformation matrix P with det(P) = 1
-[[nodiscard]] Eigen::Matrix3i get_surface_basis(
-    const Eigen::Ref<const Eigen::Matrix3d>& lattice,
-    int h, int k, int l);
+/// @return true when output contains an integer transformation matrix P with det(P) = 1
+[[nodiscard]] bool get_surface_basis(
+    const Eigen::Ref<const Eigen::Matrix<double, 3, 3, Eigen::ColMajor>>& lattice,
+    int h, int k, int l,
+    Eigen::Matrix<int, 3, 3, Eigen::ColMajor>& output);

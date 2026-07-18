@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "crystalcanvas-v0.6.1-structure-2d",
+  "project_root": ".",
+  "system": {
+    "physical_dimension": 2,
+    "computational_periodicity": 2,
+    "periodic_axes": ["x", "y"],
+    "equilibrium": false,
+    "ensemble": "unspecified"
+  },
+  "resources": {
+    "max_file_size_mb": 16,
+    "max_uncompressed_npz_mb": 64,
+    "max_matrix_dimension": 10000,
+    "max_frequency_points": 100000,
+    "max_findings_per_rule": 100
+  },
+  "settings": {
+    "report_format": "json_and_markdown",
+    "fail_fast": false,
+    "advisory_enabled": false
+  },
+  "thresholds": {
+    "coordinate_tolerance": {
+      "value": 0.00001,
+      "unit": "angstrom",
+      "source": "USER_CONFIG"
+    },
+    "physical_property_tolerance": {
+      "value": 0.000001,
+      "unit": "dimensionless",
+      "source": "USER_CONFIG"
+    },
+    "minimum_interatomic_distance": {
+      "value": 0.5,
+      "unit": "angstrom",
+      "source": "USER_CONFIG"
+    }
+  },
+  "artifacts": [
+    {
+      "id": "graphene",
+      "role": "atomic_structure",
+      "path": "tests/data/graphene.cif",
+      "format": "cif",
+      "adapter": "structure_cif_v1",
+      "units": {
+        "length": "angstrom",
+        "atom_coordinates": "fractional"
+      },
+      "conventions": {
+        "coordinate_basis": "fractional",
+        "periodic_axes": ["x", "y"],
+        "vacuum_axis": "z"
+      },
+      "metadata": {
+        "fixture_role": "2d_detection_and_brillouin_zone_regression",
+        "source_path": "tests/data/graphene.cif",
+        "sha256": "c9e76b74dc0b5dbf20238a7c8584d2e2d14cb3353986b875b77e9c6c9421bc57",
+        "size_bytes": 392
+      }
+    }
+  ],
+  "physical_context": {
+    "scope": "fixture_input_validation",
+    "declaration_provenance": {
+      "source": "USER_CONFIG",
+      "confirmed_on": "2026-07-15",
+      "fields": ["system.physical_dimension", "system.computational_periodicity", "system.periodic_axes", "system.equilibrium", "artifacts.graphene.conventions.vacuum_axis"]
+    },
+    "requested_rules": [
+      "STRUCTURE.LATTICE_VALIDITY",
+      "STRUCTURE.DUPLICATE_FULL_OCCUPANCY",
+      "STRUCTURE.SHARED_PARTIAL_OCCUPANCY",
+      "STRUCTURE.OCCUPANCY_SUM_EXCEEDED",
+      "STRUCTURE.CATASTROPHIC_SHORT_DISTANCE",
+      "STRUCTURE.COVALENT_RADIUS_RATIO"
+    ],
+    "determinant_threshold": "not declared; requires USER_CONFIG or registered rule default"
+  }
+}

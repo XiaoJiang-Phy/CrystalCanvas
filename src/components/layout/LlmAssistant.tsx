@@ -5,6 +5,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { cn } from '../../utils/cn';
 import { Bot, Settings2, Send, X, Loader2, Play, Trash2 } from '../../utils/Icons';
 import { safeInvoke } from '../../utils/tauri-mock';
+import { is_llm_provider, type LlmProvider } from '../../ipc/contracts';
 
 interface LlmAssistantProps {
     isOpen: boolean;
@@ -30,7 +31,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
     // Settings state
     const [showSettings, setShowSettings] = useState(true);
-    const [providerType, setProviderType] = useState('openai');
+    const [providerType, setProviderType] = useState<LlmProvider>('openai');
     const [apiKey, setApiKey] = useState('');
     const [showApiKey, setShowApiKey] = useState(false);
     const [model, setModel] = useState('o4-mini');
@@ -43,7 +44,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     // Default models based on provider
-    const providerDefaults: Record<string, string> = {
+    const providerDefaults: Record<LlmProvider, string> = {
         openai: 'o4-mini',
         deepseek: 'deepseek-reasoner',
         claude: 'claude-sonnet-4-5',
@@ -52,8 +53,9 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     };
 
     const handleProviderChange = async (newProvider: string) => {
+        if (!is_llm_provider(newProvider)) return;
         setProviderType(newProvider);
-        setModel(providerDefaults[newProvider] ?? '');
+        setModel(providerDefaults[newProvider]);
         setShowApiKey(false);
 
         if (newProvider === 'ollama') {
@@ -62,7 +64,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         }
 
         try {
-            const hasKey = await safeInvoke<boolean>('check_api_key_status', { providerType: newProvider });
+            const hasKey = await safeInvoke('check_api_key_status', { providerType: newProvider });
             setApiKey(hasKey ? '********' : '');
         } catch {
             setApiKey('');
@@ -102,7 +104,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         setLoading(true);
 
         try {
-            const rawResponse = await safeInvoke<string>('llm_chat', { userMessage: userMsg.text, selectedIndices: null });
+            const rawResponse = await safeInvoke('llm_chat', { userMessage: userMsg.text, selectedIndices: null });
             const response = rawResponse || '';
 
             let cleanResponse = response;

@@ -82,17 +82,18 @@ pub mod ffi {
         /// Returns Number of new atoms (n_atoms * determinant(expansion))
         unsafe fn get_supercell_size(n_atoms: usize, expansion: *const i32) -> i32;
 
-        /// Build a supercell.
-        unsafe fn build_supercell(
+        /// Build a supercell with a checked output capacity.
+        unsafe fn build_supercell_checked(
             lattice: *const f64,
             positions: *const f64,
             types: *const i32,
             n_atoms: usize,
             expansion: *const i32,
+            output_capacity: usize,
             out_lattice: *mut f64,
             out_positions: *mut f64,
             out_types: *mut i32,
-        );
+        ) -> i32;
 
         /// Get slab size (deprecated — use get_slab_size_v2)
         #[deprecated(note = "Use get_slab_size_v2 for correct deduplication")]
@@ -136,6 +137,7 @@ pub mod ffi {
             miller: *const i32,
             n_layers: i32,
             vacuum_a: f64,
+            output_capacity: usize,
             out_lattice: *mut f64,
             out_positions: *mut f64,
             out_types: *mut i32,
@@ -201,4 +203,3 @@ pub mod ffi {
         ) -> i32;
     }
 }
-

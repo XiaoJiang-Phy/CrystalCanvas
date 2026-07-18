@@ -31,7 +31,6 @@ export const RightSidebar: React.FC<{
     onSelectionChange?: (indices: number[]) => void,
     onBondCountUpdate?: (count: number) => void,
     onActivePhononModeUpdate?: (mode: PhononModeSummary | null) => void,
-    onStructureUpdate?: () => void,
     interactionMode?: 'select' | 'move' | 'rotate' | 'measure',
     setInteractionMode?: (mode: 'select' | 'move' | 'rotate' | 'measure') => void
 }> = (props) => {
@@ -78,10 +77,10 @@ export const RightSidebar: React.FC<{
                         <Suspense fallback={fallbackSpinner}><WannierPanel {...props} /></Suspense>
                     </Accordion>
                     <Accordion title="Supercell Construction" isOpen={openAccordion === 'Supercell'}>
-                        <Suspense fallback={fallbackSpinner}><SupercellPanel {...props} /></Suspense>
+                        <Suspense fallback={fallbackSpinner}><SupercellPanel /></Suspense>
                     </Accordion>
                     <Accordion title="Cutting Plane (hkl)" isOpen={openAccordion === 'Cutting Plane'}>
-                        <Suspense fallback={fallbackSpinner}><SlabPanel {...props} /></Suspense>
+                        <Suspense fallback={fallbackSpinner}><SlabPanel /></Suspense>
                     </Accordion>
                     <Accordion title="Atom Operations" isOpen={openAccordion === 'Atom Operations'}>
                         <Suspense fallback={fallbackSpinner}><AtomOperationsPanel {...props} /></Suspense>
