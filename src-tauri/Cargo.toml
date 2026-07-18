@@ -69,3 +69,8 @@ harness = false
 name = "test_phys_1c_real_failure_atomicity"
 path = "tests/test_phys_1c_real_failure_atomicity.rs"
 harness = false
+
+[[test]]
+name = "test_sync_1c_tauri_smoke"
+path = "tests/test_sync_1c_tauri_smoke.rs"
+harness = false
