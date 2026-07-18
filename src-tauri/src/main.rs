@@ -98,8 +98,20 @@ fn build_menu(app: &mut tauri::App) -> tauri::Result<()> {
     )?;
 
     // ── Edit Menu (macOS requires this for Cmd+C/V to work in WebView) ──
-    let undo = PredefinedMenuItem::undo(app, None::<&str>)?;
-    let redo = PredefinedMenuItem::redo(app, None::<&str>)?;
+    let undo = MenuItem::with_id(
+        app,
+        "menu_undo",
+        "Undo",
+        true,
+        Some("CommandOrControl+Z"),
+    )?;
+    let redo = MenuItem::with_id(
+        app,
+        "menu_redo",
+        "Redo",
+        true,
+        Some("CommandOrControl+Shift+Z"),
+    )?;
     let sep_e1 = PredefinedMenuItem::separator(app)?;
     let select_all = PredefinedMenuItem::select_all(app, None::<&str>)?;
     let deselect_all = MenuItem::with_id(
@@ -518,6 +530,12 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
         }
 
         // ── Edit ─────────────────────────────────────────────────────
+        "menu_undo" => {
+            let _ = app_handle.emit("menu-action", "undo");
+        }
+        "menu_redo" => {
+            let _ = app_handle.emit("menu-action", "redo");
+        }
         "menu_delete_selected" => {
             log::info!("Delete Selected triggered (requires frontend selection).");
             let _ = app_handle.emit("menu-action", "delete_selected");

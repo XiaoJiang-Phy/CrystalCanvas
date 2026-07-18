@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-07-11 | Current Release: v0.6.0 | Development Baseline: macOS (Intel + Apple Silicon)
+> Updated 2026-07-18 | Current Release: v0.6.1 | Development Baseline: macOS (Intel + Apple Silicon)
 
 ---
 
@@ -14,22 +14,15 @@
 | **v0.4.0** | 2026-04-10 | 3D/2D Brillouin Zone, k-path generator (14+5 Bravais types), cell standardization (Niggli/Primitive/Conventional) |
 | **v0.5.0** | 2026-04-11 | Wannier tight-binding visualizer, icon toolbar UI redesign |
 | **v0.6.0** | 2026-04-14 | Measurement tool, Undo/Redo stack, fractional occupancy, modular architecture refactor |
+| **v0.6.1** | 2026-07-18 | Verified IPC contracts, atomic structural transactions, physical input gates, single versioned state refresh |
 
 ---
 
 ## Planned Releases
 
-### v0.6.1 — Correctness & Contract Hardening
-
-**Current focus:** strengthen the foundations before adding new scientific features.
-
-- **Verified frontend–backend contract**: Centralize Tauri commands and events behind typed TypeScript bindings, with automatic command-registration and payload checks.
-- **Physical/render state separation**: Keep only intrinsic atoms in the authoritative Rust state; generate periodic boundary images and Wannier ghost atoms as renderer-derived instances mapped back to their source atoms.
-- **Deterministic transactions**: Make the transaction layer solely responsible for undo snapshots and one version increment per successful mutation.
-- **Physical input validation**: Reject invalid or singular lattice parameters, invalid atom indices, unknown enum values, and ordinary structures with inter-atomic distances below $0.5\ \text{Å}$.
-- **Single state-sync path**: Remove duplicate full-state refreshes after committed mutations.
-
 ### v0.6.2 — Interaction & Geometry Hardening
+
+**Current focus:** improve high-frequency interaction and geometry coverage on the v0.6.1 reliability baseline.
 
 - **Atom drag sessions**: Coalesce pointer-rate updates into one validated commit and one undo entry.
 - **Backend-driven phonon animation**: Advance animation phase in Rust or WGSL instead of issuing per-frame frontend IPC calls.
