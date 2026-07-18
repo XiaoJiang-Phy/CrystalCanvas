@@ -8,7 +8,7 @@ import {
 } from '../../ipc/contracts';
 import { PanelProps } from './index';
 
-export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }: PanelProps) {
+export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
     const [volumetricInfo, setVolumetricInfo] = useState<VolumetricInfo | null>(null);
     const [volumetricRange, setVolumetricRange] = useState<{min: number, max: number}>({min: -1.0, max: 1.0});
     const [isovalue, setIsovalue] = useState(0.05);
@@ -61,7 +61,6 @@ export default function VolumetricPanel({ onStructureUpdate, setOpenAccordion }:
                             setVolumetricRange({ min: dMin, max: dMax });
                             setIsovalue((dMax - dMin) * 0.1 + dMin);
                         }
-                        if (onStructureUpdate) onStructureUpdate();
                     }
                 } catch (e: any) {
                     alert(String(e));

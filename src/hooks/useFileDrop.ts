@@ -3,10 +3,9 @@ import { safeInvoke, safeListen } from '../utils/tauri-mock';
 
 interface UseFileDropProps {
     setIsDragging: (isDragging: boolean) => void;
-    onFileLoaded: () => void;
 }
 
-export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
+export function useFileDrop({ setIsDragging }: UseFileDropProps) {
     useEffect(() => {
         let unlistenDrop = () => { };
         let unlistenHover = () => { };
@@ -17,7 +16,6 @@ export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
             if (path) {
                 console.log('Got drop path:', path);
                 safeInvoke('load_cif_file', { path })
-                    .then(onFileLoaded)
                     .catch(e => alert(`Failed to load structure:\n${e}`));
             }
         };
@@ -46,5 +44,5 @@ export function useFileDrop({ setIsDragging, onFileLoaded }: UseFileDropProps) {
             unlistenCancel();
             unlistenDragDrop();
         };
-    }, [setIsDragging, onFileLoaded]);
+    }, [setIsDragging]);
 }

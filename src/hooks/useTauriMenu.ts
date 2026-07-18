@@ -9,7 +9,6 @@ interface UseTauriMenuProps {
     selectedAtomsRef: React.MutableRefObject<number[]>;
     updateSelection: (sel: number[]) => void;
     setPromptConfig: (config: any) => void;
-    onStateChange: () => void;
     renderFlagsRef: React.MutableRefObject<{ cell: boolean, bonds: boolean, labels: boolean }>;
     setShowCell: (show: boolean) => void;
     setShowBonds: (show: boolean) => void;
@@ -24,7 +23,6 @@ export function useTauriMenu({
     selectedAtomsRef,
     updateSelection,
     setPromptConfig,
-    onStateChange,
     renderFlagsRef,
     setShowCell,
     setShowBonds,
@@ -78,7 +76,6 @@ export function useTauriMenu({
                             const y = parseFloat(parts[2]);
                             const z = parseFloat(parts[3]);
                             safeInvoke('add_atom', { elementSymbol: elem, atomicNumber: 0, fractPos: [x, y, z] })
-                                .then(onStateChange)
                                 .catch(e => alert(e));
                         } else {
                             alert("Invalid format. Use 'Symbol X Y Z'.");
@@ -98,7 +95,7 @@ export function useTauriMenu({
                                     indices: selectedAtomsRef.current,
                                     newElementSymbol: newElem.trim(),
                                     newAtomicNumber: 0
-                                }).then(onStateChange).catch(e => alert(e));
+                                }).catch(e => alert(e));
                             }
                         }
                     });
@@ -141,9 +138,9 @@ export function useTauriMenu({
             if (cmdOrCtrl && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
                 if (e.shiftKey) {
-                    safeInvoke('redo').then(onStateChange).catch(console.error);
+                    safeInvoke('redo').catch(console.error);
                 } else {
-                    safeInvoke('undo').then(onStateChange).catch(console.error);
+                    safeInvoke('undo').catch(console.error);
                 }
             }
         };
@@ -161,6 +158,6 @@ export function useTauriMenu({
     }, [
         setShowAssistant, setIsSettingsOpen, setIsExportImageOpen,
         selectedAtomsRef, updateSelection, setPromptConfig,
-        onStateChange, renderFlagsRef, setShowCell, setShowBonds, setShowLabels, setIsPerspective
+        renderFlagsRef, setShowCell, setShowBonds, setShowLabels, setIsPerspective
     ]);
 }

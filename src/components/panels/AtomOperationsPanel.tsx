@@ -10,7 +10,7 @@ const DisabledButton = ({ label }: { label: string }) => (
     </button>
 );
 
-export default function AtomOperationsPanel({ crystalState, selectedAtoms = [], onSelectionChange, onStructureUpdate }: PanelProps) {
+export default function AtomOperationsPanel({ crystalState, selectedAtoms = [], onSelectionChange }: PanelProps) {
     const [promptConfig, setPromptConfig] = useState<{
         isOpen: boolean;
         title: string;
@@ -24,7 +24,6 @@ export default function AtomOperationsPanel({ crystalState, selectedAtoms = [], 
         if (selectedAtoms.length === 0) return;
         safeInvoke('delete_atoms', { indices: selectedAtoms }).then(() => {
             if (onSelectionChange) onSelectionChange([]);
-            if (onStructureUpdate) onStructureUpdate();
         }).catch(console.error);
     };
 
@@ -42,10 +41,6 @@ export default function AtomOperationsPanel({ crystalState, selectedAtoms = [], 
                         newElementSymbol: newElem.trim(),
                         newAtomicNumber: 0
                     })
-                        .then(() => {
-                            safeInvoke('get_crystal_state').catch(console.error);
-                            if (onStructureUpdate) onStructureUpdate();
-                        })
                         .catch((e: any) => alert(e));
                 }
             }

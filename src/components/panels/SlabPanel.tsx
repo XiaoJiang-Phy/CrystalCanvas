@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { safeInvoke } from '../../utils/tauri-mock';
 import { NumberInput, ActionButton } from './shared';
-import { PanelProps } from './index';
 
-export default function SlabPanel({ onStructureUpdate }: PanelProps) {
+export default function SlabPanel() {
     const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
 
     const handle_slab_cut = () => {
@@ -16,8 +15,6 @@ export default function SlabPanel({ onStructureUpdate }: PanelProps) {
             miller: [slab.h, slab.k, slab.l],
             layers: slab.layers,
             vacuumA: slab.vacuum
-        }).then(() => {
-            if (onStructureUpdate) onStructureUpdate();
         }).catch(console.error);
     };
 

@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { safeInvoke } from '../../utils/tauri-mock';
 import { NumberInput } from './shared';
-import { PanelProps } from './index';
 
-export default function SupercellPanel({ onStructureUpdate }: PanelProps) {
+export default function SupercellPanel() {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
 
     const handle_supercell = () => {
@@ -13,7 +12,6 @@ export default function SupercellPanel({ onStructureUpdate }: PanelProps) {
             [0, 0, sc.nz]
         ];
         safeInvoke('apply_supercell', { matrix })
-            .then(() => { if (onStructureUpdate) onStructureUpdate(); })
             .catch(console.error);
     };
 
@@ -30,7 +28,6 @@ export default function SupercellPanel({ onStructureUpdate }: PanelProps) {
             <button
                 onClick={() => {
                     safeInvoke('restore_unitcell')
-                        .then(() => { if (onStructureUpdate) onStructureUpdate(); })
                         .catch((e: any) => alert(`Restore failed: ${e}`));
                 }}
                 className="w-full py-1.5 bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-700/60 text-slate-600 dark:text-slate-300 rounded-md text-xs font-medium transition-colors border border-slate-200 dark:border-slate-700 active:scale-[0.98] pointer-events-auto"
