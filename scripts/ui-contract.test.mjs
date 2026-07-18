@@ -33,6 +33,16 @@ const ui_1b_sources = Object.fromEntries(await Promise.all(ui_1b_source_paths.ma
     await readFile(new URL('../' + path, import.meta.url), 'utf8'),
 ])));
 
+const ui_1c_source_paths = [
+    'src/App.tsx',
+    'src/components/layout/LeftSidebar.tsx',
+];
+
+const ui_1c_sources = Object.fromEntries(await Promise.all(ui_1c_source_paths.map(async (path) => [
+    path,
+    await readFile(new URL('../' + path, import.meta.url), 'utf8'),
+])));
+
 const package_manifest = JSON.parse(package_json);
 function strip_comments(source) {
     return source
@@ -46,6 +56,11 @@ const persistent_sources = Object.fromEntries(persistent_surfaces.map(([path, so
 ]));
 
 const ui_1b_clean_sources = Object.fromEntries(Object.entries(ui_1b_sources).map(([path, source]) => [
+    path,
+    strip_comments(source),
+]));
+
+const ui_1c_clean_sources = Object.fromEntries(Object.entries(ui_1c_sources).map(([path, source]) => [
     path,
     strip_comments(source),
 ]));
@@ -118,6 +133,70 @@ function assert_no_chrome_pointer_target(source, path) {
         path + ' registers a direct pointer listener',
     );
 }
+
+test('UI-1C collapses structure and atom content into one stable sidebar surface', () => {
+    const left_sidebar = ui_1c_clean_sources['src/components/layout/LeftSidebar.tsx'];
+    const sidebar_surface = left_sidebar.match(/<aside\b[\s\S]*?>/);
+
+    assert.ok(sidebar_surface, 'left workspace must have one semantic sidebar surface');
+    assert.match(sidebar_surface[0], /cc-panel/, 'sidebar surface must use the approved opaque panel primitive');
+    assert.match(sidebar_surface[0], /data-sidebar-surface="structure-workspace"/);
+    assert.match(left_sidebar, /data-sidebar-section="structure"/);
+    assert.match(left_sidebar, /data-sidebar-section="atoms"/);
+    assert.doesNotMatch(left_sidebar, /<Panel\b/, 'structure and atom content must not remain separate floating cards');
+    assert.doesNotMatch(left_sidebar, /const Panel\b/, 'the old per-card surface component must be removed');
+});
+
+test('UI-1C makes lattice fields unit-explicit and numerically aligned', () => {
+    const left_sidebar = ui_1c_clean_sources['src/components/layout/LeftSidebar.tsx'];
+    const unit_cell_input = left_sidebar.slice(left_sidebar.indexOf('const UnitCellInput'));
+    const atom_row = left_sidebar.slice(left_sidebar.indexOf('const AtomRow'));
+
+    assert.match(unit_cell_input, /grid-cols-\[[^\]]*_auto\]/, 'lattice fields need a fixed unit column');
+    assert.match(unit_cell_input, /\btabular-nums\b/, 'lattice values need tabular numerals');
+    assert.match(unit_cell_input, /data-unit=\{unit\}/, 'lattice units must remain machine-visible');
+    assert.match(unit_cell_input, /aria-label=\{`Lattice \$\{label\} \(\$\{unit\}\)`\}/);
+    assert.equal(
+        (atom_row.match(/\btabular-nums\b/g) || []).length,
+        4,
+        'fractional x/y/z and occupancy must each retain tabular numerals',
+    );
+});
+
+test('UI-1C keeps intrinsic row and viewport selection on one App-owned path', () => {
+    const app = ui_1c_clean_sources['src/App.tsx'];
+    const left_sidebar = ui_1c_clean_sources['src/components/layout/LeftSidebar.tsx'];
+
+    assert.match(app, /const \[selectedAtoms, setSelectedAtoms\] = useState<number\[\]>\(\[\]\)/);
+    assert.match(app, /<LeftSidebar[\s\S]*selectedAtoms=\{selectedAtoms\}/);
+    assert.match(app, /onSelectionChange=\{\(sel\) => \{[\s\S]*updateSelection\(sel\);[\s\S]*safeInvoke\('update_selection', \{ indices: sel \}\)/);
+    assert.match(left_sidebar, /labels\.slice\(0, crystalState\.intrinsic_sites\)/);
+    assert.match(left_sidebar, /isSelected=\{selectedAtoms\.includes\(i\)\}/);
+    assert.match(left_sidebar, /onSelectionChange\(\[i\]\)/);
+    assert.doesNotMatch(left_sidebar, /useState<\s*CrystalState/, 'sidebar must not introduce a second crystal-state owner');
+});
+
+test('UI-1C renders typed lattice failures instead of logging a false success', () => {
+    const left_sidebar = ui_1c_clean_sources['src/components/layout/LeftSidebar.tsx'];
+
+    assert.match(left_sidebar, /IpcException/);
+    assert.match(left_sidebar, /const \[latticeError, setLatticeError\] = useState/);
+    assert.match(left_sidebar, /await safeInvoke\('update_lattice_params'/);
+    assert.match(left_sidebar, /error instanceof IpcException/);
+    assert.match(left_sidebar, /setLatticeError\(\{ code: error\.code, message: error\.message \}\)/);
+    assert.match(left_sidebar, /latticeError\.code/);
+    assert.match(left_sidebar, /latticeError\.message/);
+    assert.doesNotMatch(left_sidebar, /update_lattice_params[\s\S]*?catch\(console\.error\)/);
+});
+
+test('UI-1C makes empty and non-finite structure values explicitly non-physical', () => {
+    const left_sidebar = ui_1c_clean_sources['src/components/layout/LeftSidebar.tsx'];
+
+    assert.match(left_sidebar, /No structure loaded/);
+    assert.match(left_sidebar, /Number\.isFinite\(volume\)/);
+    assert.match(left_sidebar, /volume\.toFixed\(1\)\s*:\s*['"]—['"]/);
+    assert.doesNotMatch(left_sidebar, /value=\{`\$\{vol\} Å³`\}/, 'empty values must not be presented as a physical zero-volume result');
+});
 
 test('UI-1B keeps top and bottom chrome compact and free of presentation effects', () => {
     const top_nav = ui_1b_clean_sources['src/components/layout/TopNavBar.tsx'];

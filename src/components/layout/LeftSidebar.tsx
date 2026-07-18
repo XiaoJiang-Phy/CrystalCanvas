@@ -1,83 +1,123 @@
 // [Overview: Left sidebar component for structure info and atom management.]
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
-import React from 'react';
+import React, { useState } from 'react';
 import { cn } from '../../utils/cn';
 import { getJmolColor } from '../../utils/colors';
 import { renderSpacegroupSymbol } from '../../utils/spacegroup';
 import { safeInvoke } from '../../utils/tauri-mock';
+import { IpcException, type IpcError } from '../../ipc/contracts';
 import { CrystalState } from '../../types/crystal';
+
 interface LeftSidebarProps {
     crystalState: CrystalState | null;
     selectedAtoms: number[];
     onSelectionChange: (indices: number[]) => void;
 }
 
+type LatticeError = Pick<IpcError, 'code' | 'message'>;
+
+const formatNumber = (value: number, digits: number): string => (
+    Number.isFinite(value) ? value.toFixed(digits) : '—'
+);
+
 export const LeftSidebar: React.FC<LeftSidebarProps> = ({
     crystalState,
     selectedAtoms,
-    onSelectionChange
+    onSelectionChange,
 }) => {
-    const numAtoms = crystalState ? crystalState.intrinsic_sites : 0;
-    const vol = crystalState ?
-        (crystalState.cell_a * crystalState.cell_b * crystalState.cell_c *
-            Math.sqrt(1 - Math.cos(crystalState.cell_alpha * Math.PI / 180) ** 2
-                - Math.cos(crystalState.cell_beta * Math.PI / 180) ** 2
-                - Math.cos(crystalState.cell_gamma * Math.PI / 180) ** 2
-                + 2 * Math.cos(crystalState.cell_alpha * Math.PI / 180) * Math.cos(crystalState.cell_beta * Math.PI / 180) * Math.cos(crystalState.cell_gamma * Math.PI / 180)
-            )).toFixed(1) : 0;
-    return (
-        <div className="w-[240px] shrink-0 h-full flex flex-col gap-3 p-3 pb-10 pointer-events-none overflow-y-auto custom-scrollbar">
-            <Panel title="Structure Info">
-                <div className="space-y-2 text-xs">
-                    <InfoRow label="Atoms:" value={numAtoms.toString()} />
-                    <div className="flex justify-between items-center">
-                        <span className="text-slate-500 dark:text-slate-400">Space Group:</span>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">
-                            {crystalState?.spacegroup_number ? renderSpacegroupSymbol(crystalState.spacegroup_number) : 'N/A'}
-                        </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2">
-                        <UnitCellInput label="a" paramKey="a" value={crystalState?.cell_a?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
-                        <UnitCellInput label="α" paramKey="alpha" value={crystalState?.cell_alpha?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />
-                        <UnitCellInput label="b" paramKey="b" value={crystalState?.cell_b?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
-                        <UnitCellInput label="β" paramKey="beta" value={crystalState?.cell_beta?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />
-                        <UnitCellInput label="c" paramKey="c" value={crystalState?.cell_c?.toFixed(2) ?? "0.00"} unit="Å" crystalState={crystalState} />
-                        <UnitCellInput label="γ" paramKey="gamma" value={crystalState?.cell_gamma?.toFixed(1) ?? "0.0"} unit="°" crystalState={crystalState} />
-                    </div>
-                    <InfoRow label="Volume:" value={`${vol} Å³`} className="pt-1.5 font-medium" />
-                </div>
-            </Panel>
+    const [latticeError, setLatticeError] = useState<LatticeError | null>(null);
+    const numAtoms = crystalState?.intrinsic_sites ?? 0;
 
-            <Panel title="Atom Management">
-                <div className="w-full bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 text-[10px] max-h-[220px] overflow-x-auto overflow-y-auto custom-scrollbar pr-1">
-                    <table className="w-full text-left">
-                        <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-800/80 font-medium text-slate-500 dark:text-slate-400">
+    if (!crystalState || numAtoms === 0) {
+        return (
+            <aside
+                className="cc-panel w-[240px] shrink-0 h-full pointer-events-auto p-4"
+                data-sidebar-surface="structure-workspace"
+                aria-label="Structure workspace"
+            >
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Structure</h2>
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">No structure loaded</p>
+            </aside>
+        );
+    }
+
+    const volume = crystalState.cell_a * crystalState.cell_b * crystalState.cell_c * Math.sqrt(
+        1 - Math.cos(crystalState.cell_alpha * Math.PI / 180) ** 2
+        - Math.cos(crystalState.cell_beta * Math.PI / 180) ** 2
+        - Math.cos(crystalState.cell_gamma * Math.PI / 180) ** 2
+        + 2 * Math.cos(crystalState.cell_alpha * Math.PI / 180)
+        * Math.cos(crystalState.cell_beta * Math.PI / 180)
+        * Math.cos(crystalState.cell_gamma * Math.PI / 180),
+    );
+    const volumeDisplay = Number.isFinite(volume) ? volume.toFixed(1) : '—';
+
+    return (
+        <aside
+            className="cc-panel w-[240px] shrink-0 h-full flex flex-col pointer-events-auto overflow-hidden"
+            data-sidebar-surface="structure-workspace"
+            aria-label="Structure workspace"
+        >
+            <section className="p-3" data-sidebar-section="structure" aria-labelledby="structure-sidebar-title">
+                <h2 id="structure-sidebar-title" className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                    Structure
+                </h2>
+                <div className="mt-3 space-y-2 text-xs">
+                    <InfoRow label="Atoms:" value={numAtoms.toString()} />
+                    <InfoRow
+                        label="Space Group:"
+                        value={crystalState.spacegroup_number ? renderSpacegroupSymbol(crystalState.spacegroup_number) : 'N/A'}
+                    />
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1">
+                        <UnitCellInput label="a" paramKey="a" value={formatNumber(crystalState.cell_a, 2)} unit="Å" crystalState={crystalState} setLatticeError={setLatticeError} />
+                        <UnitCellInput label="α" paramKey="alpha" value={formatNumber(crystalState.cell_alpha, 1)} unit="°" crystalState={crystalState} setLatticeError={setLatticeError} />
+                        <UnitCellInput label="b" paramKey="b" value={formatNumber(crystalState.cell_b, 2)} unit="Å" crystalState={crystalState} setLatticeError={setLatticeError} />
+                        <UnitCellInput label="β" paramKey="beta" value={formatNumber(crystalState.cell_beta, 1)} unit="°" crystalState={crystalState} setLatticeError={setLatticeError} />
+                        <UnitCellInput label="c" paramKey="c" value={formatNumber(crystalState.cell_c, 2)} unit="Å" crystalState={crystalState} setLatticeError={setLatticeError} />
+                        <UnitCellInput label="γ" paramKey="gamma" value={formatNumber(crystalState.cell_gamma, 1)} unit="°" crystalState={crystalState} setLatticeError={setLatticeError} />
+                    </div>
+                    <InfoRow label="Volume:" value={`${volumeDisplay} Å³`} className="pt-1 font-medium" />
+                    {latticeError && (
+                        <div role="alert" className="border-t border-red-200 pt-2 text-[11px] text-red-700 dark:border-red-900/60 dark:text-red-300">
+                            <span className="font-mono font-medium">{latticeError.code}</span>
+                            <span className="ml-1">{latticeError.message}</span>
+                        </div>
+                    )}
+                </div>
+            </section>
+
+            <section className="min-h-0 flex-1 border-t border-slate-200 dark:border-slate-800" data-sidebar-section="atoms" aria-labelledby="atoms-sidebar-title">
+                <div className="px-3 py-2">
+                    <h2 id="atoms-sidebar-title" className="text-sm font-semibold text-slate-800 dark:text-slate-200">Atoms</h2>
+                </div>
+                <div className="max-h-[220px] overflow-auto border-t border-slate-200 dark:border-slate-800 text-[10px] custom-scrollbar">
+                    <table className="w-full text-left" aria-label="Intrinsic atom fractional coordinates" data-coordinate-system="fractional">
+                        <thead className="sticky top-0 z-10 bg-[var(--cc-field)] font-medium text-slate-500 dark:text-slate-400">
                             <tr>
-                                <th className="px-2 py-1.5 text-center text-xs">ID</th>
-                                <th className="px-2 py-1.5 text-center text-xs">El</th>
-                                <th className="px-2 py-1.5 text-right text-xs">x</th>
-                                <th className="px-2 py-1.5 text-right text-xs">y</th>
-                                <th className="px-2 py-1.5 text-right text-xs">z</th>
-                                <th className="px-2 py-1.5 text-right text-xs">Occ.</th>
-                                <th className="px-2 py-1.5 text-center text-xs">Color</th>
+                                <th scope="col" className="px-2 py-1.5 text-center text-xs">ID</th>
+                                <th scope="col" className="px-2 py-1.5 text-center text-xs">El</th>
+                                <th scope="col" className="px-2 py-1.5 text-right text-xs">x</th>
+                                <th scope="col" className="px-2 py-1.5 text-right text-xs">y</th>
+                                <th scope="col" className="px-2 py-1.5 text-right text-xs">z</th>
+                                <th scope="col" className="px-2 py-1.5 text-right text-xs">Occ.</th>
+                                <th scope="col" className="px-2 py-1.5 text-center text-xs">Color</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                            {crystalState && crystalState.labels.slice(0, crystalState.intrinsic_sites).map((_label, i) => (
+                            {crystalState.labels.slice(0, crystalState.intrinsic_sites).map((_label, i) => (
                                 <AtomRow
                                     key={i}
                                     id={i}
                                     element={crystalState.elements[i]}
-                                    x={crystalState.fract_x[i].toFixed(2)}
-                                    y={crystalState.fract_y[i].toFixed(2)}
-                                    z={crystalState.fract_z[i].toFixed(2)}
-                                    occ={crystalState.occupancies[i].toFixed(2)}
+                                    x={formatNumber(crystalState.fract_x[i], 2)}
+                                    y={formatNumber(crystalState.fract_y[i], 2)}
+                                    z={formatNumber(crystalState.fract_z[i], 2)}
+                                    occ={formatNumber(crystalState.occupancies[i], 2)}
                                     isSelected={selectedAtoms.includes(i)}
-                                    onClick={(e) => {
-                                        if (e.shiftKey) {
+                                    onClick={(event) => {
+                                        if (event.shiftKey) {
                                             if (selectedAtoms.includes(i)) {
-                                                onSelectionChange(selectedAtoms.filter(idx => idx !== i));
+                                                onSelectionChange(selectedAtoms.filter((index) => index !== i));
                                             } else {
                                                 onSelectionChange([...selectedAtoms, i]);
                                             }
@@ -90,41 +130,40 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                         </tbody>
                     </table>
                 </div>
-            </Panel>
-
-        </div>
+            </section>
+        </aside>
     );
 };
 
-// --- Subcomponents ---
-
-const Panel: React.FC<{ title: string; badge?: string; children: React.ReactNode }> = ({ title, badge, children }) => (
-    <div className="cc-panel pointer-events-auto border rounded-lg flex flex-col overflow-hidden">
-        <div className="px-3 py-2.5 flex justify-between items-center border-b border-slate-100 dark:border-slate-800">
-            <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">{title}</h3>
-            {badge && <span className="text-[10px] font-mono text-slate-400">{badge}</span>}
-        </div>
-
-        <div className="px-3 py-3">
-            {children}
-        </div>
-    </div>
-);
-
-const InfoRow = ({ label, value, className }: { label: string; value: string; className?: string }) => (
-    <div className={cn("flex justify-between items-center", className)}>
+const InfoRow = ({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) => (
+    <div className={cn('flex items-center justify-between', className)}>
         <span className="text-slate-500 dark:text-slate-400">{label}</span>
-        <span className="font-medium text-slate-700 dark:text-slate-300">{value}</span>
+        <span className="tabular-nums font-medium text-slate-700 dark:text-slate-300">{value}</span>
     </div>
 );
 
-const UnitCellInput = ({ label, paramKey, value, unit, crystalState }: { label: string; paramKey: string; value: string; unit: string; crystalState: CrystalState | null }) => {
-    const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-        if (!crystalState) return;
-        const val = parseFloat(e.target.value);
-        if (isNaN(val)) return;
+const UnitCellInput = ({
+    label,
+    paramKey,
+    value,
+    unit,
+    crystalState,
+    setLatticeError,
+}: {
+    label: string;
+    paramKey: string;
+    value: string;
+    unit: string;
+    crystalState: CrystalState;
+    setLatticeError: React.Dispatch<React.SetStateAction<LatticeError | null>>;
+}) => {
+    const handleBlur = async (event: React.FocusEvent<HTMLInputElement>) => {
+        const nextValue = Number(event.target.value);
+        if (!Number.isFinite(nextValue)) {
+            setLatticeError({ code: 'invalid_argument', message: `Lattice ${label} must be finite.` });
+            return;
+        }
 
-        // Gather current values
         const params = {
             a: crystalState.cell_a,
             b: crystalState.cell_b,
@@ -134,37 +173,45 @@ const UnitCellInput = ({ label, paramKey, value, unit, crystalState }: { label: 
             gamma: crystalState.cell_gamma,
         };
 
-        // Override the one that changed
-        if (paramKey === 'a') params.a = val;
-        else if (paramKey === 'b') params.b = val;
-        else if (paramKey === 'c') params.c = val;
-        else if (paramKey === 'alpha') params.alpha = val;
-        else if (paramKey === 'beta') params.beta = val;
-        else if (paramKey === 'gamma') params.gamma = val;
+        if (paramKey === 'a') params.a = nextValue;
+        else if (paramKey === 'b') params.b = nextValue;
+        else if (paramKey === 'c') params.c = nextValue;
+        else if (paramKey === 'alpha') params.alpha = nextValue;
+        else if (paramKey === 'beta') params.beta = nextValue;
+        else if (paramKey === 'gamma') params.gamma = nextValue;
 
-        safeInvoke('update_lattice_params', {
-            a: params.a,
-            b: params.b,
-            c: params.c,
-            alpha: params.alpha,
-            beta: params.beta,
-            gamma: params.gamma,
-        }).catch(console.error);
+        try {
+            await safeInvoke('update_lattice_params', {
+                a: params.a,
+                b: params.b,
+                c: params.c,
+                alpha: params.alpha,
+                beta: params.beta,
+                gamma: params.gamma,
+            });
+            setLatticeError(null);
+        } catch (error) {
+            if (error instanceof IpcException) {
+                setLatticeError({ code: error.code, message: error.message });
+                return;
+            }
+            setLatticeError({ code: 'internal_error', message: 'Unable to update lattice parameters.' });
+        }
     };
+
     return (
-        <div className="flex items-center gap-1.5">
-            <span className="w-3 text-slate-500 dark:text-slate-400 font-medium">{label}</span>
-            <div className="flex-1 flex items-center bg-slate-100 dark:bg-slate-800/50 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">
-                <input
-                    type="text"
-                    key={value}
-                    defaultValue={value}
-                    onBlur={handleBlur}
-                    className="w-full bg-transparent outline-none text-slate-700 dark:text-slate-300 min-w-0 text-xs"
-                />
-                <span className="text-slate-400 ml-0.5 text-[10px]">{unit}</span>
-            </div>
-        </div>
+        <label className="grid grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-1.5">
+            <span className="font-medium text-slate-500 dark:text-slate-400">{label}</span>
+            <input
+                type="text"
+                key={value}
+                defaultValue={value}
+                onBlur={handleBlur}
+                aria-label={`Lattice ${label} (${unit})`}
+                className="min-w-0 border border-slate-200 bg-[var(--cc-field)] px-1.5 py-0.5 text-right text-xs tabular-nums text-slate-700 outline-none dark:border-slate-700 dark:text-slate-300"
+            />
+            <span className="shrink-0 text-right text-[10px] text-slate-400" data-unit={unit}>{unit}</span>
+        </label>
     );
 };
 
@@ -176,7 +223,7 @@ interface AtomRowProps {
     z: string;
     occ: string;
     isSelected: boolean;
-    onClick: (e: React.MouseEvent) => void;
+    onClick: (event: React.MouseEvent) => void;
 }
 
 const AtomRow: React.FC<AtomRowProps> = ({ id, element, x, y, z, occ, isSelected, onClick }) => {
@@ -184,26 +231,27 @@ const AtomRow: React.FC<AtomRowProps> = ({ id, element, x, y, z, occ, isSelected
     return (
         <tr
             onClick={onClick}
+            aria-selected={isSelected}
             className={cn(
-                "transition-colors cursor-pointer",
+                'cursor-pointer transition-colors',
                 isSelected
-                    ? "bg-emerald-100 dark:bg-emerald-900/40"
-                    : "hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                    ? 'bg-emerald-100 dark:bg-emerald-900/40'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-800/50',
             )}
         >
-            <td className="px-2 py-1.5 text-slate-500 text-center font-mono">{id + 1}</td>
-            <td className="px-2 py-1.5 font-medium text-center">{element}</td>
-            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{x}</td>
-            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{y}</td>
-            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{z}</td>
-            <td className="px-2 py-1.5 tabular-nums text-right font-mono">{occ}</td>
+            <td className="px-2 py-1.5 text-center font-mono text-slate-500">{id + 1}</td>
+            <td className="px-2 py-1.5 text-center font-medium">{element}</td>
+            <td className="px-2 py-1.5 text-right font-mono tabular-nums">{x}</td>
+            <td className="px-2 py-1.5 text-right font-mono tabular-nums">{y}</td>
+            <td className="px-2 py-1.5 text-right font-mono tabular-nums">{z}</td>
+            <td className="px-2 py-1.5 text-right font-mono tabular-nums">{occ}</td>
             <td className="px-2 py-1.5">
                 <div
-                    className="w-3 h-3 rounded-full shadow-sm mx-auto border border-black/10 dark:border-white/10"
+                    className="mx-auto h-3 w-3 rounded-full border border-black/10 shadow-sm dark:border-white/10"
                     style={{ backgroundColor: hexColor }}
                     title={`${element}: ${hexColor}`}
                 />
             </td>
         </tr>
-    )
+    );
 };
