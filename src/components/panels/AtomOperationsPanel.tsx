@@ -1,14 +1,9 @@
 import React, { useState } from 'react';
+import { IpcException, type IpcError } from '../../ipc/contracts';
 import { safeInvoke } from '../../utils/tauri-mock';
 import { PromptModal } from '../layout/PromptModal';
-import { ActionButton } from './shared';
+import { ActionButton, PanelError } from './shared';
 import { PanelProps } from './index';
-
-const DisabledButton = ({ label }: { label: string }) => (
-    <button disabled className="w-full py-1.5 bg-slate-100 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500 cursor-not-allowed rounded-md border border-slate-200 dark:border-slate-700 text-xs">
-        {label}
-    </button>
-);
 
 export default function AtomOperationsPanel({ crystalState, selectedAtoms = [], onSelectionChange }: PanelProps) {
     const [promptConfig, setPromptConfig] = useState<{
@@ -18,71 +13,88 @@ export default function AtomOperationsPanel({ crystalState, selectedAtoms = [], 
         placeholder?: string;
         initialValue?: string;
         onSubmit: (value: string) => void;
-    }>({ isOpen: false, title: "", onSubmit: () => { } });
+    }>({ isOpen: false, title: '', onSubmit: () => {} });
+    const [error, setError] = useState<IpcError | null>(null);
+    const [activeOperation, setActiveOperation] = useState<'delete' | 'replace' | null>(null);
 
-    const handle_delete_atom = () => {
-        if (selectedAtoms.length === 0) return;
-        safeInvoke('delete_atoms', { indices: selectedAtoms }).then(() => {
-            if (onSelectionChange) onSelectionChange([]);
-        }).catch(console.error);
+    const setMutationError = (cause: unknown, fallback: string) => {
+        if (cause instanceof IpcException) {
+            setError({ code: cause.code, message: cause.message, recoverable: cause.recoverable });
+            return;
+        }
+        setError({ code: 'internal_error', message: fallback, recoverable: false });
     };
 
-    const handle_replace_atom = () => {
-        if (selectedAtoms.length === 0) return;
+    const handleDeleteAtom = async () => {
+        if (selectedAtoms.length === 0 || activeOperation) return;
+        setError(null);
+        setActiveOperation('delete');
+        try {
+            await safeInvoke('delete_atoms', { indices: selectedAtoms });
+            onSelectionChange?.([]);
+        } catch (cause) {
+            setMutationError(cause, 'Unable to delete the selected atoms.');
+        } finally {
+            setActiveOperation(null);
+        }
+    };
+
+    const handleReplacementSubmit = async (newElem: string) => {
+        if (!newElem || newElem.trim().length === 0 || activeOperation) return;
+        setError(null);
+        setActiveOperation('replace');
+        try {
+            await safeInvoke('substitute_atoms', {
+                indices: selectedAtoms,
+                newElementSymbol: newElem.trim(),
+                newAtomicNumber: 0
+            });
+        } catch (cause) {
+            setMutationError(cause, 'Unable to replace the selected atoms.');
+            throw cause;
+        } finally {
+            setActiveOperation(null);
+        }
+    };
+
+    const handleReplaceAtom = () => {
+        if (selectedAtoms.length === 0 || activeOperation) return;
         setPromptConfig({
             isOpen: true,
-            title: "Replace Atom(s)",
-            description: "Enter new element symbol (e.g., Fe, O, C):",
-            placeholder: "Element symbol",
-            onSubmit: (newElem) => {
-                if (newElem && newElem.trim().length > 0) {
-                    safeInvoke('substitute_atoms', {
-                        indices: selectedAtoms,
-                        newElementSymbol: newElem.trim(),
-                        newAtomicNumber: 0
-                    })
-                        .catch((e: any) => alert(e));
-                }
-            }
+            title: 'Replace Atom(s)',
+            description: 'Enter new element symbol (e.g., Fe, O, C):',
+            placeholder: 'Element symbol',
+            onSubmit: handleReplacementSubmit,
         });
     };
 
+    const hasSelection = selectedAtoms.length > 0;
+    const isBusy = activeOperation !== null;
+
     return (
         <div className="space-y-3">
-            <div className="text-xs space-y-1">
-                <div className="text-slate-500 dark:text-slate-400">
-                    Selected: <span className="text-slate-800 dark:text-slate-200 font-medium">
-                        {selectedAtoms.length > 0 ? (selectedAtoms.length === 1 ? `Atom #${selectedAtoms[0]}` : `${selectedAtoms.length} atoms`) : "None"}
-                    </span>
-                </div>
-                <div className="text-slate-500 dark:text-slate-400">
-                    Element: <span className="text-slate-800 dark:text-slate-200 font-medium">
-                        {selectedAtoms.length === 1 && crystalState ? crystalState.elements?.[selectedAtoms[0]] : (selectedAtoms.length > 1 ? "Mixed" : "-")}
-                    </span>
-                </div>
-            </div>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
+                <dt className="text-[var(--cc-muted)]">Selected</dt>
+                <dd className="font-medium text-[var(--cc-text)]">
+                    {hasSelection ? (selectedAtoms.length === 1 ? `Atom #${selectedAtoms[0]}` : `${selectedAtoms.length} atoms`) : 'None'}
+                </dd>
+                <dt className="text-[var(--cc-muted)]">Element</dt>
+                <dd className="font-medium text-[var(--cc-text)]">
+                    {selectedAtoms.length === 1 && crystalState ? crystalState.elements?.[selectedAtoms[0]] : (selectedAtoms.length > 1 ? 'Mixed' : '—')}
+                </dd>
+            </dl>
 
-            <div className="flex flex-col gap-1.5">
-                {selectedAtoms.length > 0 ? (
-                    <>
-                        <ActionButton label="Replace Atom(s)" onClick={handle_replace_atom} />
-                        <button onClick={handle_delete_atom} className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md text-xs font-medium transition-colors border border-red-200 dark:border-red-900 active:scale-[0.98] pointer-events-auto">
-                            Delete Atom(s)
-                        </button>
-                        <DisabledButton label="Add Sub-Atom" />
-                    </>
-                ) : (
-                    <>
-                        <DisabledButton label="Replace Atom(s)" />
-                        <DisabledButton label="Delete Atom(s)" />
-                        <DisabledButton label="Add Sub-Atom" />
-                    </>
-                )}
+            {error && <PanelError error={error} message={error.message} />}
+
+            <div className="space-y-2">
+                <ActionButton label="Replace Atom(s)" onClick={handleReplaceAtom} disabled={!hasSelection || isBusy} busy={activeOperation === 'replace'} />
+                <ActionButton label="Delete Atom(s)" onClick={handleDeleteAtom} disabled={!hasSelection || isBusy} busy={activeOperation === 'delete'} tone="danger" />
+                <ActionButton label="Add Sub-Atom" disabled tone="secondary" />
             </div>
 
             <PromptModal
                 {...promptConfig}
-                onClose={() => setPromptConfig(prev => ({ ...prev, isOpen: false }))}
+                onClose={() => setPromptConfig((current) => ({ ...current, isOpen: false }))}
             />
         </div>
     );

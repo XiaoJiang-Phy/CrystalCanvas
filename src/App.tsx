@@ -277,15 +277,13 @@ function App() {
                                     title: "Add Atom",
                                     description: "What element do you want to add?",
                                     placeholder: "e.g., C, Fe, O",
-                                    onSubmit: (elem) => {
-                                        if (elem && elem.trim()) {
-                                            safeInvoke('add_atom', {
-                                                elementSymbol: elem.trim(),
-                                                atomicNumber: 0,
-                                                fractPos: [0.5, 0.5, 0.5]
-                                            })
-                                                .catch(e => alert(e));
-                                        }
+                                    onSubmit: async (elem) => {
+                                        if (!elem || !elem.trim()) return;
+                                        await safeInvoke('add_atom', {
+                                            elementSymbol: elem.trim(),
+                                            atomicNumber: 0,
+                                            fractPos: [0.5, 0.5, 0.5]
+                                        });
                                     }
                                 });
                             }}

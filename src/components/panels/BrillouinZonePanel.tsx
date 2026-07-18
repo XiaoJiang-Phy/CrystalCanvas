@@ -1,13 +1,26 @@
 import React, { useState, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { safeInvoke, safeDialogSave } from '../../utils/tauri-mock';
+import { IpcException, type IpcError } from '../../ipc/contracts';
 import { BzInfo } from '../../types/crystal';
 import { PanelProps } from './index';
+import { ActionButton, PanelError, SelectInput } from './shared';
 
 export default function BrillouinZonePanel({}: PanelProps) {
     const [bzInfo, setBzInfo] = useState<BzInfo | null>(null);
     const [isBzVisible, setIsBzVisible] = useState(false);
     const [bzLabels, setBzLabels] = useState<{label: string, x: number, y: number}[]>([]);
+    const [kPathFormat, setKPathFormat] = useState<'qe' | 'vasp'>('qe');
+    const [activeOperation, setActiveOperation] = useState<'compute' | 'toggle' | 'save' | null>(null);
+    const [error, setError] = useState<IpcError | null>(null);
+
+    const setPanelError = (cause: unknown, fallback: string) => {
+        if (cause instanceof IpcException) {
+            setError({ code: cause.code, message: cause.message, recoverable: cause.recoverable });
+            return;
+        }
+        setError({ code: 'internal_error', message: fallback, recoverable: false });
+    };
 
     const fetch_bz_labels = useCallback(async () => {
         const w = window.innerWidth;
@@ -15,67 +28,77 @@ export default function BrillouinZonePanel({}: PanelProps) {
         try {
             const labels = await safeInvoke('get_bz_label_positions', { width: w, height: h });
             if (labels) setBzLabels(labels);
-        } catch (_e: any) {
+        } catch (cause) {
             setBzLabels([]);
+            setPanelError(cause, 'Unable to position Brillouin-zone labels.');
         }
     }, []);
 
-    const handle_compute_bz = () => {
-        safeInvoke('compute_brillouin_zone')
-            .then(res => {
-                if (res) {
-                    setBzInfo(res);
-                    return safeInvoke('toggle_bz_display', { show: true }).then(() => {
-                        setIsBzVisible(true);
-                        setTimeout(fetch_bz_labels, 150);
-                    });
-                }
-            })
-            .catch(console.error);
+    const handle_compute_bz = async () => {
+        if (activeOperation) return;
+        setError(null);
+        setActiveOperation('compute');
+        try {
+            const res = await safeInvoke('compute_brillouin_zone');
+            if (res) {
+                setBzInfo(res);
+                await safeInvoke('toggle_bz_display', { show: true });
+                setIsBzVisible(true);
+                setTimeout(fetch_bz_labels, 150);
+            }
+        } catch (cause) {
+            setPanelError(cause, 'Unable to compute the Brillouin zone.');
+        } finally {
+            setActiveOperation(null);
+        }
     };
 
-    const handle_toggle_bz = () => {
+    const handle_toggle_bz = async () => {
+        if (activeOperation) return;
         const next = !isBzVisible;
-        safeInvoke('toggle_bz_display', { show: next })
-            .then(() => {
-                setIsBzVisible(next);
-                if (next) {
-                    setTimeout(fetch_bz_labels, 200);
-                } else {
-                    setBzLabels([]);
-                }
-            })
-            .catch(console.error);
+        setError(null);
+        setActiveOperation('toggle');
+        try {
+            await safeInvoke('toggle_bz_display', { show: next });
+            setIsBzVisible(next);
+            if (next) {
+                setTimeout(fetch_bz_labels, 200);
+            } else {
+                setBzLabels([]);
+            }
+        } catch (cause) {
+            setPanelError(cause, 'Unable to change Brillouin-zone visibility.');
+        } finally {
+            setActiveOperation(null);
+        }
     };
+
+    const isBusy = activeOperation !== null;
 
     return (
         <>
-        <div className="space-y-3">
-            <button onClick={handle_compute_bz} className="flex-1 w-full py-1.5 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-md text-xs font-medium transition-colors border border-emerald-200/50 dark:border-emerald-800/50 active:scale-[0.98] pointer-events-auto">
-                Compute Brillouin Zone
-            </button>
+        <div className="space-y-3" aria-busy={isBusy}>
+            <ActionButton label="Compute Brillouin Zone" onClick={handle_compute_bz} disabled={isBusy} busy={activeOperation === 'compute'} />
+
+            {error && <PanelError error={error} message={error.message} />}
+            {!bzInfo && !isBusy && !error && <div role="status" className="text-xs text-[var(--cc-muted)]">Brillouin-zone data is unavailable until it is computed.</div>}
             
-            <button 
-                onClick={handle_toggle_bz} 
-                disabled={!bzInfo}
-                className={`w-full py-1.5 rounded-md text-xs font-medium transition-colors shadow-sm pointer-events-auto ${
-                    !bzInfo ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed" :
-                    isBzVisible 
-                        ? "bg-amber-500 hover:bg-amber-600 text-white" 
-                        : "bg-slate-500 hover:bg-slate-600 text-white"
-                }`}
-            >
-                {isBzVisible ? "◀ Back to Crystal View" : "View Brillouin Zone"}
-            </button>
+            <ActionButton
+                label={isBzVisible ? 'Back to Crystal View' : 'View Brillouin Zone'}
+                onClick={handle_toggle_bz}
+                disabled={!bzInfo || isBusy}
+                busy={activeOperation === 'toggle'}
+                tone="secondary"
+            />
 
             {bzInfo && (
-                <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-2 rounded border border-slate-100 dark:border-slate-700 space-y-1">
+                <div className="space-y-1 rounded border border-[var(--cc-border)] bg-[var(--cc-panel)] p-2 text-[11px] text-[var(--cc-text)]">
                     <div className="flex justify-between">
-                        <span className="text-slate-500">Bravais Type:</span>
+                        <span className="text-[var(--cc-muted)]">Bravais Type:</span>
                         <span className="font-semibold">{bzInfo.bravais_type}</span>
                     </div>
                     <div className="flex justify-between">
-                        <span className="text-slate-500">Geometry:</span>
+                        <span className="text-[var(--cc-muted)]">Geometry:</span>
                         <span>
                             {bzInfo.is_2d ? `${bzInfo.edges_count} edges, ` : `${bzInfo.faces_count} faces, `} 
                             {bzInfo.vertices_count} vertices
@@ -86,30 +109,38 @@ export default function BrillouinZonePanel({}: PanelProps) {
 
             {bzInfo && (
                 <>
-                <div className="border-t border-slate-200 dark:border-slate-700 my-2"></div>
-                <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Band Path Generator</div>
+                <div className="my-2 border-t border-[var(--cc-border)]"></div>
+                <div className="mb-1 text-[11px] font-medium text-[var(--cc-muted)]">Band Path Generator</div>
                 <div className="flex items-center gap-2 mb-1">
-                    <label className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">N<sub>k</sub></label>
-                    <input 
+                    <label className="whitespace-nowrap text-[11px] text-[var(--cc-muted)]">N<sub>k</sub></label>
+                    <input
                         type="number" min={5} max={100} defaultValue={20}
                         id="kpath-npoints"
-                        className="w-14 bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-slate-700 dark:text-slate-300 pointer-events-auto"
+                        className="w-14 rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-xs text-[var(--cc-text)] outline-none focus-visible:border-[var(--cc-accent)] focus-visible:ring-1 focus-visible:ring-[var(--cc-accent)]"
                     />
-                    <select
-                        id="kpath-format"
-                        defaultValue="qe"
-                        className="flex-1 bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-slate-700 dark:text-slate-300 pointer-events-auto"
-                    >
-                        <option value="qe">QE (crystal)</option>
-                        <option value="vasp">VASP (KPOINTS)</option>
-                    </select>
+                    <div className="flex-1">
+                        <SelectInput
+                            label="Format"
+                            value={kPathFormat}
+                            onChange={(value) => setKPathFormat(value === 'vasp' ? 'vasp' : 'qe')}
+                            disabled={isBusy}
+                        >
+                            <option value="qe">QE (crystal)</option>
+                            <option value="vasp">VASP (KPOINTS)</option>
+                        </SelectInput>
+                    </div>
                 </div>
-                <button
+                <ActionButton
+                    label="Generate & Save"
+                    disabled={isBusy}
+                    busy={activeOperation === 'save'}
                     onClick={async () => {
+                        if (isBusy) return;
                         const nEl = document.getElementById('kpath-npoints') as HTMLInputElement;
-                        const fmtEl = document.getElementById('kpath-format') as HTMLSelectElement;
                         const npoints = parseInt(nEl?.value) || 20;
-                        const fmt = fmtEl?.value || 'qe';
+                        const fmt = kPathFormat;
+                        setError(null);
+                        setActiveOperation('save');
                         try {
                             const res = await safeInvoke('generate_kpath_text', { npoints });
                             if (!res) return;
@@ -124,14 +155,13 @@ export default function BrillouinZonePanel({}: PanelProps) {
                             if (savePath) {
                                 await safeInvoke('write_text_file', { path: savePath, content: text });
                             }
-                        } catch (e: any) {
-                            alert(String(e));
+                        } catch (cause) {
+                            setPanelError(cause, 'Unable to generate or save the k-path.');
+                        } finally {
+                            setActiveOperation(null);
                         }
                     }}
-                    className="w-full py-1 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800/50 rounded text-[11px] mb-2 pointer-events-auto"
-                >
-                    Generate & Save
-                </button>
+                />
                 <div className="bg-slate-900 text-emerald-400 p-2 rounded text-[10px] font-mono overflow-x-auto max-h-32 custom-scrollbar select-text pointer-events-auto">
                     <pre id="kpath-preview">Press generate to preview...</pre>
                 </div>

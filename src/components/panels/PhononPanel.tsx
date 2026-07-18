@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { safeInvoke } from '../../utils/tauri-mock';
+import { IpcException, type IpcError } from '../../ipc/contracts';
 import { PhononModeSummary } from '../../types/crystal';
 import { PhononImportModal } from '../layout/PhononImportModal';
 import { PanelProps } from './index';
+import { ActionButton, PanelError, RangeInput, SelectInput } from './shared';
 
 export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
     const [phononModes, setPhononModes] = useState<PhononModeSummary[] | null>(null);
@@ -10,6 +12,17 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
     const [isAnimating, setIsAnimating] = useState(false);
     const [amplitude, setAmplitude] = useState(1.0);
     const [isPhononModalOpen, setIsPhononModalOpen] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [isSelectingMode, setIsSelectingMode] = useState(false);
+    const [error, setError] = useState<IpcError | null>(null);
+
+    const setPanelError = (cause: unknown, fallback: string) => {
+        if (cause instanceof IpcException) {
+            setError({ code: cause.code, message: cause.message, recoverable: cause.recoverable });
+            return;
+        }
+        setError({ code: 'internal_error', message: fallback, recoverable: false });
+    };
 
     useEffect(() => {
         if (!isAnimating) return;
@@ -30,8 +43,10 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
     };
 
     const handleSubmitPhonon = async (paths: { scfIn: string, scfOut: string, modes: string, axsf: string }) => {
+        if (isLoading) return;
+        setError(null);
+        setIsLoading(true);
         try {
-            setIsPhononModalOpen(false);
             let modesData;
             if (paths.axsf) {
                 modesData = await safeInvoke('load_axsf_phonon', { path: paths.axsf });
@@ -46,37 +61,50 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
                 setPhononModes(modesData);
                 setActiveModeIdx(null);
                 setIsAnimating(false);
+                setIsPhononModalOpen(false);
             }
-        } catch (error: any) {
-            console.error(error);
-            alert(String(error));
+        } catch (cause) {
+            setPanelError(cause, 'Unable to load phonon data.');
+            throw cause;
+        } finally {
+            setIsLoading(false);
         }
     };
 
-    const handle_select_mode = (idx: number) => {
-        setActiveModeIdx(idx);
-        if (phononModes && onActivePhononModeUpdate) {
-            const mode = phononModes.find(m => m.index === idx);
-            onActivePhononModeUpdate(mode || null);
+    const handle_select_mode = async (idx: number) => {
+        if (isSelectingMode) return;
+        setError(null);
+        setIsSelectingMode(true);
+        try {
+            await safeInvoke('set_phonon_mode', { modeIndex: idx });
+            setActiveModeIdx(idx);
+            if (phononModes && onActivePhononModeUpdate) {
+                const mode = phononModes.find(m => m.index === idx);
+                onActivePhononModeUpdate(mode || null);
+            }
+        } catch (cause) {
+            setPanelError(cause, 'Unable to select the phonon mode.');
+        } finally {
+            setIsSelectingMode(false);
         }
-        safeInvoke('set_phonon_mode', { modeIndex: idx }).catch(console.error);
     };
 
     return (
-        <div className="space-y-3">
-            <button onClick={handle_load_phonon} className="flex-1 w-full py-1.5 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-md text-xs font-medium transition-colors border border-emerald-200/50 dark:border-emerald-800/50 active:scale-[0.98] pointer-events-auto">
-                Load Phonon Data (.mold/.dat)
-            </button>
+        <div className="space-y-3" aria-busy={isLoading || isSelectingMode}>
+            <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handle_load_phonon} disabled={isLoading || isSelectingMode} busy={isLoading} />
+
+            {error && <PanelError error={error} message={error.message} />}
+            {!phononModes && !isLoading && !error && <div role="status" className="text-xs text-[var(--cc-muted)]">No phonon modes are loaded.</div>}
 
             {phononModes && (
                 <>
-                    <div className="space-y-1">
-                        <label className="text-[11px] text-slate-500 dark:text-slate-400">Select Mode</label>
-                        <select
-                            className="w-full bg-slate-100 dark:bg-slate-800/60 rounded px-2 py-1.5 outline-none border border-slate-200 dark:border-slate-700 text-xs text-slate-700 dark:text-slate-300 pointer-events-auto"
-                            value={activeModeIdx ?? ""}
-                            onChange={(e) => handle_select_mode(parseInt(e.target.value))}
-                        >
+                    <SelectInput
+                        label="Select Mode"
+                        value={activeModeIdx?.toString() ?? ''}
+                        onChange={(value) => handle_select_mode(parseInt(value, 10))}
+                        disabled={isLoading || isSelectingMode}
+                        busy={isSelectingMode}
+                    >
                             <option value="" disabled>-- Select Mode --</option>
                             {Array.from(new Set(phononModes.map(m => m.q_point.join(',')))).map(qStr => {
                                 const qModes = phononModes.filter(m => m.q_point.join(',') === qStr);
@@ -92,31 +120,25 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
                                     </optgroup>
                                 );
                             })}
-                        </select>
-                    </div>
+                    </SelectInput>
 
-                    <div className="space-y-1">
-                        <div className="flex justify-between items-center text-[11px] text-slate-500 dark:text-slate-400">
-                            <span>Amplitude: {amplitude.toFixed(1)}</span>
-                        </div>
-                        <input
-                            type="range" min={0.1} max={5.0} step={0.1}
-                            value={amplitude}
-                            onChange={e => setAmplitude(parseFloat(e.target.value))}
-                            className="w-full h-1 accent-emerald-500 cursor-pointer pointer-events-auto"
-                        />
-                    </div>
+                    <RangeInput
+                        label="Amplitude"
+                        value={amplitude}
+                        displayValue={amplitude.toFixed(1)}
+                        min={0.1}
+                        max={5.0}
+                        step={0.1}
+                        onChange={setAmplitude}
+                        disabled={isLoading || isSelectingMode}
+                    />
 
-                    <button
+                    <ActionButton
+                        label={isAnimating ? 'Pause Animation' : 'Play Animation'}
                         onClick={() => setIsAnimating(!isAnimating)}
-                        disabled={activeModeIdx === null}
-                        className={`w-full py-1.5 text-white rounded-md text-xs font-medium transition-colors shadow-sm pointer-events-auto ${
-                            activeModeIdx === null ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed" :
-                                isAnimating ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-500 hover:bg-emerald-600"
-                        }`}
-                    >
-                        {isAnimating ? "⏸ Pause Animation" : "▶ Play Animation"}
-                    </button>
+                        disabled={activeModeIdx === null || isLoading || isSelectingMode}
+                        tone={isAnimating ? 'secondary' : 'primary'}
+                    />
                 </>
             )}
 

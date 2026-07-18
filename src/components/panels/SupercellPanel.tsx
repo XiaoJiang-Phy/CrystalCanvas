@@ -1,39 +1,64 @@
 import React, { useState } from 'react';
+import { IpcException, type IpcError } from '../../ipc/contracts';
 import { safeInvoke } from '../../utils/tauri-mock';
-import { NumberInput } from './shared';
+import { ActionButton, NumberInput, PanelError } from './shared';
 
 export default function SupercellPanel() {
     const [sc, setSc] = useState({ nx: 1, ny: 1, nz: 1 });
+    const [error, setError] = useState<IpcError | null>(null);
+    const [activeOperation, setActiveOperation] = useState<'supercell' | 'restore' | null>(null);
 
-    const handle_supercell = () => {
+    const setMutationError = (cause: unknown, fallback: string) => {
+        if (cause instanceof IpcException) {
+            setError({ code: cause.code, message: cause.message, recoverable: cause.recoverable });
+            return;
+        }
+        setError({ code: 'internal_error', message: fallback, recoverable: false });
+    };
+
+    const handleSupercell = async () => {
+        if (activeOperation) return;
         const matrix: [[number, number, number], [number, number, number], [number, number, number]] = [
             [sc.nx, 0, 0],
             [0, sc.ny, 0],
-            [0, 0, sc.nz]
+            [0, 0, sc.nz],
         ];
-        safeInvoke('apply_supercell', { matrix })
-            .catch(console.error);
+        setError(null);
+        setActiveOperation('supercell');
+        try {
+            await safeInvoke('apply_supercell', { matrix });
+        } catch (cause) {
+            setMutationError(cause, 'Unable to create the supercell.');
+        } finally {
+            setActiveOperation(null);
+        }
     };
+
+    const handleRestore = async () => {
+        if (activeOperation) return;
+        setError(null);
+        setActiveOperation('restore');
+        try {
+            await safeInvoke('restore_unitcell');
+        } catch (cause) {
+            setMutationError(cause, 'Unable to restore the original cell.');
+        } finally {
+            setActiveOperation(null);
+        }
+    };
+
+    const isBusy = activeOperation !== null;
 
     return (
         <div className="space-y-3">
-            <div className="flex gap-2 text-xs">
-                <NumberInput label="Nx" value={sc.nx} onChange={v => setSc(s => ({ ...s, nx: v }))} />
-                <NumberInput label="Ny" value={sc.ny} onChange={v => setSc(s => ({ ...s, ny: v }))} />
-                <NumberInput label="Nz" value={sc.nz} onChange={v => setSc(s => ({ ...s, nz: v }))} />
+            <div className="grid grid-cols-3 gap-2">
+                <NumberInput label="Nx" value={sc.nx} onChange={(value) => setSc((current) => ({ ...current, nx: value }))} disabled={isBusy} invalid={sc.nx < 1} />
+                <NumberInput label="Ny" value={sc.ny} onChange={(value) => setSc((current) => ({ ...current, ny: value }))} disabled={isBusy} invalid={sc.ny < 1} />
+                <NumberInput label="Nz" value={sc.nz} onChange={(value) => setSc((current) => ({ ...current, nz: value }))} disabled={isBusy} invalid={sc.nz < 1} />
             </div>
-            <button onClick={handle_supercell} className="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-medium transition-colors shadow-sm active:scale-[0.98] pointer-events-auto">
-                Execute Supercell
-            </button>
-            <button
-                onClick={() => {
-                    safeInvoke('restore_unitcell')
-                        .catch((e: any) => alert(`Restore failed: ${e}`));
-                }}
-                className="w-full py-1.5 bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-700/60 text-slate-600 dark:text-slate-300 rounded-md text-xs font-medium transition-colors border border-slate-200 dark:border-slate-700 active:scale-[0.98] pointer-events-auto"
-            >
-                Restore Original Cell
-            </button>
+            {error && <PanelError error={error} message={error.message} />}
+            <ActionButton label="Execute Supercell" onClick={handleSupercell} disabled={isBusy} busy={activeOperation === 'supercell'} />
+            <ActionButton label="Restore Original Cell" onClick={handleRestore} disabled={isBusy} busy={activeOperation === 'restore'} tone="secondary" />
         </div>
     );
 }
