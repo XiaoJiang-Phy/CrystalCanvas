@@ -89,7 +89,7 @@ pub fn parse_cube(path: &str) -> Result<CrystalState, String> {
 
     let mut state = CrystalState {
         name: format!("Gaussian Cube: {}", std::path::Path::new(path).file_name().unwrap_or_default().to_string_lossy()),
-        version: 1,
+        version: 0,
         intrinsic_sites: n_atoms,
         ..Default::default()
     };
@@ -396,4 +396,3 @@ mod tests {
         assert!(!err.is_empty(), "must return non-empty error message");
     }
 }
-

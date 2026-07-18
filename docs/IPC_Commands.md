@@ -590,7 +590,7 @@ invoke("generate_kpath_text", { npoints: u32 }) → KPathTextResponse
 ```
 
 - **Returns**: `{ qe: string, vasp: string }` — ready-to-save file contents
-- **Behavior**: Generates uniformly-spaced k-point grids along the path. Segment density is proportional to Cartesian path length. For 2D materials, forces $k_z = 0$.
+- **Behavior**: Generates uniformly-spaced k-point grids along the path. Segment density is proportional to Cartesian path length. For 2D materials, the internal $(k_1,k_2,0)$ coordinates are remapped to the original primitive reciprocal basis, with the component corresponding to the cached vacuum lattice vector set to zero. Export is rejected when the BZ cache source version differs from the current crystal-state version.
 
 ---
 

@@ -1,7 +1,12 @@
 use tauri::State;
 use super::BaseCrystalState;
 use crate::undo::UndoStack;
-use crate::transaction::{with_state_read_try, with_state_update_and_refit};
+use crate::transaction::{
+    with_prepared_state_update,
+    with_prepared_state_update_and_refit,
+    with_state_read_try,
+};
+use crate::ipc::{IpcError, IpcResult};
 
 #[tauri::command]
 pub fn preview_slab(
@@ -9,7 +14,9 @@ pub fn preview_slab(
     layers: i32,
     vacuum_a: f64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<crate::crystal_state::CrystalState, String> {
+) -> IpcResult<crate::crystal_state::CrystalState> {
+    crate::crystal_state::validate_slab_request(miller, layers, vacuum_a)
+        .map_err(IpcError::invalid_argument)?;
     log::info!(
         "preview_slab: miller={:?} layers={} vacuum={}",
         miller,
@@ -18,6 +25,7 @@ pub fn preview_slab(
     );
     with_state_read_try(&crystal_state, |cs| {
         cs.generate_slab(miller, layers, vacuum_a)
+            .map_err(IpcError::invalid_argument)
     })
 }
 
@@ -25,10 +33,11 @@ pub fn preview_slab(
 pub fn preview_supercell(
     expansion: [i32; 9],
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<crate::crystal_state::CrystalState, String> {
+) -> IpcResult<crate::crystal_state::CrystalState> {
     log::info!("preview_supercell: {:?}", expansion);
     with_state_read_try(&crystal_state, |cs| {
         cs.generate_supercell(&expansion)
+            .map_err(IpcError::invalid_argument)
     })
 }
 
@@ -41,7 +50,7 @@ pub fn apply_supercell(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     // Flatten the 3x3 matrix into the [i32; 9] format expected by generate_supercell
     let expansion: [i32; 9] = [
         matrix[0][0],
@@ -56,11 +65,11 @@ pub fn apply_supercell(
     ];
     log::info!("apply_supercell: {:?}", expansion);
 
-    with_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let new_state = cs.generate_supercell(&expansion)?;
-        *cs = new_state;
-        cs.detect_spacegroup();
-        Ok(())
+    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = cs.generate_supercell(&expansion)
+            .map_err(IpcError::invalid_argument)?;
+        prepared.detect_spacegroup();
+        Ok(prepared)
     })
 }
 
@@ -75,7 +84,9 @@ pub fn apply_slab(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
+    crate::crystal_state::validate_slab_request(miller, layers, vacuum_a)
+        .map_err(IpcError::invalid_argument)?;
     log::info!(
         "apply_slab: miller={:?} layers={} vacuum={}",
         miller,
@@ -83,11 +94,11 @@ pub fn apply_slab(
         vacuum_a
     );
 
-    with_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let new_state = cs.generate_slab(miller, layers, vacuum_a)?;
-        *cs = new_state;
-        cs.detect_spacegroup();
-        Ok(())
+    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = cs.generate_slab(miller, layers, vacuum_a)
+            .map_err(IpcError::invalid_argument)?;
+        prepared.detect_spacegroup();
+        Ok(prepared)
     })
 }
 
@@ -99,12 +110,13 @@ pub fn apply_niggli_reduce(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("apply_niggli_reduce");
     
-    with_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        cs.niggli_reduce()?;
-        Ok(())
+    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+        prepared.niggli_reduce().map_err(IpcError::invalid_argument)?;
+        Ok(prepared)
     })
 }
 
@@ -117,16 +129,17 @@ pub fn apply_cell_standardize(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("apply_cell_standardize: to_primitive={}", to_primitive);
     
-    with_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
         if to_primitive {
-            cs.to_primitive()?;
+            prepared.to_primitive().map_err(IpcError::invalid_argument)?;
         } else {
-            cs.to_conventional()?;
+            prepared.to_conventional().map_err(IpcError::invalid_argument)?;
         }
-        Ok(())
+        Ok(prepared)
     })
 }
 
@@ -140,7 +153,7 @@ pub fn shift_termination(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
-) -> Result<i32, String> {
+) -> IpcResult<i32> {
     let tolerance = layer_tolerance_a.unwrap_or(0.3);
     log::info!(
         "shift_termination: layer_idx={} tolerance={}",
@@ -149,9 +162,11 @@ pub fn shift_termination(
 
     let mut return_layers = 0;
     
-    crate::transaction::with_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        return_layers = cs.shift_termination(target_layer_idx, tolerance)?;
-        Ok(())
+    with_prepared_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
+        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+        return_layers = prepared.shift_termination(target_layer_idx, tolerance)
+            .map_err(IpcError::invalid_argument)?;
+        Ok(prepared)
     })?;
 
     Ok(return_layers)
@@ -166,21 +181,19 @@ pub fn restore_unitcell(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     log::info!("restore_unitcell triggered");
 
-    let base = base_state.0.lock().map_err(|e| format!("Base state lock failed: {}", e))?;
+    let base = base_state.0.lock()
+        .map_err(|_| IpcError::lock("base crystal state lock poisoned"))?;
     let Some(original) = base.as_ref() else {
-        return Err("No base structure loaded to restore".to_string());
+        return Err(IpcError::invalid_argument("no base structure loaded to restore"));
     };
     
     let orig_clone = original.clone();
     drop(base); // Drop lock early to avoid deadlocks
 
-    with_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        *cs = orig_clone;
-        cs.active_phonon_mode = None;
-        cs.phonon_phase = 0.0;
-        Ok(())
+    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |_| {
+        Ok(orig_clone)
     })
 }

@@ -1,6 +1,6 @@
 {
   "name": "crystal-canvas",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Next-generation crystal structure modeler with GPU-accelerated volumetric rendering, BZ visualization, and DFT/MD export",
   "author": "Xiao Jiang and CrystalCanvas Contributors",
   "license": "MIT OR Apache-2.0",
@@ -9,6 +9,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "check:ipc": "node scripts/generate-ipc-commands.mjs --check && node scripts/check-ipc-contract.mjs",
+    "generate:ipc": "node scripts/generate-ipc-commands.mjs",
+    "ipc:inventory": "node scripts/ipc-inventory.mjs",
+    "test:ipc": "node --test scripts/*.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

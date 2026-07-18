@@ -4,7 +4,7 @@ import { safeInvoke } from '../../utils/tauri-mock';
 import { cn } from '../../utils/cn';
 import { PanelProps } from './index';
 
-export default function MeasurementPanel({ crystalState, selectedAtoms = [], onSelectionChange, onStructureUpdate }: PanelProps) {
+export default function MeasurementPanel({ crystalState, selectedAtoms = [], onSelectionChange }: PanelProps) {
     const [measurementLabels, setMeasurementLabels] = useState<{label: string, x: number, y: number}[]>([]);
 
     useEffect(() => {
@@ -18,7 +18,7 @@ export default function MeasurementPanel({ crystalState, selectedAtoms = [], onS
             try {
                 const w = window.innerWidth;
                 const h = window.innerHeight;
-                const labels = await safeInvoke<{label: string, x: number, y: number}[]>('get_measurement_labels_screen', { width: w, height: h });
+                const labels = await safeInvoke('get_measurement_labels_screen', { width: w, height: h });
                 if (active) setMeasurementLabels(labels || []);
             } catch (e: any) {
                 if (active) setMeasurementLabels([]);
@@ -58,7 +58,7 @@ export default function MeasurementPanel({ crystalState, selectedAtoms = [], onS
             )}
 
             <button
-                onClick={() => safeInvoke('clear_measurements').then(() => { if (onStructureUpdate) onStructureUpdate(); }).catch((e: any) => alert(e))}
+                onClick={() => safeInvoke('clear_measurements').catch((e: any) => alert(e))}
                 disabled={!crystalState?.measurements?.length}
                 className={cn(
                     "w-full py-1.5 rounded-md text-xs font-medium transition-colors border pointer-events-auto",
@@ -72,7 +72,7 @@ export default function MeasurementPanel({ crystalState, selectedAtoms = [], onS
                 onClick={() => {
                     if (selectedAtoms.length >= 2 && selectedAtoms.length <= 4) {
                         safeInvoke('add_measurement', { indices: selectedAtoms })
-                            .then(() => { if (onStructureUpdate) onStructureUpdate(); if (onSelectionChange) onSelectionChange([]); })
+                            .then(() => { if (onSelectionChange) onSelectionChange([]); })
                             .catch((e: any) => alert(e));
                     } else {
                         alert("Please select exactly 2, 3, or 4 atoms first.");

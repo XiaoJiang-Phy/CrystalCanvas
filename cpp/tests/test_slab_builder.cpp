@@ -10,14 +10,16 @@
 
 namespace {
 
+using ColMajorMatrix3d = Eigen::Matrix<double, 3, 3, Eigen::ColMajor>;
+
 // ColMajor storage: columns are basis vectors
-Eigen::Matrix3d make_sc(double a) {
-    Eigen::Matrix3d L = Eigen::Matrix3d::Identity() * a;
+ColMajorMatrix3d make_sc(double a) {
+    ColMajorMatrix3d L = ColMajorMatrix3d::Identity() * a;
     return L;
 }
 
-Eigen::Matrix3d make_fcc(double a) {
-    Eigen::Matrix3d L;
+ColMajorMatrix3d make_fcc(double a) {
+    ColMajorMatrix3d L;
     L << 0,   a/2, a/2,
          a/2, 0,   a/2,
          a/2, a/2, 0;
@@ -27,7 +29,7 @@ Eigen::Matrix3d make_fcc(double a) {
 // NaCl conventional: Na at origin (0,0,0); Cl at (0.5,0.5,0.5)
 // 2-atom primitive with types {0=Na, 1=Cl}
 struct Crystal {
-    Eigen::Matrix3d lattice;        // ColMajor
+    ColMajorMatrix3d lattice;
     std::vector<double> positions;  // fractional, flat [x0,y0,z0, x1,y1,z1...]
     std::vector<int>    types;
     size_t n_atoms() const { return types.size(); }
@@ -52,7 +54,7 @@ Crystal make_fcc_crystal(double a) {
 // 4-atom conventional FCC cell
 Crystal make_fcc_conventional_crystal(double a) {
     Crystal c;
-    c.lattice = Eigen::Matrix3d::Identity() * a;  // cubic
+    c.lattice = ColMajorMatrix3d::Identity() * a;  // cubic
     c.positions = {
         0.0, 0.0, 0.0,
         0.5, 0.5, 0.0,
@@ -77,7 +79,7 @@ Crystal make_nacl_crystal(double a) {
 }
 
 struct SlabResult {
-    Eigen::Matrix3d  lattice;
+    ColMajorMatrix3d lattice;
     std::vector<double> positions;
     std::vector<int>    types;
     int n_atoms;
@@ -89,13 +91,18 @@ SlabResult run_slab_v2(const Crystal& cr, int h, int k, int l, int n_layers, dou
         cr.lattice.data(), miller, n_layers, cr.n_atoms());
 
     SlabResult res;
-    res.lattice = Eigen::Matrix3d::Zero();
+    res.lattice = ColMajorMatrix3d::Zero();
+    if (upper_bound <= 0) {
+        res.n_atoms = 0;
+        return res;
+    }
     res.positions.resize(upper_bound * 3, 0.0);
     res.types.resize(upper_bound, 0);
 
     res.n_atoms = build_slab_v2(
         cr.lattice.data(), cr.positions.data(), cr.types.data(), cr.n_atoms(),
         miller, n_layers, vacuum_a,
+        static_cast<size_t>(upper_bound),
         res.lattice.data(), res.positions.data(), res.types.data());
 
     res.positions.resize(res.n_atoms * 3);
@@ -125,14 +132,6 @@ bool all_frac_in_unit_cell(const SlabResult& res) {
         }
     }
     return true;
-}
-
-// Reciprocal-lattice surface normal for Miller (h,k,l): n_hat = (L^{-T} * G).normalized()
-Eigen::Vector3d surface_normal(const Eigen::Matrix3d& L, int h, int k, int l) {
-    Eigen::Vector3d G(h, k, l);
-    // n_hat = L^{-T} G / |L^{-T} G|  — exact normal to the (hkl) plane
-    Eigen::Vector3d n = L.inverse().transpose() * G;
-    return n.normalized();
 }
 
 } // namespace
@@ -171,16 +170,25 @@ TEST(SlabBuilderTest, FCC111_LayerSpacing) {
     const double a = 4.05;
     auto cr = make_fcc_crystal(a);
     auto res = run_slab_v2(cr, 1, 1, 1, 3, 10.0);
+    ASSERT_EQ(res.n_atoms, 3);
 
-    // d_{111} for FCC primitive = a / sqrt(3).
-    // We project each atom onto the physical surface normal n_hat = (L^{-T} * G).normalized()
-    // not the c-axis, which is non-orthogonal to the surface in primitive cells.
     const double expected_spacing = a / std::sqrt(3.0);
+    const ColMajorMatrix3d& L_slab = res.lattice;
+    const Eigen::Vector3d normal = L_slab.col(0).cross(L_slab.col(1));
+    const double normal_len = normal.stableNorm();
+    const double c_len = L_slab.col(2).stableNorm();
+    ASSERT_TRUE(std::isfinite(normal_len));
+    ASSERT_TRUE(std::isfinite(c_len));
+    ASSERT_GT(normal_len, 0.0);
+    ASSERT_GT(c_len, 0.0);
 
-    const Eigen::Matrix3d& L_slab = res.lattice;
-    Eigen::Vector3d n_hat = surface_normal(cr.lattice, 1, 1, 1);
+    Eigen::Vector3d n_hat = normal / normal_len;
+    const Eigen::Vector3d c_hat = L_slab.col(2) / c_len;
+    EXPECT_NEAR(std::abs(n_hat.dot(c_hat)), 1.0, 1e-6);
+    if (n_hat.dot(c_hat) < 0.0) n_hat = -n_hat;
 
     std::vector<double> z_projs;
+    z_projs.reserve(static_cast<size_t>(res.n_atoms));
     for (int i = 0; i < res.n_atoms; ++i) {
         Eigen::Vector3d f(res.positions[3*i], res.positions[3*i+1], res.positions[3*i+2]);
         Eigen::Vector3d r = L_slab * f;
@@ -188,11 +196,11 @@ TEST(SlabBuilderTest, FCC111_LayerSpacing) {
     }
     std::sort(z_projs.begin(), z_projs.end());
 
-    ASSERT_EQ((int)z_projs.size(), 3);
-    double sp1 = z_projs[1] - z_projs[0];
-    double sp2 = z_projs[2] - z_projs[1];
-    EXPECT_NEAR(sp1, expected_spacing, 1e-4);
-    EXPECT_NEAR(sp2, expected_spacing, 1e-4);
+    ASSERT_EQ(z_projs.size(), 3U);
+    const double sp1 = z_projs[1] - z_projs[0];
+    const double sp2 = z_projs[2] - z_projs[1];
+    EXPECT_NEAR(sp1, expected_spacing, 1e-5);
+    EXPECT_NEAR(sp2, expected_spacing, 1e-5);
 }
 
 TEST(SlabBuilderTest, SC100_VacuumLength) {
@@ -259,13 +267,34 @@ TEST(SlabBuilderTest, ZeroVacuum) {
     EXPECT_NEAR(c_len, 9.0, 1e-4);
 }
 
-TEST(SlabBuilderTest, NegativeVacuumClamped) {
+TEST(SlabBuilderTest, NegativeVacuumRejected) {
     auto cr = make_sc_crystal(3.0);
-    // vacuum_a = -1 must be clamped to 0, not crash or distort
     auto res = run_slab_v2(cr, 1, 0, 0, 3, -1.0);
-    EXPECT_EQ(res.n_atoms, 3);
-    double c_len = res.lattice.col(2).norm();
-    EXPECT_NEAR(c_len, 9.0, 1e-4) << "Negative vacuum must be clamped to 0.";
+    EXPECT_EQ(res.n_atoms, 0);
+}
+
+TEST(SlabBuilderTest, InsufficientOutputCapacityRejectsWithoutWrites) {
+    auto cr = make_sc_crystal(3.0);
+    int32_t miller[3] = {1, 0, 0};
+    const int upper_bound = get_slab_size_v2(
+        cr.lattice.data(), miller, 3, cr.n_atoms());
+    ASSERT_GT(upper_bound, 1);
+
+    ColMajorMatrix3d out_lattice = ColMajorMatrix3d::Constant(17.0);
+    std::vector<double> out_positions(static_cast<size_t>(upper_bound) * 3, 23.0);
+    std::vector<int> out_types(static_cast<size_t>(upper_bound), 29);
+
+    const int n_atoms = build_slab_v2(
+        cr.lattice.data(), cr.positions.data(), cr.types.data(), cr.n_atoms(),
+        miller, 3, 10.0, static_cast<size_t>(upper_bound - 1),
+        out_lattice.data(), out_positions.data(), out_types.data());
+
+    EXPECT_EQ(n_atoms, 0);
+    EXPECT_EQ(out_lattice, ColMajorMatrix3d::Constant(17.0));
+    EXPECT_TRUE(std::all_of(out_positions.begin(), out_positions.end(),
+                            [](double value) { return value == 23.0; }));
+    EXPECT_TRUE(std::all_of(out_types.begin(), out_types.end(),
+                            [](int value) { return value == 29; }));
 }
 
 TEST(SlabBuilderTest, SingleLayer) {

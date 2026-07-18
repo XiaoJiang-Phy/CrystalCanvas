@@ -12,7 +12,9 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-use crystal_canvas::renderer::instance::build_test_instances;
+use crystal_canvas::renderer::instance::{
+    RenderAtomInstance, build_test_instances, prepare_atom_scene,
+};
 use crystal_canvas::renderer::renderer::Renderer;
 
 /// Application state for the render demo.
@@ -82,9 +84,22 @@ impl ApplicationHandler for App {
         let mut renderer = Renderer::new(window.clone(), size.width, size.height);
 
         // Build a ~500 atom test grid (8 x 8 x 8 = 512 atoms)
-        let instances = build_test_instances(8, 8, 8, 3.0);
+        let instances: Vec<RenderAtomInstance> = build_test_instances(8, 8, 8, 3.0)
+            .into_iter()
+            .enumerate()
+            .map(|(source_atom_index, atom)| {
+                let pick_radius = atom.radius;
+                RenderAtomInstance {
+                    atom,
+                    source_atom_index,
+                    image_shift: [0, 0, 0],
+                    pick_radius: Some(pick_radius),
+                }
+            })
+            .collect();
         log::info!("Demo: {} test atoms loaded", instances.len());
-        renderer.update_atoms(&instances);
+        let atom_scene = prepare_atom_scene(instances).expect("Failed to prepare demo atom scene");
+        renderer.commit_atoms(atom_scene);
 
         self.renderer = Some(renderer);
         self.window = Some(window.clone());

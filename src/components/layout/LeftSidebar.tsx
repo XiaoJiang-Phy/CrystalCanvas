@@ -145,7 +145,14 @@ const UnitCellInput = ({ label, paramKey, value, unit, crystalState }: { label: 
         else if (paramKey === 'beta') params.beta = val;
         else if (paramKey === 'gamma') params.gamma = val;
 
-        safeInvoke('update_lattice_params', params).catch(console.error);
+        safeInvoke('update_lattice_params', {
+            a: params.a,
+            b: params.b,
+            c: params.c,
+            alpha: params.alpha,
+            beta: params.beta,
+            gamma: params.gamma,
+        }).catch(console.error);
     };
     return (
         <div className="flex items-center gap-1.5">

@@ -10,12 +10,14 @@
 
 namespace {
 
-Eigen::Matrix3d make_sc(double a) {
-    return Eigen::Matrix3d::Identity() * a;
+using ColMajorMatrix3d = Eigen::Matrix<double, 3, 3, Eigen::ColMajor>;
+
+ColMajorMatrix3d make_sc(double a) {
+    return ColMajorMatrix3d::Identity() * a;
 }
 
-Eigen::Matrix3d make_fcc(double a) {
-    Eigen::Matrix3d L;
+ColMajorMatrix3d make_fcc(double a) {
+    ColMajorMatrix3d L;
     L << 0,   a/2, a/2,
          a/2, 0,   a/2,
          a/2, a/2, 0;
@@ -24,13 +26,13 @@ Eigen::Matrix3d make_fcc(double a) {
 
 // Helper: run build_slab_v2 to get a filled slab
 struct Slab {
-    Eigen::Matrix3d lattice;
+    ColMajorMatrix3d lattice;
     std::vector<double> positions;
     std::vector<int>    types;
     int n_atoms;
 };
 
-Slab make_slab(const Eigen::Matrix3d& L_in, const std::vector<double>& frac,
+Slab make_slab(const ColMajorMatrix3d& L_in, const std::vector<double>& frac,
                const std::vector<int>& types, int h, int k, int l,
                int n_layers, double vac)
 {
@@ -39,13 +41,18 @@ Slab make_slab(const Eigen::Matrix3d& L_in, const std::vector<double>& frac,
     int upper = get_slab_size_v2(L_in.data(), miller, n_layers, n_base);
 
     Slab s;
-    s.lattice = Eigen::Matrix3d::Zero();
+    s.lattice = ColMajorMatrix3d::Zero();
+    if (upper <= 0) {
+        s.n_atoms = 0;
+        return s;
+    }
     s.positions.resize(upper * 3, 0.0);
     s.types.resize(upper, 0);
 
     s.n_atoms = build_slab_v2(
         L_in.data(), frac.data(), types.data(), n_base,
         miller, n_layers, vac,
+        static_cast<size_t>(upper),
         s.lattice.data(), s.positions.data(), s.types.data());
 
     s.positions.resize(s.n_atoms * 3);
@@ -113,16 +120,11 @@ TEST(SlabLayersTest, FCC111_LayerSpacing) {
         centers.data(), centers.size());
 
     ASSERT_EQ(n_layers, 3);
-    // cluster_slab_layers uses z_cart = f_z * slab_c_len approximation.
-    // For FCC (1,1,1) primitive, get_surface_basis stacks layers along v3 = (0,0,1)
-    // in fractional coords. Each layer has f_z spacing = 1/n_layers.
-    // In the slab, c_len = 3 * d_{111} + vacuum. The f_z * slab_c_len spacing
-    // equals d_{111} (physical) only when vacuum = 0.
-    // With vacuum = 10 Å, spacing in this approx = (slab_c_len / n_layers).
-    // The robust check: uniform layer spacing (all intervals equal).
-    double sp0 = centers[1] - centers[0];
-    double sp1 = centers[2] - centers[1];
-    EXPECT_NEAR(sp0, sp1, 1e-4)
+    // build_slab_v2 remaps f_z before QR, so f_z * |c| is the exact normal
+    // coordinate in the returned c-axis-orthogonalized frame.
+    const double sp0 = centers[1] - centers[0];
+    const double sp1 = centers[2] - centers[1];
+    EXPECT_NEAR(sp0, sp1, 1e-5)
         << "Layer spacing must be uniform for FCC (1,1,1) equal-stacked layers.";
     EXPECT_GT(sp0, 0.5)
         << "Layer spacing must be physically reasonable (> 0.5 Å).";
@@ -164,7 +166,7 @@ TEST(SlabLayersTest, ShiftTermination_FCC111) {
 TEST(SlabLayersTest, NaCl100_TopBottomLayerComposition) {
     // NaCl primitive FCC, 2 layers
     const double a = 5.64;
-    Eigen::Matrix3d L = make_fcc(a);
+    ColMajorMatrix3d L = make_fcc(a);
     std::vector<double> frac = {
         0.0, 0.0, 0.0,   // Na
         0.5, 0.5, 0.5    // Cl
@@ -181,7 +183,7 @@ TEST(SlabLayersTest, NaCl100_TopBottomLayerComposition) {
     ASSERT_GE(n_layers, 2);
 
     // Identify top and bottom layer atom types
-    double c_len = Eigen::Map<const Eigen::Matrix3d>(s.lattice.data()).col(2).norm();
+    double c_len = Eigen::Map<const ColMajorMatrix3d>(s.lattice.data()).col(2).norm();
     double bottom_thresh = centers[0] + 0.3;
     double top_thresh    = centers[n_layers-1] - 0.3;
 

@@ -10,7 +10,7 @@ export default function BondAnalysisPanel({
     const [bondAnalysis, setBondAnalysis] = useState<BondAnalysisResult | null>(null);
 
     const handle_refresh_bonds = () => {
-        safeInvoke<BondAnalysisResult>('get_bond_analysis', { thresholdFactor: 1.2 })
+        safeInvoke('get_bond_analysis', { thresholdFactor: 1.2 })
             .then(res => {
                 if (res) {
                     setBondAnalysis(res);

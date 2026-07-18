@@ -62,15 +62,27 @@ impl BrillouinZone {
 
     /// Construct a 2D Brillouin zone from in-plane lattice vectors.
     ///
-    /// `a1`, `a2`: projected real-space lattice vectors (from `CrystalState::get_inplane_lattice`).
-    /// `vacuum_axis`: 0, 1, or 2 — the Cartesian axis normal to the slab plane.
+    /// `a1`, `a2`: real-space lattice vectors spanning the periodic plane.
+    /// `vacuum_axis`: lattice-vector index used only for diagnostic logging.
     ///
-    /// 2D reciprocal vectors: $\mathbf{b}_1 = 2\pi(a_{2y}, -a_{2x}) / \det$,
-    /// $\mathbf{b}_2 = 2\pi(-a_{1y}, a_{1x}) / \det$ where $\det = a_{1x}a_{2y} - a_{1y}a_{2x}$.
-    pub fn new_2d(a1: [f64; 2], a2: [f64; 2], vacuum_axis: usize) -> Self {
-        let det = a1[0] * a2[1] - a1[1] * a2[0];
-        if det.abs() < 1e-12 {
-            log::warn!("[new_2d] Degenerate 2D lattice: det={:.2e}", det);
+    /// $\mathbf{b}_1 = 2\pi(\mathbf{a}_2\times\mathbf{n})/|\mathbf{n}|^2$ and
+    /// $\mathbf{b}_2 = 2\pi(\mathbf{n}\times\mathbf{a}_1)/|\mathbf{n}|^2$,
+    /// where $\mathbf{n}=\mathbf{a}_1\times\mathbf{a}_2$.
+    pub fn new_2d(a1: [f64; 3], a2: [f64; 3], vacuum_axis: usize) -> Self {
+        let cross = |a: &[f64; 3], b: &[f64; 3]| {
+            [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ]
+        };
+        let dot = |a: &[f64; 3], b: &[f64; 3]| {
+            a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        };
+        let normal = cross(&a1, &a2);
+        let area_sq = dot(&normal, &normal);
+        if !area_sq.is_finite() || area_sq < 1e-24 {
+            log::warn!("[new_2d] Degenerate 2D lattice: area²={:.2e}", area_sq);
             return Self {
                 recip_lattice: [[0.0; 3]; 3],
                 vertices: Vec::new(),
@@ -81,18 +93,28 @@ impl BrillouinZone {
             };
         }
 
-        let f = 2.0 * std::f64::consts::PI / det;
-        let b1 = [a2[1] * f, -a2[0] * f];
-        let b2 = [-a1[1] * f, a1[0] * f];
+        let reciprocal_factor = 2.0 * std::f64::consts::PI / area_sq;
+        let a2_cross_n = cross(&a2, &normal);
+        let n_cross_a1 = cross(&normal, &a1);
+        let b1 = a2_cross_n.map(|component| component * reciprocal_factor);
+        let b2 = n_cross_a1.map(|component| component * reciprocal_factor);
+        let normal_len = area_sq.sqrt();
+        let normal_unit = normal.map(|component| component / normal_len);
 
-        let poly = Self::wigner_seitz_2d(&b1, &b2);
+        let b1_len = dot(&b1, &b1).sqrt();
+        let basis_x = b1.map(|component| component / b1_len);
+        let basis_y = cross(&normal_unit, &basis_x);
+        let b1_local = [dot(&b1, &basis_x), dot(&b1, &basis_y)];
+        let b2_local = [dot(&b2, &basis_x), dot(&b2, &basis_y)];
+
+        let poly = Self::wigner_seitz_2d(&b1_local, &b2_local);
 
         let embed = |p: &[f64; 2]| -> [f64; 3] {
-            match vacuum_axis {
-                0 => [0.0, p[0], p[1]],
-                1 => [p[0], 0.0, p[1]],
-                _ => [p[0], p[1], 0.0],
-            }
+            [
+                p[0] * basis_x[0] + p[1] * basis_y[0],
+                p[0] * basis_x[1] + p[1] * basis_y[1],
+                p[0] * basis_x[2] + p[1] * basis_y[2],
+            ]
         };
 
         let vertices: Vec<[f64; 3]> = poly.iter().map(|p| embed(p)).collect();
@@ -101,12 +123,7 @@ impl BrillouinZone {
         let face_indices: Vec<usize> = (0..n).collect();
         let faces = if n >= 3 { vec![face_indices] } else { Vec::new() };
 
-        let mut recip_lattice = [[0.0; 3]; 3];
-        recip_lattice[0] = embed(&b1);
-        recip_lattice[1] = embed(&b2);
-        let mut vacuum_unit = [0.0; 3];
-        vacuum_unit[vacuum_axis] = 1.0;
-        recip_lattice[2] = vacuum_unit;
+        let recip_lattice = [b1, b2, normal_unit];
 
         log::info!(
             "[new_2d] BZ constructed: {} vertices, {} edges, vacuum_axis={}",
@@ -457,5 +474,31 @@ impl BrillouinZone {
         }
 
         (final_vertices, final_edges, final_faces)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BrillouinZone;
+
+    fn dot(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+
+    #[test]
+    fn skew_2d_reciprocal_basis_preserves_duality_and_plane() {
+        let a1 = [2.0, 0.0, 0.0];
+        let a2 = [0.5, 1.0, 1.0];
+        let bz = BrillouinZone::new_2d(a1, a2, 1);
+        let two_pi = 2.0 * std::f64::consts::PI;
+
+        assert!(!bz.vertices.is_empty());
+        assert!((dot(&a1, &bz.recip_lattice[0]) - two_pi).abs() < 1e-6);
+        assert!(dot(&a1, &bz.recip_lattice[1]).abs() < 1e-6);
+        assert!(dot(&a2, &bz.recip_lattice[0]).abs() < 1e-6);
+        assert!((dot(&a2, &bz.recip_lattice[1]) - two_pi).abs() < 1e-6);
+        for vertex in &bz.vertices {
+            assert!(dot(vertex, &bz.recip_lattice[2]).abs() < 1e-6);
+        }
     }
 }

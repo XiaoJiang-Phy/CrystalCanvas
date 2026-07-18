@@ -10,6 +10,18 @@ use crate::renderer::gpu_context::GpuContext;
 use crate::renderer::instance::{AtomInstance, LineVertex};
 use crate::renderer::pipeline;
 
+pub(crate) fn camera_axes_2d(bz: &BrillouinZone) -> Option<(glam::Vec3, glam::Vec3)> {
+    let normal = glam::Vec3::from_array(bz.recip_lattice[2].map(|value| value as f32));
+    let normal = normal.try_normalize()?;
+    let up_candidate = glam::Vec3::from_array(bz.recip_lattice[1].map(|value| value as f32));
+    let up = (up_candidate - normal * up_candidate.dot(normal)).try_normalize()?;
+    if normal.is_finite() && up.is_finite() {
+        Some((-normal, up))
+    } else {
+        None
+    }
+}
+
 pub struct BzSubViewport {
     pub camera: Camera,
     camera_uniform: CameraUniform,
@@ -357,24 +369,10 @@ impl BzSubViewport {
         let dist = fit_scale * 2.0;
         
         if self.is_2d {
-            // The `new_2d` constructor always places the vacuum normal vector in `recip_lattice[2]`.
-            let mut vac_axis = 2;
-            if bz.recip_lattice[2][0].abs() > 0.5 {
-                vac_axis = 0;
-            } else if bz.recip_lattice[2][1].abs() > 0.5 {
-                vac_axis = 1;
-            }
-            
-            // Eye along negative vacuum axis
-            let mut eye = [0.0; 3];
-            eye[vac_axis] = -dist;
-            self.camera.eye = self.camera.target + glam::Vec3::from_array(eye);
-            
-            // Target at origin, up = second in-plane axis
-            let up_axis = (vac_axis + 2) % 3;
-            let mut up = [0.0; 3];
-            up[up_axis] = 1.0;
-            self.camera.up = glam::Vec3::from_array(up);
+            let (eye_direction, up) =
+                camera_axes_2d(bz).unwrap_or((glam::Vec3::NEG_Z, glam::Vec3::Y));
+            self.camera.eye = self.camera.target + eye_direction * dist;
+            self.camera.up = up;
         } else {
             // Oblique viewing angle for 3D depth perception
             self.camera.eye = self.camera.target + glam::Vec3::new(dist * 0.4, dist * 0.3, dist);
@@ -485,5 +483,34 @@ impl BzSubViewport {
             render_pass.set_vertex_buffer(0, self.point_buffer.slice(..));
             render_pass.draw(0..6, 0..self.point_count);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::camera_axes_2d;
+    use crate::brillouin_zone::{BravaisType, BrillouinZone};
+
+    #[test]
+    fn skew_2d_camera_uses_reciprocal_plane_normal() {
+        let inv_sqrt_two = std::f64::consts::FRAC_1_SQRT_2;
+        let bz = BrillouinZone {
+            recip_lattice: [
+                [1.0, 0.0, 0.0],
+                [0.0, inv_sqrt_two, inv_sqrt_two],
+                [0.0, -inv_sqrt_two, inv_sqrt_two],
+            ],
+            vertices: vec![[0.0, 0.0, 0.0]],
+            edges: Vec::new(),
+            faces: Vec::new(),
+            bravais_type: BravaisType::Unknown,
+            is_2d: true,
+        };
+        let (eye_direction, up) = camera_axes_2d(&bz).expect("valid 2D camera frame");
+        let normal = glam::Vec3::new(0.0, -inv_sqrt_two as f32, inv_sqrt_two as f32);
+
+        assert!((eye_direction.dot(normal) + 1.0).abs() < 1e-6);
+        assert!(up.dot(normal).abs() < 1e-6);
+        assert!((up.length() - 1.0).abs() < 1e-6);
     }
 }

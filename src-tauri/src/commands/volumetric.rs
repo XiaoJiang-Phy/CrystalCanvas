@@ -1,6 +1,9 @@
 use tauri::{Emitter, State};
 
 use super::VolumetricInfo;
+use crate::ipc::{
+    IpcEnumInput, IpcError, IpcResult, IsosurfaceSignMode, VolumeColormap, VolumeRenderMode,
+};
 
 fn smoothstep_f32(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -8,7 +11,11 @@ fn smoothstep_f32(edge0: f32, edge1: f32, x: f32) -> f32 {
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])]
+    [
+        a[0] + t * (b[0] - a[0]),
+        a[1] + t * (b[1] - a[1]),
+        a[2] + t * (b[2] - a[2]),
+    ]
 }
 
 fn colormap_3pt(c0: [f32; 3], c1: [f32; 3], c2: [f32; 3], t: f32) -> [f32; 3] {
@@ -20,15 +27,22 @@ fn colormap_3pt(c0: [f32; 3], c1: [f32; 3], c2: [f32; 3], t: f32) -> [f32; 3] {
 
 fn colormap_sample(mode: u32, t: f32) -> [f32; 3] {
     match mode {
-        1 => { let v = 0.2 + 0.8 * t; [v, v, v] }
+        1 => {
+            let v = 0.2 + 0.8 * t;
+            [v, v, v]
+        }
         2 => colormap_3pt(
             [0.0002, 0.0016, 0.0139],
             [0.8651, 0.3165, 0.2261],
-            [0.9882, 0.9984, 0.6449], t),
+            [0.9882, 0.9984, 0.6449],
+            t,
+        ),
         3 => colormap_3pt(
             [0.0504, 0.0298, 0.5280],
             [0.7981, 0.2239, 0.4471],
-            [0.9400, 0.9752, 0.1313], t),
+            [0.9400, 0.9752, 0.1313],
+            t,
+        ),
         4 => {
             let blue = [0.2298_f32, 0.2987, 0.7537];
             let white = [0.9647_f32, 0.9647, 0.9647];
@@ -48,31 +62,44 @@ fn colormap_sample(mode: u32, t: f32) -> [f32; 3] {
         6 => colormap_3pt(
             [0.0015, 0.0005, 0.0139],
             [0.7107, 0.0221, 0.3264],
-            [0.9873, 0.9913, 0.7494], t),
+            [0.9873, 0.9913, 0.7494],
+            t,
+        ),
         7 => colormap_3pt(
             [0.0, 0.1262, 0.3015],
             [0.5529, 0.5529, 0.5059],
-            [0.9955, 0.9110, 0.1459], t),
+            [0.9955, 0.9110, 0.1459],
+            t,
+        ),
         8 => {
             let c0 = [0.1900_f32, 0.0718, 0.2322];
             let c1 = [0.1602_f32, 0.7346, 0.9398];
             let c2 = [0.9445_f32, 0.8530, 0.1094];
             let c3 = [0.4796_f32, 0.0158, 0.0106];
-            if t < 0.33 { lerp3(c0, c1, smoothstep_f32(0.0, 0.33, t)) }
-            else if t < 0.66 { lerp3(c1, c2, smoothstep_f32(0.33, 0.66, t)) }
-            else { lerp3(c2, c3, smoothstep_f32(0.66, 1.0, t)) }
+            if t < 0.33 {
+                lerp3(c0, c1, smoothstep_f32(0.0, 0.33, t))
+            } else if t < 0.66 {
+                lerp3(c1, c2, smoothstep_f32(0.33, 0.66, t))
+            } else {
+                lerp3(c2, c3, smoothstep_f32(0.66, 1.0, t))
+        }
         }
         9 => {
             let red = [0.6471_f32, 0.0, 0.1490];
             let yellow = [1.0_f32, 1.0, 0.749];
             let blue = [0.1922_f32, 0.2118, 0.5843];
-            if t < 0.5 { lerp3(red, yellow, smoothstep_f32(0.0, 0.5, t)) }
-            else { lerp3(yellow, blue, smoothstep_f32(0.5, 1.0, t)) }
+            if t < 0.5 {
+                lerp3(red, yellow, smoothstep_f32(0.0, 0.5, t))
+            } else {
+                lerp3(yellow, blue, smoothstep_f32(0.5, 1.0, t))
+        }
         }
         _ => colormap_3pt(
             [0.2777273, 0.00540734, 0.33409981],
             [0.10509304, 0.59800696, 0.55836266],
-            [0.99320573, 0.90615594, 0.143936], t),
+            [0.99320573, 0.90615594, 0.143936],
+            t,
+        ),
     }
 }
 
@@ -83,7 +110,7 @@ pub fn load_volumetric_file(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
-) -> Result<VolumetricInfo, String> {
+) -> IpcResult<VolumetricInfo> {
     log::info!("load_volumetric_file: {}", path);
     
     let extension = std::path::Path::new(&path)
@@ -99,19 +126,34 @@ pub fn load_volumetric_file(
         .to_lowercase();
         
     let mut new_state = match extension.as_str() {
-        "chgcar" | "locpot" => crate::io::chgcar_parser::parse_chgcar(&path).map_err(|e| e.to_string())?,
-        "cube" => crate::io::cube_parser::parse_cube(&path).map_err(|e| e.to_string())?,
-        "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&path).map_err(|e| e.to_string())?,
+        "chgcar" | "locpot" => {
+            crate::io::chgcar_parser::parse_chgcar(&path).map_err(IpcError::parse)?
+        }
+        "cube" => crate::io::cube_parser::parse_cube(&path).map_err(IpcError::parse)?,
+        "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&path)
+            .map_err(IpcError::parse)?,
         _ => {
-            if filename.starts_with("chgcar") || filename.starts_with("locpot") || filename.starts_with("aeccar") {
-                crate::io::chgcar_parser::parse_chgcar(&path).map_err(|e| e.to_string())?
+            if filename.starts_with("chgcar")
+                || filename.starts_with("locpot")
+                || filename.starts_with("aeccar")
+            {
+                crate::io::chgcar_parser::parse_chgcar(&path).map_err(IpcError::parse)?
             } else {
-                return Err(format!("Unsupported volumetric format: ext='{}', file='{}'", extension, filename));
+                return Err(IpcError::invalid_argument(format!(
+                    "unsupported volumetric format: ext='{}', file='{}'",
+                    extension, filename
+                )));
             }
         }
     };
+    new_state
+        .validate_structural_invariants()
+        .map_err(IpcError::parse)?;
     
-    let vol_data = new_state.volumetric_data.take().ok_or("No volumetric data found in file")?;
+    let vol_data = new_state
+        .volumetric_data
+        .take()
+        .ok_or_else(|| IpcError::parse("no volumetric data found in file"))?;
     
     let info = VolumetricInfo {
         grid_dims: vol_data.grid_dims,
@@ -120,56 +162,66 @@ pub fn load_volumetric_file(
         format: extension,
     };
     
-    // Build instances from new_state before consuming it
-    let settings = settings_state.lock().map_err(|e| e.to_string())?;
-    let instances = crate::wannier::build_atoms_with_ghosts(&new_state, &settings);
-    
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let settings = settings_state
+        .lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+    let atom_scene = crate::renderer::instance::prepare_atom_scene(
+        crate::wannier::build_atoms_with_ghosts(&new_state, &settings)?,
+    )?;
+    let line_scene = crate::renderer::instance::build_line_scene(&new_state, &settings)?;
     let extent = new_state.cell_a.max(new_state.cell_b).max(new_state.cell_c) as f32;
     let center = new_state.unit_cell_center();
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    let pending_version = crate::transaction::next_version(&cs)?;
 
-    {
-        let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
-        r.update_atoms(&instances);
-        r.update_lines(&new_state, &settings);
-        
-        let center_vec = glam::Vec3::from_array(center);
-        r.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
-        r.camera.target = center_vec;
-        if !r.camera.is_perspective {
-            r.camera.set_orthographic(extent * 1.5);
-        }
-        r.update_camera();
-        
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            r.upload_volumetric(&vol_data);
-        }));
-        if res.is_err() {
-            log::error!("GPU OOM: Failed to create volumetric pipelines.");
-            r.clear_volumetric();
-            return Err("GPU Out of Memory: Grid is too large for rendering. Atom structure loaded.".to_string());
-        }
+    let prepared_volumetric = r
+        .prepare_volumetric(&vol_data)
+        .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
-        // Auto-detect signed data (Wannier / orbital / Δρ)
-        let has_negative = vol_data.data_min < -0.01 * vol_data.data_max.abs();
-        if has_negative {
-            if let Some(vol) = &r.volume_raycast_pipeline {
-                vol.set_signed_mapping(&r.gpu.queue, true);
-                vol.set_colormap(&r.gpu.queue, 4); // Coolwarm for signed data
-            }
-            r.active_colormap_mode = 4;
-            log::info!("Signed volumetric data detected (min={:.3e}). Enabled signed mapping + Coolwarm.", vol_data.data_min);
-        }
+    r.clear_structure_bound_overlays();
+    r.commit_atoms(atom_scene);
+    r.update_lines(&line_scene);
+
+    let center_vec = glam::Vec3::from_array(center);
+    r.camera.eye = center_vec + glam::Vec3::new(0.0, 0.0, extent * 2.0);
+    r.camera.target = center_vec;
+    if !r.camera.is_perspective {
+        r.camera.set_orthographic(extent * 1.5);
     }
+    r.update_camera();
+    r.commit_volumetric(prepared_volumetric);
+
+    let has_negative = vol_data.data_min < -0.01 * vol_data.data_max.abs();
+    if has_negative {
+        if let Some(vol) = &r.volume_raycast_pipeline {
+            vol.set_signed_mapping(&r.gpu.queue, true);
+            vol.set_colormap(&r.gpu.queue, 4);
+        }
+        r.active_colormap_mode = 4;
+        log::info!(
+            "Signed volumetric data detected (min={:.3e}). Enabled signed mapping + Coolwarm.",
+            vol_data.data_min
+        );
+    }
+
+    new_state.volumetric_data = Some(vol_data);
+    let version = crate::transaction::stamp_version(&mut new_state, pending_version);
+    *cs = new_state;
+
+    drop(r);
     drop(settings);
+    drop(cs);
     
-    {
-        let mut cs = crystal_state.lock().map_err(|e| e.to_string())?;
-        *cs = new_state;  // Move new_state at the very end
-        cs.volumetric_data = Some(vol_data); // Restore vol_data (was .take()'d earlier)
-        cs.version += 1;
-    }
-    
-    app.emit("state_changed", ()).ok();
+    app.emit(
+        "state_changed",
+        crate::transaction::StateChangedPayload { version },
+    )
+    .ok();
     
     let _ = app.emit("volumetric_loaded", &info);
     
@@ -181,17 +233,24 @@ pub fn set_isovalue(
     value: f32,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
+) -> IpcResult<()> {
     let (grid_dims, data_range) = {
-        let cs = crystal_state.lock().map_err(|e| e.to_string())?;
-        cs.volumetric_data.as_ref().map(|v| {
+        let cs = crystal_state
+            .lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        cs.volumetric_data
+            .as_ref()
+            .map(|v| {
             let abs_max = v.data_min.abs().max(v.data_max.abs());
             (v.grid_dims, abs_max)
-        }).unzip()
+            })
+            .unzip()
     };
 
     if let Some(dims) = grid_dims {
-        let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
+        let mut r = renderer_state
+            .lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         r.update_isovalue(dims, value);
 
         // Auto-sync isosurface color with volume colormap.
@@ -207,13 +266,22 @@ pub fn set_isovalue(
             let r_mut = &mut *r;
             if let Some(iso) = &mut r_mut.isosurface_pipeline {
                 let alpha = iso.cur_color[3];
-                iso.set_color(&r_mut.gpu.queue, [color_pos[0], color_pos[1], color_pos[2], alpha]);
-                iso.set_color_negative(&r_mut.gpu.queue, [color_neg[0], color_neg[1], color_neg[2], alpha]);
+                iso.set_color(
+                    &r_mut.gpu.queue,
+                    [color_pos[0], color_pos[1], color_pos[2], alpha],
+                );
+                iso.set_color_negative(
+                    &r_mut.gpu.queue,
+                    [color_neg[0], color_neg[1], color_neg[2], alpha],
+                );
             }
         }
 
         // Sync volume clip threshold + density cutoff (Both mode)
-        let is_both = matches!(r.volume_render_mode, crate::renderer::renderer::VolumeRenderMode::Both);
+        let is_both = matches!(
+            r.volume_render_mode,
+            crate::renderer::renderer::RendererVolumeMode::Both
+        );
         if let Some(vol) = &r.volume_raycast_pipeline {
             if is_both {
                 vol.set_clip_threshold(&r.gpu.queue, value.abs());
@@ -230,8 +298,10 @@ pub fn set_isovalue(
 pub fn set_isosurface_color(
     color: [f32; 4],
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
-    let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
+) -> IpcResult<()> {
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let r_mut = &mut *r;
     if let Some(iso) = &mut r_mut.isosurface_pipeline {
         iso.set_color(&r_mut.gpu.queue, color);
@@ -243,31 +313,37 @@ pub fn set_isosurface_color(
 pub fn set_isosurface_opacity(
     opacity: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
-    let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
+) -> IpcResult<()> {
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     r.set_isosurface_opacity(opacity);
     Ok(())
 }
 
 #[tauri::command]
 pub fn set_isosurface_sign_mode(
-    mode: String,
+    mode: IpcEnumInput<IsosurfaceSignMode>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<(), String> {
-    let sign_mode: u32 = match mode.as_str() {
-        "positive" => 0,
-        "negative" => 1,
-        "both" => 2,
-        _ => 0,
+) -> IpcResult<()> {
+    let mode = mode.parse("mode")?;
+    let sign_mode: u32 = match mode {
+        IsosurfaceSignMode::Positive => 0,
+        IsosurfaceSignMode::Negative => 1,
+        IsosurfaceSignMode::Both => 2,
     };
 
     let grid_dims = {
-        let cs = crystal_state.lock().map_err(|e| e.to_string())?;
+        let cs = crystal_state
+            .lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
         cs.volumetric_data.as_ref().map(|v| v.grid_dims)
     };
 
-    let r = renderer_state.lock().map_err(|e| e.to_string())?;
+    let r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     if let Some(iso) = &r.isosurface_pipeline {
         iso.set_sign_mode(&r.gpu.queue, sign_mode);
     }
@@ -275,7 +351,10 @@ pub fn set_isosurface_sign_mode(
     if let Some(_dims) = grid_dims {
         let dispatch = r.isosurface_dispatch_size;
         if let Some(iso) = &r.isosurface_pipeline {
-            let mut encoder = r.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            let mut encoder =
+                r.gpu
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Sign Mode Re-dispatch"),
             });
             iso.dispatch_compute(&mut encoder, dispatch);
@@ -294,21 +373,27 @@ pub fn set_isosurface_sign_mode(
 
 #[tauri::command]
 pub fn set_volume_render_mode(
-    mode: String,
+    mode: IpcEnumInput<VolumeRenderMode>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
-    let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
-    let new_mode = match mode.as_str() {
-        "isosurface" => crate::renderer::renderer::VolumeRenderMode::Isosurface,
-        "volume" => crate::renderer::renderer::VolumeRenderMode::Volume,
-        "both" | _ => crate::renderer::renderer::VolumeRenderMode::Both,
+) -> IpcResult<()> {
+    let mode = mode.parse("mode")?;
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    let new_mode = match mode {
+        VolumeRenderMode::Isosurface => crate::renderer::renderer::RendererVolumeMode::Isosurface,
+        VolumeRenderMode::Volume => crate::renderer::renderer::RendererVolumeMode::Volume,
+        VolumeRenderMode::Both => crate::renderer::renderer::RendererVolumeMode::Both,
     };
     r.volume_render_mode = new_mode;
 
     // Sync volume clip threshold + density cutoff with current isovalue
-    let iso_threshold = r.isosurface_pipeline.as_ref().map_or(0.0, |iso| iso.cur_threshold.abs());
+    let iso_threshold = r
+        .isosurface_pipeline
+        .as_ref()
+        .map_or(0.0, |iso| iso.cur_threshold.abs());
     let (clip, cutoff) = match new_mode {
-        crate::renderer::renderer::VolumeRenderMode::Both => (iso_threshold, iso_threshold),
+        crate::renderer::renderer::RendererVolumeMode::Both => (iso_threshold, iso_threshold),
         _ => (0.0, 0.0),
     };
     if let Some(vol) = &r.volume_raycast_pipeline {
@@ -324,12 +409,18 @@ pub fn set_volume_opacity_range(
     max: f32,
     opacity_scale: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
-    let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
+) -> IpcResult<()> {
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let r_mut = &mut *r;
     if let Some(vol) = &mut r_mut.volume_raycast_pipeline {
         // clamp scale
-        vol.update_transfer_function(&r_mut.gpu.queue, [min, max], opacity_scale.max(0.01).min(10.0));
+        vol.update_transfer_function(
+            &r_mut.gpu.queue,
+            [min, max],
+            opacity_scale.max(0.01).min(10.0),
+        );
     }
     Ok(())
 }
@@ -338,8 +429,10 @@ pub fn set_volume_opacity_range(
 pub fn set_volume_density_cutoff(
     cutoff: f32,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> Result<(), String> {
-    let r = renderer_state.lock().map_err(|e| e.to_string())?;
+) -> IpcResult<()> {
+    let r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     if let Some(vol) = &r.volume_raycast_pipeline {
         vol.set_density_cutoff(&r.gpu.queue, cutoff.max(0.0));
     }
@@ -348,32 +441,37 @@ pub fn set_volume_density_cutoff(
 
 #[tauri::command]
 pub fn set_volume_colormap(
-    mode: String,
+    mode: IpcEnumInput<VolumeColormap>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<(), String> {
-    let colormap_mode: u32 = match mode.as_str() {
-        "grayscale" => 1,
-        "inferno" => 2,
-        "plasma" => 3,
-        "coolwarm" => 4,
-        "hot" => 5,
-        "magma" => 6,
-        "cividis" => 7,
-        "turbo" => 8,
-        "rdylbu" => 9,
-        _ => 0,
+) -> IpcResult<()> {
+    let mode = mode.parse("mode")?;
+    let colormap_mode: u32 = match mode {
+        VolumeColormap::Grayscale => 1,
+        VolumeColormap::Inferno => 2,
+        VolumeColormap::Plasma => 3,
+        VolumeColormap::Coolwarm => 4,
+        VolumeColormap::Hot => 5,
+        VolumeColormap::Magma => 6,
+        VolumeColormap::Cividis => 7,
+        VolumeColormap::Turbo => 8,
+        VolumeColormap::Rdylbu => 9,
+        VolumeColormap::Viridis => 0,
     };
 
     let iso_sync = {
-        let cs = crystal_state.lock().map_err(|e| e.to_string())?;
+        let cs = crystal_state
+            .lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
         cs.volumetric_data.as_ref().map(|v| {
             let abs_max = v.data_min.abs().max(v.data_max.abs());
             abs_max
         })
     };
 
-    let mut r = renderer_state.lock().map_err(|e| e.to_string())?;
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     r.active_colormap_mode = colormap_mode;
     if let Some(vol) = &r.volume_raycast_pipeline {
         vol.set_colormap(&r.gpu.queue, colormap_mode);
@@ -392,8 +490,14 @@ pub fn set_volume_colormap(
             let color_pos = colormap_sample(colormap_mode, t_pos);
             let color_neg = colormap_sample(colormap_mode, t_neg);
             let alpha = iso.cur_color[3];
-            iso.set_color(&r_mut.gpu.queue, [color_pos[0], color_pos[1], color_pos[2], alpha]);
-            iso.set_color_negative(&r_mut.gpu.queue, [color_neg[0], color_neg[1], color_neg[2], alpha]);
+            iso.set_color(
+                &r_mut.gpu.queue,
+                [color_pos[0], color_pos[1], color_pos[2], alpha],
+            );
+            iso.set_color_negative(
+                &r_mut.gpu.queue,
+                [color_neg[0], color_neg[1], color_neg[2], alpha],
+            );
         }
     }
     Ok(())
@@ -402,8 +506,10 @@ pub fn set_volume_colormap(
 #[tauri::command]
 pub fn get_volumetric_info(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> Result<Option<VolumetricInfo>, String> {
-    let cs = crystal_state.lock().map_err(|e| e.to_string())?;
+) -> IpcResult<Option<VolumetricInfo>> {
+    let cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     if let Some(vol) = &cs.volumetric_data {
         let fmt_str = match vol.source_format {
             crate::volumetric::VolumetricFormat::VaspChgcar => "chgcar",
