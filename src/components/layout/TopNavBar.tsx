@@ -31,10 +31,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
     return (
         <div
             className={cn(
-                "w-full h-12 flex items-center justify-between px-4 pl-[80px] shrink-0 relative",
-                "bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl",
-                "border-b border-slate-200/80 dark:border-slate-700/50",
-                "shadow-sm z-50 pointer-events-auto transition-colors duration-300"
+                "cc-chrome w-full h-12 flex items-center justify-between px-4 pl-[80px] shrink-0 relative",
+                "border-b z-50 pointer-events-auto"
             )}>
 
             {/* Drag region layer: sits behind all buttons so clicking buttons works normally */}
@@ -130,7 +128,7 @@ const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.Re
         onClick={onClick}
         data-tauri-drag-region="false"
         className={cn(
-            "p-1.5 rounded-md transition-all duration-200",
+            "p-1.5 rounded-md transition-colors duration-150",
             active
                 ? "bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400"
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/50 dark:hover:bg-slate-700/50"
