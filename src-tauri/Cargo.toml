@@ -64,3 +64,8 @@ path = "bin/render_demo.rs"
 [[bench]]
 name = "bench_volumetric"
 harness = false
+
+[[test]]
+name = "test_phys_1c_real_failure_atomicity"
+path = "tests/test_phys_1c_real_failure_atomicity.rs"
+harness = false
