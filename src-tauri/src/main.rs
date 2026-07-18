@@ -355,6 +355,10 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                     log::info!("Opening file: {}", path_str);
                     match crate::io::import::load_file(&path_str) {
                         Ok(mut state) => {
+                            if let Err(error) = state.validate_structural_invariants() {
+                                log::error!("Invalid structure in {}: {}", path_str, error);
+                                return;
+                            }
                             let vol_data = state.volumetric_data.take();
                             let base_snapshot = state.clone();
                             state.volumetric_data = vol_data;

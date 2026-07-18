@@ -197,7 +197,7 @@ where
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     let mut prepared = prepare(&cs)?;
     prepared
-        .validate_cartesian_positions()
+        .validate_structural_invariants()
         .map_err(IpcError::invalid_argument)?;
     let version = stamp_version(&mut prepared, next_version(&cs)?);
     prepared.invalidate_structure_bound_data();
@@ -289,7 +289,7 @@ where
         pre_mutation_snapshot.restore_for_rollback(&mut cs);
         return Err(error);
     }
-    if let Err(error) = cs.validate_cartesian_positions() {
+    if let Err(error) = cs.validate_structural_invariants() {
         pre_mutation_snapshot.restore_for_rollback(&mut cs);
         return Err(IpcError::invalid_argument(error));
     }

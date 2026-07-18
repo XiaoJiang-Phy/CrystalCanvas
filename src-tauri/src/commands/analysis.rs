@@ -131,18 +131,19 @@ pub fn load_phonon_interactive(
     
     // 1. Load the crystal structure from scf_in now (since its parser is fully robust)
     let mut new_state = crate::io::qe_parser::parse_scf_in(&scf_in).map_err(IpcError::parse)?;
+    new_state
+        .validate_structural_invariants()
+        .map_err(IpcError::parse)?;
     
     // 2. Parse phonon data
     let data = crate::phonon::parse_phonon_file(&modes).map_err(IpcError::parse)?;
-    let summaries = data.summaries();
-
-    if new_state.cart_positions.len() != data.n_atoms {
-        log::warn!(
-            "Atom count mismatch: struct={} vs phonon={}",
-            new_state.cart_positions.len(),
-            data.n_atoms
-        );
+    if new_state.intrinsic_sites != data.n_atoms {
+        return Err(IpcError::invalid_argument(format!(
+            "phonon atom count {} does not match structure atom count {}",
+            data.n_atoms, new_state.intrinsic_sites
+        )));
     }
+    let summaries = data.summaries();
 
     new_state.phonon_data = Some(data);
     new_state.active_phonon_mode = None;
@@ -220,6 +221,9 @@ pub fn load_axsf_phonon(
     // 1 & 2. Load the crystal structure and phonon data directly from the axsf
     let (mut new_state, data) =
         crate::io::axsf_parser::parse_axsf(&path).map_err(IpcError::parse)?;
+    new_state
+        .validate_structural_invariants()
+        .map_err(IpcError::parse)?;
     let summaries = data.summaries();
 
     new_state.phonon_data = Some(data);

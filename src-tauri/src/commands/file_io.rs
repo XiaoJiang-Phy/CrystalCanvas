@@ -18,6 +18,9 @@ pub fn load_cif_file(
 
     // 1 & 2. Load file (delegating to our format importer)
     let mut state = crate::io::import::load_file(&path).map_err(IpcError::parse)?;
+    state
+        .validate_structural_invariants()
+        .map_err(IpcError::parse)?;
     log::info!("[load_cif_file] File parsed: {} atoms", state.num_atoms());
 
     let vol_data = state.volumetric_data.take();
