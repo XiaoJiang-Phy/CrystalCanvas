@@ -45,6 +45,10 @@ export function useTauriMenu({
                 setIsSettingsOpen(true);
             } else if (action === 'export_image') {
                 setIsExportImageOpen(true);
+            } else if (action === 'undo') {
+                safeInvoke('undo').catch(console.error);
+            } else if (action === 'redo') {
+                safeInvoke('redo').catch(console.error);
             } else if (action.startsWith('view_axis_')) {
                 const axis = action.replace('view_axis_', '');
                 if (!is_camera_axis(axis)) return;
@@ -127,24 +131,9 @@ export function useTauriMenu({
                     console.log('[App] set_render_flags OK:', { showCell: renderFlagsRef.current.cell, showBonds: renderFlagsRef.current.bonds });
                 }).catch(console.error);
             } else if (action === 'show_about') {
-                alert("CrystalCanvas\nVersion 1.0\nPowered by Tauri, React, wgpu, and C++.\nLicense: MIT OR Apache-2.0");
+                alert("CrystalCanvas\nVersion 0.6.1\nPowered by Tauri, React, wgpu, and C++.\nLicense: MIT OR Apache-2.0");
             }
         }).then(f => unlistenMenu = f).catch(console.warn);
-
-        const handleKeyDown = (e: KeyboardEvent) => {
-            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-            const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
-            
-            if (cmdOrCtrl && e.key.toLowerCase() === 'z') {
-                e.preventDefault();
-                if (e.shiftKey) {
-                    safeInvoke('redo').catch(console.error);
-                } else {
-                    safeInvoke('undo').catch(console.error);
-                }
-            }
-        };
-        window.addEventListener('keydown', handleKeyDown);
 
         safeListen('view_projection_changed', (event) => {
             setIsPerspective(event.payload.is_perspective);
@@ -153,7 +142,6 @@ export function useTauriMenu({
         return () => {
             unlistenMenu();
             unlistenProjection();
-            window.removeEventListener('keydown', handleKeyDown);
         };
     }, [
         setShowAssistant, setIsSettingsOpen, setIsExportImageOpen,

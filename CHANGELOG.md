@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-18
+
+### Changed
+- **Verified IPC Contract**: All registered Tauri commands, arguments, results, DTOs, enums, events, and structured errors are checked against the TypeScript contract.
+- **Authoritative Structural State**: `CrystalState` stores intrinsic atoms only; periodic boundary images and Wannier ghosts remain renderer-derived data mapped to their source atoms.
+- **Atomic Transactions**: Structural candidates and GPU resources are prepared before commit. Failed validation, computation, or renderer preparation leaves state, version, undo history, and renderer resources unchanged.
+- **Single State Synchronization Path**: Committed mutations emit `state_changed { version }`; `App.tsx` owns the single full-snapshot refresh and ignores duplicate or stale versions.
+
+### Fixed
+- Rejected non-finite, singular, oversized, or inconsistent structural inputs before FFI and renderer submission.
+- Preserved structure-bound phonon, volumetric, Wannier, bond-analysis, and Brillouin-zone consistency across structure replacement, undo, and redo.
+- Made volumetric GPU loading and native file opening atomic across backend state, undo history, renderer resources, and frontend notifications.
+- Hardened slab and supercell boundaries, including degenerate surface bases, unsafe output sizes, and finite renderer-coordinate checks.
+- Corrected reciprocal-space basis/export provenance for skew two-dimensional cells and stale Brillouin-zone caches.
+
+### Validation
+- Added auditable three-dimensional and two-dimensional structure manifests with deterministic physical preflight evidence.
+- Added independent regression gates for physical rejection atomicity, versioned state refresh, duplicate refresh callsites, and the macOS Tauri renderer smoke path.
+
 ## [0.6.0] - 2026-04-14
 
 ### Added
