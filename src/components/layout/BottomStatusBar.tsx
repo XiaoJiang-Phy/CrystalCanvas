@@ -22,22 +22,22 @@ export const BottomStatusBar: React.FC<{
             )).toFixed(1) : 0;
 
     const modeLabel: Record<string, string> = {
-        select: '🔘 Select',
-        move: '✋ Move',
-        rotate: '🔄 Rotate',
-        measure: '📐 Measure',
+        select: 'Select',
+        move: 'Move',
+        rotate: 'Rotate',
+        measure: 'Measure',
     };
 
     return (
-        <div className="cc-chrome w-full h-7 shrink-0 border-t flex items-center justify-between px-4 text-[11px] z-40 pointer-events-auto">
-            <div className="flex items-center gap-4 text-slate-500 dark:text-slate-400 tabular-nums">
+        <div className="cc-chrome w-full h-7 shrink-0 border-t grid grid-cols-[minmax(0,1fr)_auto] items-center px-4 text-[11px] z-40 pointer-events-auto">
+            <div className="flex min-w-0 items-center gap-4 text-slate-500 dark:text-slate-400 tabular-nums">
                 {interactionMode && (
                     <span className="font-semibold text-emerald-600 dark:text-emerald-400">{modeLabel[interactionMode] || interactionMode}</span>
                 )}
                 <span>SpaceGroup: <span className="font-medium text-slate-700 dark:text-slate-300">#{crystalState?.spacegroup_number || '?'}</span> ({sg})</span>
                 <span>Volume: <span className="font-medium text-slate-700 dark:text-slate-300">{vol} Å³</span></span>
             </div>
-            <div className="flex items-center gap-6 text-slate-500 dark:text-slate-400">
+            <div className="flex items-center justify-end gap-6 text-slate-500 dark:text-slate-400">
                 {activePhononMode && (
                     <span className="text-amber-600 dark:text-amber-500">
                         Phonon Mode {activePhononMode.index + 1}: <span className="font-medium">{activePhononMode.frequency_cm1.toFixed(2)} cm⁻¹</span>

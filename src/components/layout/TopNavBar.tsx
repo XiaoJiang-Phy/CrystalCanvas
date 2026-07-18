@@ -31,7 +31,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
     return (
         <div
             className={cn(
-                "cc-chrome w-full h-12 flex items-center justify-between px-4 pl-[80px] shrink-0 relative",
+                "cc-chrome w-full h-12 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-4 pl-[80px] shrink-0 relative",
                 "border-b z-50 pointer-events-auto"
             )}>
 
@@ -42,7 +42,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             />
 
             {/* Left: Brand + Basic Tools */}
-            <div className="flex items-center gap-4 relative z-10">
+            <div className="flex min-w-0 items-center gap-4 relative z-10">
                 <div className="flex items-center gap-2 font-semibold text-base tracking-tight text-emerald-600 dark:text-emerald-400">
                     <img src={logoUrl} className="w-5 h-5 object-contain" alt="Logo" />
                     <div className="flex items-baseline gap-1.5">
@@ -63,7 +63,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             </div>
 
             {/* Center: Axis View Buttons */}
-            <div className="flex items-center gap-1 relative z-10">
+            <div className="flex shrink-0 items-center gap-1 relative z-10">
                 <ViewButton label="a" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a' })} />
                 <ViewButton label="b" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b' })} />
                 <ViewButton label="c" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c' })} />
@@ -73,14 +73,20 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             </div>
 
             {/* Right: Toggles & Actions */}
-            <div className="flex items-center gap-2 relative z-10">
+            <div className="flex min-w-0 items-center justify-end gap-2 relative z-10">
                 <NavButton label="Reset View" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                 <NavButton label="Symmetry" />
 
-                <div className="flex items-center gap-1.5 cursor-pointer" onClick={onToggleLabels} data-tauri-drag-region="false">
-                    <span className="text-xs font-medium select-none" data-tauri-drag-region="false">Labels</span>
+                <button
+                    type="button"
+                    className="flex items-center gap-1.5 cursor-pointer"
+                    onClick={onToggleLabels}
+                    data-tauri-drag-region="false"
+                    aria-pressed={showLabels}
+                >
+                    <span className="text-xs font-medium select-none">Labels</span>
                     <ToggleSwitch checked={showLabels} />
-                </div>
+                </button>
 
                 <div className="h-4 w-px bg-slate-300 dark:bg-slate-700" />
 
@@ -94,6 +100,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                             ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400"
                             : "hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500"
                     )}
+                    aria-label="Toggle LLM Assistant"
+                    aria-pressed={showAssistant}
                     title="Toggle LLM Assistant"
                 >
                     <Bot className="w-3.5 h-3.5" />
@@ -103,6 +111,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     onClick={toggleTheme}
                     data-tauri-drag-region="false"
                     className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+                    aria-label="Toggle Theme"
                     title="Toggle Theme"
                 >
                     {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
@@ -112,6 +121,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     onClick={onOpenSettings}
                     data-tauri-drag-region="false"
                     className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+                    aria-label="Open Settings"
+                    title="Open Settings"
                 >
                     <Settings className="w-3.5 h-3.5" />
                 </button>
@@ -123,7 +134,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
 
 // --- Subcomponents ---
 
-const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.ReactNode, active?: boolean, tooltip?: string, onClick?: () => void }) => (
+const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.ReactNode, active?: boolean, tooltip: string, onClick?: () => void }) => (
     <button
         onClick={onClick}
         data-tauri-drag-region="false"
@@ -133,6 +144,8 @@ const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.Re
                 ? "bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400"
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/50 dark:hover:bg-slate-700/50"
         )}
+        aria-label={tooltip}
+        aria-pressed={active}
         title={tooltip}
     >
         {icon}
