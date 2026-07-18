@@ -1,9 +1,34 @@
-/* [Overview: Global TailwindCSS stylesheet. Configures core layers, dark mode backgrounds, and custom scrollbar styling.] */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* [Overview: Global TailwindCSS stylesheet. Configures core layers, workbench tokens, and custom scrollbar styling.] */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --cc-canvas: #f4f6f8;
+  --cc-chrome: #e9eef3;
+  --cc-panel: #ffffff;
+  --cc-field: #f7f9fb;
+  --cc-border: #cbd5df;
+  --cc-text: #182431;
+  --cc-muted: #617181;
+  --cc-accent: #087f5b;
+  --cc-danger: #b42318;
+}
+
+.dark {
+  color-scheme: dark;
+  --cc-canvas: #0e1620;
+  --cc-chrome: #15202c;
+  --cc-panel: #172331;
+  --cc-field: #111b26;
+  --cc-border: #324254;
+  --cc-text: #e6edf3;
+  --cc-muted: #9eacba;
+  --cc-accent: #35ba91;
+  --cc-danger: #f97066;
+}
 
 @layer base {
 
@@ -15,7 +40,8 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Light mode: we now make the WebView entirely transparent to reveal wgpu underneath */
@@ -38,6 +64,28 @@
     -webkit-user-select: none;
     cursor: default;
     background-color: transparent;
+  }
+}
+
+@layer components {
+
+  .cc-chrome {
+    background-color: var(--cc-chrome);
+    border-color: var(--cc-border);
+    color: var(--cc-text);
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+  }
+
+  .cc-panel {
+    background-color: var(--cc-panel);
+    border-color: var(--cc-border);
+    color: var(--cc-text);
+  }
+
+  .cc-field {
+    background-color: var(--cc-field);
+    border-color: var(--cc-border);
+    color: var(--cc-text);
   }
 }
 

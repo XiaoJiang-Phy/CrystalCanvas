@@ -58,7 +58,7 @@ export const RightSidebar: React.FC<{
     return (
         <div className="shrink-0 h-full flex flex-row pointer-events-none">
             {/* Sliding Panel */}
-            <div className={cn("transition-all duration-300 ease-in-out overflow-hidden", openAccordion ? "w-[240px] opacity-100" : "w-0 opacity-0")}>
+            <div className={cn("transition-[width,opacity] duration-150 ease-in-out overflow-hidden", openAccordion ? "w-[240px] opacity-100" : "w-0 opacity-0")}>
                 <div className="w-[240px] h-full flex flex-col gap-3 p-3 overflow-y-auto custom-scrollbar pointer-events-none">
                     
                     <Accordion title="Structural Analysis" isOpen={openAccordion === 'Structural Analysis'}>
@@ -100,7 +100,7 @@ export const RightSidebar: React.FC<{
                         title={section.label}
                         onClick={() => setOpenAccordion(openAccordion === section.key ? null : section.key)}
                         className={cn(
-                            "w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200",
+                            "w-9 h-9 flex items-center justify-center rounded-lg transition-colors duration-150",
                             openAccordion === section.key
                                 ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/30"
                                 : "text-slate-500 dark:text-slate-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-slate-700 dark:hover:text-slate-200"
@@ -123,7 +123,7 @@ const Accordion: React.FC<{ title: string; isOpen: boolean; children: React.Reac
     if (!hasOpened) return null;
 
     return (
-        <div className={cn("pointer-events-auto shrink-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/30 dark:border-slate-700/50 rounded-xl shadow-lg shadow-black/5 dark:shadow-black/20 overflow-hidden", !isOpen && "hidden")}>
+        <div className={cn("cc-panel pointer-events-auto shrink-0 border rounded-lg overflow-hidden", !isOpen && "hidden")}>
             <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
                 <span className="font-medium text-sm text-slate-800 dark:text-slate-200">{title}</span>
             </div>

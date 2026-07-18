@@ -99,10 +99,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 // --- Subcomponents ---
 
 const Panel: React.FC<{ title: string; badge?: string; children: React.ReactNode }> = ({ title, badge, children }) => (
-    <div className="pointer-events-auto bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/30 dark:border-slate-700/50 rounded-xl shadow-lg shadow-black/5 dark:shadow-black/20 flex flex-col overflow-hidden relative">
-        {/* Decorative header gradient */}
-        <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-r from-emerald-500/10 to-transparent pointer-events-none" />
-
+    <div className="cc-panel pointer-events-auto border rounded-lg flex flex-col overflow-hidden">
         <div className="px-3 py-2.5 flex justify-between items-center border-b border-slate-100 dark:border-slate-800">
             <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">{title}</h3>
             {badge && <span className="text-[10px] font-mono text-slate-400">{badge}</span>}

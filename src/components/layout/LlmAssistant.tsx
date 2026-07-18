@@ -214,10 +214,8 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
         <div
             ref={panelRef}
             className={cn(
-                "absolute bottom-10 right-[250px] z-30",
-                "bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl",
-                "border border-white/20 dark:border-slate-700/50",
-                "rounded-xl shadow-2xl flex flex-col pointer-events-auto",
+                "cc-panel absolute bottom-10 right-[250px] z-30",
+                "border rounded-lg flex flex-col pointer-events-auto",
             )}
             style={{ width: size.w, height: size.h }}
         >
@@ -231,7 +229,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
             </div>
 
             {/* Header */}
-            <div className="px-3 py-2.5 flex justify-between items-center bg-gradient-to-r from-emerald-500/10 to-transparent border-b border-slate-100 dark:border-slate-800 rounded-t-xl shrink-0">
+            <div className="px-3 py-2.5 flex justify-between items-center border-b border-slate-100 dark:border-slate-800 rounded-t-lg shrink-0">
                 <div className="flex items-center gap-2">
                     <Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">LLM Assistant</h3>
@@ -276,7 +274,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                                 className={cn(
                                     "w-full text-sm bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg py-2 px-3",
                                     "text-slate-700 dark:text-slate-200 outline-none",
-                                    "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all cursor-pointer appearance-none"
+                                    "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-colors duration-150 cursor-pointer appearance-none"
                                 )}
                             >
                                 <option value="openai">OpenAI Compatible</option>
@@ -300,7 +298,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                                         className={cn(
                                             "w-full text-sm bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg py-2 pl-3 pr-9",
                                             "text-slate-700 dark:text-slate-200 outline-none",
-                                            "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all font-mono"
+                                            "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-colors duration-150 font-mono"
                                         )}
                                     />
                                     <button
@@ -314,7 +312,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                                 </div>
                                 {apiKey === '********' && (
                                     <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
-                                        <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                                        <span className="w-1 h-1 rounded-full bg-emerald-500" />
                                         Key loaded from Keychain / .env
                                     </p>
                                 )}
@@ -331,14 +329,14 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                                 className={cn(
                                     "w-full text-sm bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg py-2 px-3",
                                     "text-slate-700 dark:text-slate-200 outline-none",
-                                    "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all font-mono"
+                                    "focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-colors duration-150 font-mono"
                                 )}
                             />
                         </div>
 
                         <button
                             onClick={saveSettings}
-                            className="mt-2 w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-lg text-sm font-semibold transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30"
+                            className="mt-2 w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white rounded-lg text-sm font-semibold transition-colors duration-150"
                         >
                             Save &amp; Start Chat
                         </button>
@@ -405,7 +403,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                                     "py-2.5 px-3 text-xs text-slate-700 dark:text-slate-300",
                                     "outline-none resize-none",
                                     "focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30",
-                                    "transition-all placeholder:text-slate-400"
+                                    "transition-colors duration-150 placeholder:text-slate-400"
                                 )}
                                 placeholder="Type instruction… (Enter to send, Shift+Enter for newline)"
                             />

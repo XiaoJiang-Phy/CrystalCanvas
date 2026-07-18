@@ -29,7 +29,7 @@ export const BottomStatusBar: React.FC<{
     };
 
     return (
-        <div className="w-full h-7 shrink-0 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-700/50 flex items-center justify-between px-4 text-[11px] z-40 pointer-events-auto transition-colors duration-300">
+        <div className="cc-chrome w-full h-7 shrink-0 border-t flex items-center justify-between px-4 text-[11px] z-40 pointer-events-auto">
             <div className="flex items-center gap-4 text-slate-500 dark:text-slate-400 tabular-nums">
                 {interactionMode && (
                     <span className="font-semibold text-emerald-600 dark:text-emerald-400">{modeLabel[interactionMode] || interactionMode}</span>
