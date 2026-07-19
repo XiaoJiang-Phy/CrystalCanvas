@@ -2,16 +2,68 @@
 
 > Baseline: `v0.6.1` | Updated: 2026-07-19
 
-This document describes current visualization and geometry implementations. It is not a validation report for a particular material, calculation, or source file. Numerical or physical claims about a supplied structure require declared conventions and evidence; see [TestingGuide.md](TestingGuide.md).
+This document connects the current visualization and geometry algorithms to their implementation and regression gates. It is intended for contributors changing existing behavior, not as a validation report for a particular material, calculation, or source file.
+
+CrystalCanvas does not infer scientific meaning that is absent from an input file. Before changing a structure, Brillouin-zone, slab, phonon, or other physical path, declare the input convention and establish a reproducible fixture. See [TestingGuide.md](TestingGuide.md).
 
 ---
 
-## Conventions
+## Shared numerical and ownership conventions
 
-- Lattice matrices at the Rust/C++ boundary are column-major. Their columns are the basis vectors $\mathbf a$, $\mathbf b$, and $\mathbf c$.
-- Intrinsic structure data are held in Rust `CrystalState`. Periodic renderer images and Wannier ghosts are presentation-only objects.
-- Crystal and geometry computation use `f64`; renderer instance data and WGSL use `f32`.
-- A successful committed structural operation is atomic across validation, versioning, undo/redo ownership, and renderer-scene replacement.
+### Coordinate transforms
+
+At the Rust/C++ boundary, lattice matrices are flat column-major arrays whose columns are the basis vectors $\mathbf a$, $\mathbf b$, and $\mathbf c$:
+
+$$
+L = \begin{bmatrix} \mathbf a & \mathbf b & \mathbf c \end{bmatrix},
+\qquad
+\mathbf r = L\mathbf f
+= f_a\mathbf a + f_b\mathbf b + f_c\mathbf c.
+$$
+
+Structure and geometry computation use `f64`. Prepared renderer instances and WGSL buffers use `f32`. A conversion to renderer precision must happen only after parsing, validation, and structural computation have succeeded.
+
+Scalar grids use x-fastest flat indexing:
+
+$$
+i = i_x + n_x i_y + n_x n_y i_z.
+$$
+
+The corresponding implementation is visible in `src-tauri/src/renderer/isosurface.rs` and the volumetric parsers.
+
+### Physical state versus presentation data
+
+Rust `CrystalState` owns intrinsic atoms, the committed lattice, versioned selections and measurements, and attached data accepted for the current structure. Renderer-only periodic images, phonon-displaced coordinates, and Wannier endpoint ghosts are derived presentation data and must never be copied into intrinsic atom arrays.
+
+A committed structural operation must be atomic across:
+
+1. input validation and resource checks;
+2. preparation of the candidate structure and renderer scene;
+3. undo/version ownership; and
+4. replacement of committed state and renderer buffers.
+
+Preview commands may construct a candidate but do not create a version or undo entry. A failed preview or commit must leave the accepted state unchanged.
+
+---
+
+## Supercell generation
+
+**Implementation**: `src-tauri/src/crystal_state.rs`, `src-tauri/src/commands/geometry.rs`, and `cpp/src/physics_kernel.cpp`
+
+The low-level supercell expansion is a 3×3 integer matrix supplied to `CrystalState::generate_supercell` as a flat column-major array. The determinant determines the multiplicity, so the expected output atom count is
+
+$$
+N_{\mathrm{out}} = N_{\mathrm{in}}\,|\det S|.
+$$
+
+The Rust preflight rejects an empty structure, singular or resource-exceeding expansions, invalid lattice parameters, and arithmetic/capacity overflow before allocating output buffers. The C++ kernel returns the transformed lattice, fractional positions, and atom types; Rust reconstructs the candidate `CrystalState` and revalidates it before commit.
+
+The IPC shapes intentionally differ:
+
+- `preview_supercell` receives the checked flat nine-integer `expansion` contract and returns a non-committed snapshot;
+- `apply_supercell` receives a nested 3×3 `matrix`, adapts it at the command boundary for the kernel call, redetects the space group, and commits through the prepared-state transaction helper.
+
+Do not change either public shape as a side effect of an algorithm edit. Add a contract migration and inventory update if the API itself must change.
 
 ---
 
@@ -19,18 +71,28 @@ This document describes current visualization and geometry implementations. It i
 
 **Implementation**: `cpp/src/physics_kernel.cpp`, `src-tauri/src/crystal_state.rs`, and `src-tauri/src/commands/geometry.rs`
 
-The C++ kernel constructs an integer surface basis from a non-zero Miller triplet. For a normalized Miller direction, the first two column vectors of the column-major basis lie in the surface plane; the third is the complementary direction used to build the layered supercell. The Rust caller validates finite lattice parameters, bounded Miller indices, positive layer count, resource limits, and non-negative finite vacuum before calling the FFI routine.
+The slab path accepts a non-zero Miller triplet $(hkl)$, a positive layer count, and a finite non-negative vacuum thickness. Rust also applies bounded Miller-index, atom-count, determinant, and allocation checks before entering the C++ kernel.
 
-The current slab path:
+The current construction proceeds as follows:
 
-1. constructs and validates an integer surface-basis expansion;
-2. scales the complementary basis direction by the requested layer count;
-3. builds the expanded structure and removes coincident Cartesian positions within the kernel's declared duplicate threshold;
-4. derives the surface normal from the in-plane output lattice vectors;
-5. removes in-plane components from the output $\mathbf c$ direction, adds vacuum along the surface normal, and remaps fractional coordinates; and
-6. reconstructs a new intrinsic `CrystalState` through the transaction path.
+1. Reduce the Miller direction and construct a non-singular integer surface basis $S$.
+2. Require the first two columns of $S$ to satisfy the surface-plane condition; the third column is a complementary lattice direction.
+3. Multiply the complementary column by the requested layer count. The planned determinant magnitude therefore scales with the number of layers.
+4. Generate the expanded structure and remove coincident Cartesian positions using the kernel's explicit duplicate tolerance.
+5. Form the output surface normal from the in-plane lattice vectors,
 
-The current user-facing guard rejects P1 input because the UI interprets Miller indices relative to conventional axes. Preview is non-committing; apply is atomic. Slab regression work must use real declared fixtures and independently assert layers, termination, stoichiometry, shortest distances, and failure atomicity before changing the algorithm.
+   $$
+   \hat{\mathbf n} =
+   \frac{\mathbf a'\times\mathbf b'}
+        {|\mathbf a'\times\mathbf b'|}.
+   $$
+
+6. Project the transformed $\mathbf c'$ direction onto $\hat{\mathbf n}$ to obtain the occupied height, then construct the final out-of-plane vector with the requested vacuum along that normal.
+7. Remap atom positions into the final cell and reconstruct a validated intrinsic `CrystalState`.
+
+The current UI rejects P1 input because its Miller indices are interpreted relative to conventional axes and no trustworthy conventional orientation can be inferred from P1 alone. `preview_slab` is non-committing; `apply_slab` redetects symmetry and commits once.
+
+Slab changes require a real, declared regression matrix. At minimum, independently assert layer count, termination behavior, stoichiometry, shortest Cartesian separation, primitive/conventional equivalence where expected, and failure atomicity. A surprising structure is evidence to investigate, not permission to replace the algorithm from intuition alone.
 
 ---
 
@@ -38,9 +100,26 @@ The current user-facing guard rejects P1 input because the UI interprets Miller 
 
 **Implementation**: `src-tauri/src/brillouin_zone.rs`, `src-tauri/src/kpath.rs`, `src-tauri/src/kpath_2d.rs`, and `src-tauri/src/renderer/bz_renderer.rs`
 
-The Brillouin zone is presented as a Wigner-Seitz construction of the reciprocal lattice. The implementation enumerates a bounded reciprocal shell, forms bisecting half-spaces, and clips a convex initial region. It separately supports the application's two-dimensional classification path and its associated high-symmetry-path presentation.
+For a real-space cell, the reciprocal basis follows
 
-The BZ overlay is a renderer scene derived from the committed lattice. It is not a band calculation, topology diagnosis, or transport calculation. Any claim about a particular material's reciprocal-space convention requires the source calculation's declared basis, periodic axes, and unit convention.
+$$
+\mathbf b_1 = 2\pi\frac{\mathbf a_2\times\mathbf a_3}
+{\mathbf a_1\cdot(\mathbf a_2\times\mathbf a_3)},
+$$
+
+with cyclic permutations for $\mathbf b_2$ and $\mathbf b_3$. The three-dimensional Brillouin zone is built as the reciprocal-lattice Wigner–Seitz cell: a bounded neighbor shell supplies reciprocal points, each point defines a perpendicular bisecting half-space, and the implementation clips an initial convex region by those planes.
+
+The two-dimensional path accepts two explicitly chosen in-plane real-space vectors. With $\mathbf n=\mathbf a_1\times\mathbf a_2$, it constructs
+
+$$
+\mathbf b_1 = 2\pi\frac{\mathbf a_2\times\mathbf n}{|\mathbf n|^2},
+\qquad
+\mathbf b_2 = 2\pi\frac{\mathbf n\times\mathbf a_1}{|\mathbf n|^2},
+$$
+
+clips a 2D Wigner–Seitz polygon, and embeds the polygon back into three dimensions. A degenerate in-plane area returns an empty `Unknown` result rather than fabricated geometry.
+
+The BZ overlay and labeled k path are derived from the committed lattice. They are not a band calculation, topology diagnosis, transport result, or proof that an external calculation used the same reciprocal convention. When adding an importer, retain enough metadata to compare its basis, periodic axes, and $2\pi$ convention explicitly.
 
 ---
 
@@ -48,27 +127,53 @@ The BZ overlay is a renderer scene derived from the committed lattice. It is not
 
 **Implementation**: `src-tauri/src/volumetric.rs`, `src-tauri/src/renderer/isosurface.rs`, `src-tauri/src/renderer/volume_raycast.rs`, and `src-tauri/shaders/`
 
-Supported scalar-grid importers normalize their grid metadata and lattice information before renderer use. The UI enables data-dependent controls only after receiving finite volumetric metadata with a usable non-zero range.
+Volumetric importers produce grid dimensions, x-fastest scalar samples, origin, lattice, and finite minimum/maximum metadata. UI controls are data-dependent and must remain unavailable until a usable grid and non-zero finite range have been accepted.
 
 ### Marching Cubes
 
-The compute shader dispatches 4×4×4 workgroups over grid cells, classifies each cell against the chosen isovalue, interpolates edge crossings, and appends generated vertices to a bounded GPU buffer through an atomic counter. Positive, negative, and dual-sign presentation modes are renderer options; they do not modify the imported scalar field.
+The GPU path dispatches 4×4×4 workgroups over grid cells. Each cell compares its eight samples with the selected threshold, reads the edge and triangle lookup tables, and interpolates an edge crossing with
+
+$$
+t = \frac{\rho_0-f_0}{f_1-f_0},
+\qquad
+\mathbf p = \mathbf p_0+t(\mathbf p_1-\mathbf p_0),
+$$
+
+using the midpoint when the denominator is numerically too small. Positive, negative, and dual-sign modes choose the classification threshold and populate the `IsoVertex.sign_flag`; they do not alter the stored scalar samples.
+
+Generated triangle vertices are appended through an atomic counter into a preallocated bounded buffer. Both the compute shader and Rust-side capacity planning must preserve the bound. `src-tauri/src/renderer/isosurface.rs` also contains a CPU reference/fallback and topology, finiteness, lattice-transform, normal, and GPU-dispatch tests.
 
 ### Direct volume rendering
 
-The volume path renders a fractional unit cube, transforms it with the field lattice, intersects rays with that cube, samples the scalar field, and composites samples front-to-back. Opaque-scene depth participates in the presentation path. Colormaps, cutoffs, and opacity are visualization parameters; record them with any quantitative figure.
+The raycaster renders the field's fractional unit cube after transforming it by the supplied lattice. The fragment path intersects the camera ray with the cube, converts sampling positions to grid coordinates, performs trilinear interpolation, applies the selected transfer function, and composites front-to-back. For premultiplied sample color $\mathbf c_s$ and opacity $\alpha_s$:
+
+$$
+\mathbf C \leftarrow \mathbf C + (1-A)\mathbf c_s\alpha_s,
+\qquad
+A \leftarrow A + (1-A)\alpha_s.
+$$
+
+Opaque-scene depth limits the ray segment so volume fragments behind accepted opaque geometry do not dominate the presentation. Density range, cutoff, colormap, opacity scale, step size, and sign mode are visualization parameters. They must be recorded alongside any quantitative figure and must not silently redefine imported units.
 
 ---
 
-## Atom, bond, and measurement presentation
+## Atom, bond, picking, and measurement presentation
 
 **Implementation**: `src-tauri/src/renderer/instance.rs`, `src-tauri/src/renderer/ray_picking.rs`, `src-tauri/src/commands/analysis.rs`, and `src-tauri/src/commands/viewport.rs`
 
-Atoms are rendered as analytic impostor spheres. Bonds are rendered by a WGSL vertex shader that expands each instance into a 12-segment cylinder; no geometry shader is used. Bond analysis applies the current covalent-radius and threshold settings under the project's periodic-distance conventions, then returns bond, coordination, and summary data to the panel.
+Atoms are camera-facing quads whose fragment shader analytically intersects a sphere and writes the corrected hit depth. Bonds are `BondInstance` segments expanded by the vertex shader into open 12-segment cylinders. Neither path adds tessellated sphere meshes or a geometry-shader stage.
 
-Picking converts a screen point into a camera ray and chooses the nearest valid atom hit in the prepared renderer pick scene. That scene retains a source intrinsic-atom index so a boundary image cannot become an independent physical selection.
+Bond candidates use the current empirical covalent radii and user threshold factor. The public analysis command requires the factor to be finite and positive, defaults it to 1.2, and returns bonds, coordination summaries, length statistics, and distortion indices. Treat these as visualization/inspection aids; a chemistry-specific bonding interpretation requires its own declared model and tests.
 
-Distance, angle, and dihedral measurements are stored as overlay definitions referencing intrinsic indices. They are part of the versioned snapshot but are not extra atoms.
+Picking converts the screen coordinate into a camera ray and performs a CPU linear scan over the prepared pick scene. For a normalized ray $\mathbf r(t)=\mathbf o+t\mathbf d$ and atom center $\mathbf c$, it solves
+
+$$
+|\mathbf o+t\mathbf d-\mathbf c|^2=R^2
+$$
+
+and selects the closest positive intersection. Each pick entry retains its source intrinsic index, so a boundary image selects its physical source atom instead of becoming a new atom.
+
+Distance, angle, and dihedral overlays reference two, three, or four intrinsic indices. Their definitions are versioned snapshot data; projected label positions are renderer-derived screen data.
 
 ---
 
@@ -76,14 +181,31 @@ Distance, angle, and dihedral measurements are stored as overlay definitions ref
 
 **Implementation**: `src-tauri/src/phonon.rs`, `src-tauri/src/wannier.rs`, and their command/panel modules
 
-Phonon mode selection and phase update renderer presentation coordinates without committing a new structure. The current frontend frame path is retained pending dedicated interaction-animation work.
+Phonon loaders verify that the supplied mode atom count matches the accepted intrinsic structure. Selecting a mode and changing its phase update renderer presentation coordinates; they do not replace the baseline Cartesian coordinates, create a structural version, or add an undo record. The current frontend per-frame IPC path remains until the dedicated animation node replaces it.
 
-Wannier hopping networks are read from `wannier90_hr.dat`, filtered by orbital, lattice shell, magnitude, and visibility settings, and drawn as renderer overlay instances. Neighboring-cell endpoints may introduce ghost visuals, but those visuals are not added to `CrystalState` atom arrays or frontend atom tables.
+Wannier hopping networks are parsed from `wannier90_hr.dat`, validated for finite values and valid orbital/shell mappings, then filtered by orbital, lattice shell, magnitude, onsite visibility, and master visibility. Neighbor-cell endpoints may require renderer ghost atoms or lines. Those ghosts must remain outside `CrystalState`, snapshots, atom tables, selection counts, and exported structures.
 
 ---
 
-## References and change discipline
+## Where to change and where to test
 
-The implementation draws on established techniques such as Wigner-Seitz reciprocal cells, Marching Cubes, direct volume rendering, periodic minimum-image calculations, and analytic impostor rendering. References should be added or updated only with the algorithm provenance actually used by the code.
+| Behavior | Primary implementation | Existing focused evidence |
+|---|---|---|
+| supercell/slab kernel | `cpp/src/physics_kernel.cpp` | `cpp/tests/test_supercell_eigen.cpp`, slab test executables under `cpp/tests/` |
+| Rust structure validation/commit | `src-tauri/src/crystal_state.rs`, `transaction.rs`, `commands/geometry.rs` | module tests plus Rust transaction/structure tests |
+| 3D/2D BZ and paths | `brillouin_zone.rs`, `kpath.rs`, `kpath_2d.rs` | colocated Rust test modules |
+| volumetric metadata/import | `volumetric.rs` and format loaders | colocated volumetric/parser tests |
+| CPU/GPU isosurface | `renderer/isosurface.rs`, `marching_cubes.wgsl` | CPU invariants and GPU dispatch test |
+| volume transfer/rendering | `renderer/volume_raycast.rs`, `volume_raycast.wgsl` | renderer tests plus desktop GPU smoke test |
+| atom/bond/picking | `renderer/instance.rs`, `ray_picking.rs` | instance/picking tests plus desktop selection check |
+| Wannier overlay | `wannier.rs`, commands and panel | filter, mapping, failure-preservation tests |
 
-Before modifying a physical algorithm, first establish a specific failing structure or data fixture, run the applicable scientific guard, and add an independent regression gate. Do not rewrite an algorithm from general expectations alone.
+Before changing an algorithm:
+
+1. record the input format, coordinate convention, units, and expected invariant;
+2. let Breaker establish a failing independent regression;
+3. make the smallest implementation change that satisfies that gate;
+4. run the focused C++/Rust/GPU gate and the standard repository gates; and
+5. have Auditor check physical assumptions, failure atomicity, ownership, and unintended contract changes.
+
+There is no repository-wide physical Manifest declaring one material or simulation setup. Passing implementation tests therefore establishes software behavior only; it does not validate an unpublished scientific interpretation.
