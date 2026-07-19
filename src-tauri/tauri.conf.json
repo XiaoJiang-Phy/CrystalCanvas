@@ -34,6 +34,6 @@
         ],
         "category": "Education",
         "copyright": "Copyright © 2026 CrystalCanvas Contributors",
-        "shortDescription": "Next-generation crystal structure modeler with GPU-accelerated rendering"
+        "shortDescription": "GPU-accelerated scientific visualization for crystal structures, volumetric fields, phonons, and reciprocal space"
     }
 }
