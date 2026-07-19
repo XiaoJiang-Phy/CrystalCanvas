@@ -1,246 +1,127 @@
-# CrystalCanvas Testing & TDD Guide
+# CrystalCanvas Testing and TDD Guide
 
-> Version: v0.6.0 | Updated: 2026-04-14
+> Baseline: `v0.6.1` | Updated: 2026-07-19
 
----
-
-## 1. Node TDD Process
-
-All CrystalCanvas development follows **Node-based TDD** — every feature is decomposed into atomic, sequentially gated Nodes. A Node must pass its full test suite before the next Node begins.
-
-| Phase | Action |
-|---|---|
-| **Atomize** | Break feature into Nodes (e.g., `Node S1: Surface Basis Solver`, `Node S2: Slab Builder`, `Node S3: Layer Clustering`) |
-| **Test First** | Write the test asserting exact expected behavior (tolerances, geometry, error paths) |
-| **Implement** | Write minimal code to pass the test |
-| **Gate** | `cargo test` / `ctest` must be fully green before proceeding |
-| **Audit** | Stress-test edge cases, pathological inputs, and numerical stability |
-
-Each test file is annotated with its Node ID and acceptance criteria. Example header:
-
-```rust
-// [PROJECT RULE L0] - Do not modify assert tolerance, time values, or thresholds in this file.
-//! [Node S4] FFI Bridge — build_slab_v2 / cluster_slab_layers / shift_slab_termination
-//!
-//! Acceptance criteria (Plan):
-//! - cargo build: zero error, zero warning
-//! - test_ffi_roundtrip: still passes (no regression)
-//! - S4 new tests: generate_slab via CrystalState using v2 API
-//! - shift_termination invalidated by empty crystal, out-of-range index
-```
+CrystalCanvas uses small, independently gated development Nodes. A passing software test establishes only its stated contract; it is not a proof that a scientific model, convergence setting, or imported dataset is physically correct.
 
 ---
 
-## 2. Project-Wide Testing Rules
+## Node workflow
 
-The following constraints apply **unconditionally** to all test code:
+Each Node follows this order:
 
-### 2.1 Numerical Tolerances (non-negotiable)
+1. **Breaker** adds an independent failing gate for the required behavior and its important counterexamples.
+2. **Builder** makes the smallest production-code change that satisfies the established gate. Builder does not add a new test to make its own implementation pass.
+3. Run the focused gate and the relevant broader gates.
+4. **Auditor** checks ownership, lock order, contract changes, regressions, and scope before the Node receives its own commit.
 
-| Domain | Tolerance | Rationale |
-|---|---|---|
-| Fractional/Cartesian coordinates | $10^{-5}$ Å | Sub-pm precision eliminates rounding ambiguities across parsers |
-| Physics properties (energy, density, frequency) | $10^{-6}$ | Avoids false negatives from parser/FFI float truncation |
-| Marching Cubes vertex interpolation | $10^{-3}$ Å | GPU `f32` precision limit on voxel edge positions |
-
-### 2.2 ColMajor Enforcement
-All matrices crossing the C++/Rust FFI boundary must be **Column-Major** (`Eigen::Matrix<double, 3, 3, Eigen::ColMajor>`). Tests must verify that lattice vectors returned from FFI are correctly ordered (column 0 = $\mathbf{a}$, column 1 = $\mathbf{b}$, column 2 = $\mathbf{c}$).
-
-### 2.3 State Isolation
-Every test must instantiate its **own** `CrystalState`. Global state pollution across tests is strictly prohibited. Helper functions (`make_fcc_al_state()`, `make_nacl_state()`, etc.) construct fresh instances per test.
-
-### 2.4 Tolerance Lock
-Test files carry the `[PROJECT RULE L0]` header comment: **Do not modify assert tolerances, time values, or thresholds.** Changing a tolerance requires explicit justification and reviewer approval.
+Do not proceed to the next Node while its gate is red. Do not weaken a tolerance, timing condition, physical expectation, or assertion merely to make a test pass.
 
 ---
 
-## 3. Testing Stack
+## Scientific and numerical tests
 
-### Layer 1: C++ Physics Kernel — GoogleTest
+For structural, slab, Brillouin-zone, phonon, or scalar-field work, run the `sci-validator` guard before building a physical test. A deterministic physical PASS requires a declared manifest, conventions, units, and an applicable registered executor. Without that evidence, record the software behavior without calling it a physics PASS; preserve unexpected evidence for `physics-audit` rather than tuning it away.
 
-**Location**: `cpp/tests/`  
-**Build system**: CMake + GoogleTest v1.14.0 (via `FetchContent`)  
-**Dependencies**: Eigen (header-only), Spglib (static)
+Project-wide software-test constraints:
 
-**Build & Run**:
+- each test owns an isolated `CrystalState` and does not leak global state;
+- Rust/C++ lattice matrices use explicit column-major layout;
+- coordinate assertions use the project `1e-5 Å` convention where that convention is applicable;
+- physical-property tolerances require an explicit unit and provenance in the test or its fixture;
+- C++ exceptions never cross the FFI boundary; and
+- renderer-only periodic images and Wannier ghosts are never accepted as intrinsic physical atoms.
+
+---
+
+## Test layers
+
+### C++ kernel tests
+
+`cpp/tests/` contains six CTest executables covering Spglib robustness, supercell matrices, slab generation, surface bases, layer/termination behavior, and structural edge cases.
+
 ```bash
-cd cpp/tests
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-cd build && ctest --output-on-failure
+cmake --build cpp/tests/build
+ctest --test-dir cpp/tests/build --output-on-failure
 ```
 
-**Existing test suites**:
+The slab and surface-basis suites are geometry regression tests. Their acceptance criteria must state the lattice convention, Miller-index family, expected termination/layer behavior, and atomicity expectation.
 
-| File | Node | Tests |
-|---|---|---|
-| `test_spglib_robustness.cpp` | 3.1 | Spglib identification edge cases (P1 fallback, high-symmetry, distorted cells) |
-| `test_supercell_eigen.cpp` | 3.2 | Supercell expansion determinant, atom count, lattice vector scaling |
-| `test_slab_eigen.cpp` | 3.3 | Slab lattice orthogonality ($\alpha = \beta = 90°$), unimodular $\det P = 1$ |
-| `test_slab_surface_basis.cpp` | S1 | Diophantine solver correctness for all Miller index families |
-| `test_slab_builder.cpp` | S2 | `build_slab_v2` end-to-end: atom deduplication, vacuum injection, density preservation |
-| `test_slab_layers.cpp` | S3 | `cluster_slab_layers` / `shift_slab_termination`: layer detection tolerance, out-of-range rejection |
+### Rust/Tauri tests
 
-**Key pattern — C++ tests enforce ColMajor explicitly**:
-```cpp
-// ColMajor storage: columns are basis vectors
-Eigen::Matrix3d make_sc(double a) {
-    Eigen::Matrix3d L = Eigen::Matrix3d::Identity() * a;
-    return L;  // ColMajor by default in Eigen
-}
-```
+`src-tauri/tests/` covers import/export, FFI, space-group, overlap, picking, bond, Marching Cubes, command-schema, PHYS-1, and SYNC-1 behavior.
 
-### Layer 2: Rust / Tauri Backend — `cargo test`
-
-**Location**: `src-tauri/tests/`  
-**Run all**:
 ```bash
-cd src-tauri && cargo test -- --nocapture
+source dev_env.sh && cargo test --no-fail-fast --manifest-path src-tauri/Cargo.toml
 ```
 
-**Run specific test**:
+Notable v0.6.1 regression families include:
+
+- `test_phys_1a_input_gate.rs`, `test_phys_1b_structural_invariants.rs`, and the PHYS-1C atomicity tests;
+- `test_sync_1c_tauri_smoke.rs` for versioned snapshot synchronization;
+- importer/exporter and FFI round-trip tests; and
+- isolated geometry and renderer-adjacent algorithm tests.
+
+### TypeScript, IPC, and UI contract gates
+
+The repository has source-level Node gates, not an unconfigured frontend test backlog. The current suite contains 96 `node:test` cases across IPC inventory, runtime contracts, state refresh, and UI contracts.
+
 ```bash
-cargo test --test test_slab_v2_ffi -- --nocapture
+pnpm install --frozen-lockfile
+npm run ipc:inventory
+npm run check:ipc
+npm run test:ipc
+./node_modules/.bin/tsc --noEmit
+pnpm run build
 ```
 
-**Existing test suites**:
+These gates check, among other things:
 
-| File | Node | Tests |
-|---|---|---|
-| `test_cif_parsing.rs` | 1.x | CIF/PDB parser via Gemmi FFI: lattice params, atom sites, spacegroup |
-| `test_ffi_roundtrip.rs` | 2.x | Rust↔C++ data roundtrip: `parse_cif_file`, `get_spacegroup`, position translation |
-| `test_importers.rs` | 4.x | POSCAR, QE, XYZ, XSF, Cube file parser correctness |
-| `test_exporters.rs` | 4.x | File export format verification |
-| `test_fe2o3_spacegroup.rs` | 3.1 | Spacegroup detection for Fe₂O₃ (R-3c, #167) |
-| `test_slab_v2_ffi.rs` | S4 | `generate_slab` via `CrystalState`: orthogonality, density, termination shifts |
-| `test_overlap_detection.rs` | S5 | MIC-based atom collision detection (`check_overlap_mic`) |
-| `test_ray_picking.rs` | 7.x | CPU ray-sphere intersection for atom selection |
-| `test_rutile_polyhedra.rs` | 6.x | Bond analysis and coordination shell detection for TiO₂ |
-| `test_mc_breaker.rs` | 11.4a | Marching Cubes stress tests: pathological inputs (zero matrices, empty grids, Euler characteristic validation) |
-| `test_command_schema.rs` | 5.1 | LLM command security: malicious JSON injection rejection, `deny_unknown_fields`, negative index handling |
-| `test_deepseek_live.rs` | 5.x | Live LLM API integration (requires API key, disabled in CI) |
+- Rust command/event inventory against TypeScript contracts;
+- camelCase frontend arguments and snake_case Rust parameters;
+- `state_changed { version }` ownership and complete snapshot refresh;
+- listener lifecycle and Tauri/browser-mock boundaries;
+- UI-1 structure workspace, tool rail, panel, accessibility, and error-surface contracts; and
+- lazy panel boundaries and the currently retained phonon frame path.
 
-### Layer 3: Frontend (React/Vite)
-
-No automated test runner is currently configured for the frontend. Manual testing focuses on:
-- IPC payload mapping: camelCase (TypeScript) ↔ snake_case (Rust) via Tauri's automatic renaming
-- `state_changed` event propagation: UI panels re-fetch `CrystalState` after backend mutations
-- `version` counter monotonicity: each mutation increments the version, preventing stale renders
-
-**Note**: Adding Vitest or Playwright is on the backlog (see roadmap P3).
+Source-level UI gates complement, but do not replace, desktop verification of native menus, GPU rendering, pointer interaction, and file dialogs.
 
 ---
 
-## 4. Test Data
+## Standard full gate
 
-Reference structures are stored in `tests/data/` and used by both C++ and Rust test suites:
+Run this sequence before a release-quality commit that affects code, IPC, shaders, or scientific behavior:
 
-| File | Structure | Used By |
-|---|---|---|
-| `nacl.cif` | NaCl (Fm-3m, #225) | Parser, supercell, slab tests |
-| `si_bulk.cif` | Silicon (Fd-3m, #227) | Spacegroup, Niggli reduction |
-| `rutile.cif` | TiO₂ rutile (P4₂/mnm, #136) | Bond analysis, coordination |
-| `graphene.cif` | Graphene monolayer | 2D detection, 2D BZ |
-| `mos2_monolayer.cif` | MoS₂ monolayer | 2D BZ, k-path |
-| `diamond.cif` | Diamond (Fd-3m) | Supercell, slab |
-| `slab_a_vacuum.cif` | Pre-built slab with vacuum | Vacuum detection |
-| `Fe2O3/` | Fe₂O₃ (R-3c, #167) | Spacegroup edge case |
-| `POSCAR/` | VASP POSCAR examples | POSCAR parser |
-| `scf.in` | Quantum ESPRESSO input | QE parser |
+```bash
+source dev_env.sh && cargo check --manifest-path src-tauri/Cargo.toml
+source dev_env.sh && cargo test --no-fail-fast --manifest-path src-tauri/Cargo.toml
+cmake --build cpp/tests/build
+ctest --test-dir cpp/tests/build --output-on-failure
+pnpm install --frozen-lockfile
+npm run ipc:inventory
+npm run check:ipc
+npm run test:ipc
+./node_modules/.bin/tsc --noEmit
+pnpm run build
+git diff --check
+```
+
+For a documentation-only Node, run the link, stale-term, and `git diff --check` verification relevant to the changed documents. Do not run expensive or unrelated suites merely to label documentation as physically validated.
 
 ---
 
-## 5. Writing a Physical Test
+## Test-data policy
 
-A good test validates **geometry**, not just counting. Use the following template:
+Fixtures in `tests/data/` and explicit test constructors are evidence with declared scope, not generic material truth. Keep the source, coordinate convention, unit, and expected behavior visible in a fixture or test name. Do not overwrite a reference structure to hide an anomalous result.
 
-```rust
-#[test]
-fn test_slab_diophantine_geometry() {
-    let cs = make_fcc_al_state();    // Fresh isolated state
-    let slab = cs.generate_slab([1, 1, 1], 3, 10.0).unwrap();
-
-    // 1. Density preservation:
-    //    nᵢₙ × layers = nₒᵤₜ
-    assert_eq!(slab.intrinsic_sites, cs.intrinsic_sites * 3);
-
-    // 2. Surface orthogonality:
-    //    α = β = 90° (c-axis perpendicular to the surface plane)
-    assert!((slab.cell_alpha - 90.0).abs() < 1e-5,
-            "α = {}, expected 90°", slab.cell_alpha);
-    assert!((slab.cell_beta  - 90.0).abs() < 1e-5,
-            "β = {}, expected 90°", slab.cell_beta);
-
-    // 3. Symmetry detection must not fail:
-    assert_ne!(slab.spacegroup_number, 0,
-               "Spglib should identify the slab symmetry");
-
-    // 4. Vacuum present:
-    assert!(slab.cell_c > cs.cell_c * 2.0,
-            "Slab c-axis should include 10 Å vacuum");
-}
-```
-
-**Key anti-patterns to avoid**:
-- ❌ Testing only atom count without geometric assertions
-- ❌ Reusing a `CrystalState` across multiple `#[test]` functions
-- ❌ Hardcoding expected atom positions (brittle to parser updates) — use relative checks instead
-- ❌ Modifying tolerance constants without explicit justification in the PR description
+Use real structures for slab regressions only when the expected layer, termination, stoichiometry, minimum-distance, and atomicity assertions are independently stated. A structure that is only visually plausible is not an adequate physical regression fixture.
 
 ---
 
-## 6. Stress & Security Tests
+## Release automation and CI
 
-Stress tests intentionally feed pathological inputs to verify graceful failure:
+`.github/workflows/release.yml` builds release artifacts when a `v*` tag is pushed. It is release automation, not a replacement for the full validation sequence above and not evidence that every platform or GPU path has passed the complete gate.
 
-### Physics Stress Tests (`test_mc_breaker.rs`)
-- Zero-volume lattice matrices
-- Empty scalar fields (all zeros)
-- Extreme isovalue thresholds ($\tau = 0$, $\tau = \pm\infty$)
-- Euler characteristic validation: $\chi = V - E + F = 2$ for closed surfaces
+The platform priority remains macOS Intel/Metal first, macOS Apple Silicon second, Ubuntu/Vulkan selected verification third, and Windows deferred.
 
-### LLM Security Tests (`test_command_schema.rs`)
-- Negative atom indices → `serde` type rejection (u32)
-- Unknown fields in JSON → `#[serde(deny_unknown_fields)]` rejection
-- Missing required fields → deserialization error
-- Buffer overflow attempts via extremely large index arrays
-- Physically impossible parameters (negative cell volume, zero-length bonds)
-
-### Pattern:
-```rust
-#[test]
-fn test_negative_index_rejected() {
-    let json = r#"{"action": "delete_atoms", "params": {"indices": [-1]}}"#;
-    let result: Result<CrystalCommand, _> = serde_json::from_str(json);
-    assert!(result.is_err(), "Negative index should be rejected by u32 type");
-}
-```
-
----
-
-## 7. CI/CD Integration (Future)
-
-Currently, all tests are run locally. The planned CI pipeline:
-
-```
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│  C++ GTest  │───▶│  cargo test  │───▶│  cargo build │
-│  cpp/tests/ │    │  src-tauri/  │    │  (release)   │
-└─────────────┘    └──────────────┘    └─────────────┘
-        │                  │                   │
-        ▼                  ▼                   ▼
-   ctest --output     --nocapture        tauri build
-   -on-failure                           (macOS only)
-```
-
-**Target platforms** (priority order):
-1. **P0**: macOS Intel (Metal 2.0)
-2. **C1**: macOS Apple Silicon
-3. **P2**: Ubuntu (Vulkan)
-4. **P3**: Windows
-
-GPU-dependent tests (`test_mc_breaker.rs` uses CPU fallback; the actual GPU compute path requires a Metal/Vulkan device) are gated by `#[cfg(feature = "gpu-tests")]`.
-
----
-
-*Cross-references: [Algorithms.md](./Algorithms.md) · [IPC_Commands.md](./IPC_Commands.md) · [DeveloperGuide.md](./DeveloperGuide.md)*
+See [DeveloperGuide.md](DeveloperGuide.md) for ownership rules, [IPC_Commands.md](IPC_Commands.md) for contract maintenance, and [Algorithms.md](Algorithms.md) for implementation-level scientific visualization notes.
