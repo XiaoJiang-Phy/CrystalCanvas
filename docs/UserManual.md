@@ -1,231 +1,129 @@
-# CrystalCanvas User Manual (v0.6)
+# CrystalCanvas User Manual
 
-Welcome to **CrystalCanvas**, an open-source, high-performance desktop application for computational materials science and condensed matter physics. CrystalCanvas provides a fluid native experience for building, transforming, analyzing, and exporting complex crystalline geometries.
+> Baseline: `v0.6.1` | Updated: 2026-07-19
+
+CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes; it does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
 
 ---
 
-## 🚀 1. Installation
+## Installation
 
-### Pre-compiled Binaries
-Download from the **[GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases)** page.
-- **macOS**: Download the `.dmg` file. Open and drag to `Applications`. *(Supports Apple Silicon and Intel Macs.)*
-- **Windows / Linux**: Experimental — see release notes for platform availability.
+Download the macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases). The supported development baseline is macOS on Intel and Apple Silicon. The application is not signed with a paid Apple Developer certificate: move it to `/Applications`, Control-click it, select **Open**, and confirm once.
 
-> **macOS Gatekeeper Note**: Since releases are not code-signed, right-click the app and select **Open**, or run `sudo xattr -cr /Applications/CrystalCanvas.app`.
+If Gatekeeper still blocks the first launch:
 
-### Building from Source
+```bash
+sudo xattr -cr /Applications/CrystalCanvas.app
+```
+
+To build from source:
+
 ```bash
 git clone https://github.com/XiaoJiang-Phy/CrystalCanvas.git
 cd CrystalCanvas
-source dev_env.sh          # Project-local Rust/Cargo toolchain
-rustup toolchain install stable
-pnpm install
-pnpm run tauri dev         # Starts Vite dev server + native window
+source dev_env.sh
+pnpm install --frozen-lockfile
+pnpm run tauri dev
 ```
 
 ---
 
-## 🖥 2. User Interface Overview
+## Workspace overview
 
-CrystalCanvas uses a Hybrid Window design — a React/TS UI floating over a native wgpu (Metal/Vulkan) 3D viewport.
+The center of the window is the native 3D viewport. The React workbench overlays it without becoming a second structure store.
 
-### 2.1 The 3D Viewport (Center)
-Atoms are rendered as GPU Impostor Spheres at 60 FPS for up to ~1000 atoms.
+- **Top chrome**: interaction mode, direct/reciprocal axis views, Reset View, Labels, experimental Assistant toggle, theme, and settings.
+- **Left workspace**: the current structure summary, editable lattice parameters, and the intrinsic-atom table. Coordinates in this table are fractional; visual boundary images and Wannier ghosts are not listed as atoms.
+- **Right tool rail**: open one inspector at a time: Bonds & Polyhedra, Isosurface / Volume, Phonon Modes, Brillouin Zone, Wannier / Hopping, Supercell, Slab (hkl), Add / Delete Atoms, or Measurements.
+- **Bottom status bar**: interaction mode, space group, cell volume, active phonon mode, bond count, intrinsic atom count, and selection count.
 
-- **Orbit / Rotate**: Left-click and drag in empty space.
-- **Pan**: Right-click (or `Ctrl`+Left-click) and drag.
-- **Zoom**: Scroll wheel (or trackpad pinch).
-- **Select Atom(s)**: Left-click on an atom. Hold `Shift` for multi-select.
+### Viewport interaction
 
-### 2.2 Top Navigation Bar
-- **Interaction Modes**: Pick, Move, Rotate cursors.
-- **View Axes**: Snap camera to lattice basis (`a`, `b`, `c`) or reciprocal vectors (`a*`, `b*`, `c*`).
-- **Labels Toggle**: Show/hide element labels on atoms.
-- **Light/Dark Mode**: Toggle application theme.
-- **LLM Assistant (Bot Icon)**: Open AI chat panel.
+- **Select**: choose atoms; use Shift for a multi-selection.
+- **Move**: translate the selected atoms in the active interaction plane.
+- **Rotate**: orbit the camera from empty viewport space.
+- **Measure**: select the required atoms for a distance, angle, or dihedral measurement.
+- **Pan and zoom**: use the viewport gesture or the available pointer/trackpad controls.
 
-### 2.3 Left Toolbar (I/O)
-- **Import**: Drag-and-drop or menu. Supported: `.cif`, `.pdb`, `.xyz`, `.POSCAR`, `.scf.in`.
-- **Export**: Native high-fidelity exporters:
-  - **VASP**: POSCAR
-  - **LAMMPS**: Data file
-  - **Quantum ESPRESSO**: `.in` (auto K-point density, IUPAC 2021 masses)
-- **Settings**: Application preferences and rendering defaults.
-
-### 2.4 Right Sidebar (Analysis & Transformations)
-The right sidebar uses a compact **icon toolbar** along the right edge. Click an icon to expand its tool panel; click again to collapse. Hover over any icon for a tooltip label.
+Use the top `a`, `b`, `c`, `a*`, `b*`, and `c*` controls for aligned camera views. **Reset View** returns to the default camera.
 
 ---
 
-## ⚗️ 3. Structural Analysis
+## Load, inspect, and edit a structure
 
-### Bond Analysis
-Click **Analyze** in the Structural Analysis panel to compute:
-- **Bond lengths** and their statistical distribution.
-- **Coordination polyhedra** (octahedra, tetrahedra, etc.) for transition metal sites.
-- **Distortion Index** ($\Delta$) quantifying deviation from ideal geometry.
+Open a structure from the native menu or drop a supported file on the window. The left workspace shows the committed lattice and intrinsic sites after a successful load. Selecting an atom in the table selects the corresponding scene atom.
 
-### Cell Standardization & Reduction
-Three one-click transforms in the **Reciprocal Space** panel:
-- **Niggli Reduce**: Transform to the unique Niggli-reduced cell.
-- **Primitive**: Convert conventional cell → primitive cell.
-- **Conventional**: Convert primitive cell → conventional cell.
+The structure tools provide:
 
----
+- atom addition, deletion, substitution, and selection;
+- lattice-parameter editing with validation;
+- Niggli reduction plus primitive/conventional cell standardization;
+- supercell preview and commit;
+- slab preview, commit, and termination shifting;
+- undo and redo through the native menu;
+- bond and coordination analysis; and
+- distance, angle, and dihedral measurements.
 
-## 🔷 4. Brillouin Zone & K-Path Generator
+Structural changes are validated and committed atomically. If an operation fails, the structure, version, and undo history remain unchanged.
 
-### Computing the Brillouin Zone
-1. Load a crystal structure.
-2. Open the **Reciprocal Space** accordion in the Right Sidebar.
-3. Click **Compute Brillouin Zone**.
+### Slabs
 
-CrystalCanvas automatically:
-- Identifies the **Bravais lattice type** from the space group (14 types for 3D, 5 for 2D).
-- Constructs the **Wigner-Seitz cell** in reciprocal space.
-- Labels all **high-symmetry k-points** ($\Gamma$, $K$, $M$, $X$, $L$, $W$, $U$, etc.).
-- Displays the BZ wireframe in an orthographic locked view.
-
-### 2D Material Support
-For slab/monolayer structures (large vacuum gap along one axis), the system automatically:
-- Detects the vacuum axis and activates 2D mode.
-- Projects the reciprocal lattice onto the in-plane 2D subspace.
-- Classifies the 2D Bravais type (Hexagonal, Square, Rectangular, Centered-Rectangular, Oblique).
-- Shows the 2D BZ as a polygon with appropriate k-point labels.
-
-### Generating Band Paths
-1. Set $N_k$ (points per segment, default 20).
-2. Choose output format: **QE (crystal)** or **VASP**.
-3. Click **💾 Generate & Save K-Path**.
-4. A save dialog exports the k-path file ready for DFT band structure calculations.
+The **Slab (hkl)** inspector accepts Miller indices, layer count, and vacuum thickness in Å. Slab generation requires a conventional cell with detected symmetry; a P1 input must first be replaced with an appropriate conventional representation. Preview does not commit the structure; **Apply** does.
 
 ---
 
-## 🔬 5. Slab Cleaving (Cutting Plane)
+## Volumetric fields
 
-Create surface models by specifying Miller indices.
+Open **Isosurface / Volume** and select **Load Volumetric Data**. Until a grid is loaded, the panel presents only an explicit empty state. After a valid grid is available, it shows its dimensions, range, and format, then enables render controls.
 
-1. Open **Cutting Plane** in the Right Sidebar.
-2. Enter Miller indices $(h, k, l)$, number of layers, and vacuum thickness (Å).
-3. Click **Cut**.
+Available presentation controls include:
 
-The algorithm uses a **Diophantine surface basis** with c-axis orthogonalization, guaranteeing $\alpha = \beta = 90°$ for all Miller indices. Layer termination can be shifted via the termination selector.
+- isosurface, volume, or combined mode;
+- positive, negative, or both isosurface signs;
+- isovalue, opacity, density cutoff, and colormap; and
+- data-range-dependent controls only when the imported range is finite and non-zero.
 
-> **Note**: Input must be a conventional cell (not P1). The UI will warn if a P1 cell is detected.
-
----
-
-## 🧊 6. Supercell Construction
-
-Expand the unit cell periodically:
-1. Open **Supercell Construction** in the Right Sidebar.
-2. Enter multipliers ($N_a$, $N_b$, $N_c$).
-3. Click **Build**. The expanded structure replaces the current state.
+An invalid or unavailable range disables the dependent controls instead of sending unusable values to the renderer. Scalar colors remain quantitative presentation choices: record the selected range, sign convention, and colormap when preparing a figure.
 
 ---
 
-## 📊 7. Volumetric Data Visualization
+## Phonon modes
 
-CrystalCanvas provides real-time volumetric rendering for charge densities, wavefunctions, and electrostatic potentials.
+Open **Phonon Modes**, load a supported phonon/AXSF source, select a mode, set the amplitude, then play or pause the animation. The source structure and the mode data must describe the same atom ordering and count.
 
-### Supported Formats
-- **VASP**: CHGCAR, LOCPOT (with $V_\text{cell}$ normalization)
-- **Gaussian**: Cube files (Bohr→Å auto-conversion)
-- **XSF**: DATAGRID_3D
-
-### Loading Data
-Drag-and-drop a volumetric file onto the window, or use the **Volumetric Data** panel.
-
-### Render Modes
-- **Isosurface**: GPU Marching Cubes mesh extraction at a user-defined isovalue.
-- **Volume**: Front-to-back raycasting with depth-aware compositing.
-- **Both**: Combined view with soft-fade clipping at the isosurface boundary.
-
-### Controls
-- **Isovalue Slider**: Adjust the isosurface threshold.
-- **Sign Mode**: Display positive lobe only, negative only, or both (dual-color).
-- **Colormap**: 10 scientific colormaps — Viridis, Inferno, Plasma, Magma, Cividis, Turbo, Hot, Grayscale, Coolwarm, RdYlBu.
-- **Opacity / Density Cutoff**: Fine-tune transparency and trim low-density regions.
+Phonon animation is a renderer presentation state, not a structural edit: playing, stopping, changing phase, or changing amplitude does not create undo entries or committed structure versions.
 
 ---
 
-## 🌊 8. Phonon Visualizer
+## Reciprocal space and Wannier networks
 
-Animate phonon eigenvectors directly on your crystal structure.
+The **Brillouin Zone** inspector constructs and shows the Brillouin-zone overlay for the current structure and provides high-symmetry path information. The overlay is a visualization aid, not a band-structure calculation.
 
-1. Load a base crystal (CIF or SCF input).
-2. Open **Phonon Animation** in the Right Sidebar.
-3. Click **Load Phonon Data** and select your file:
-   - Quantum ESPRESSO `modes` / `dynmat.dat`
-   - Molden `.mold` format
-   - AXSF animated format
-4. Select a q-point frequency mode from the dropdown (imaginary modes marked with `(i)`).
-5. Adjust the **Amplitude** slider and click **▶ Play Animation**.
+The **Wannier / Hopping** inspector loads a `wannier90_hr.dat` model, then exposes orbital, lattice-shell, magnitude, on-site, and visibility controls. The model must be compatible with the current structure. Neighboring-cell endpoints appear as renderer-only ghosts and do not alter the atom table or the committed structure.
 
 ---
 
-## ⚡ 8.5 Tight-Binding (Wannier) Visualizer
+## Experimental Assistant
 
-Visualize tight-binding hopping networks from Wannier90.
-
-1. Load a base crystal structure (CIF).
-2. Click the **hopping arrow icon** (⇋) in the right toolbar to open the **Tight-Binding** panel.
-3. Click **Load wannier90_hr.dat** and select your file.
-
-### Controls
-- **|t| Threshold Slider**: Filter hoppings by magnitude. Only hoppings with $|t_{ij}| > t_{\min}$ are displayed.
-- **Orbital Toggles**: Enable/disable individual Wannier orbitals.
-- **R-Shell Checkboxes**: Select which translation vectors $\mathbf{R} = [R_1, R_2, R_3]$ to display.
-- **On-site Toggle**: Show/hide on-site terms ($\mathbf{R}=0$, $m=n$).
-- **Show/Hide Hoppings**: Master toggle for the hopping overlay.
-- **Clear**: Remove all Wannier data and restore normal view.
-
-### Visual Encoding
-- **Hopping Lines**: Color-coded by orbital pair index using the Google Material 500-level palette (10 distinct colors).
-- **Ghost Atoms**: Semi-transparent atoms rendered at neighboring-cell hopping endpoints (50% radius, 40% opacity) to provide spatial context.
-- **Auto-Bond Hide**: Chemical bonds are automatically hidden when Wannier data is loaded and restored on clear.
-
-> **Supported**: `wannier90_hr.dat` format (Wannier90 standard output).
+The Assistant is an optional legacy experimental surface, closed by default. It is not required for any structure or visualization workflow and is not a research agent or solver. If used, review every proposed command before approval; a successful action is still subject to the same validation and transaction rules as a direct UI action.
 
 ---
 
-## 🤖 9. LLM Command Bus (Experimental)
+## Supported formats
 
-A context-aware AI assistant translates natural language into validated physics operations.
+| Data | Supported input | Supported output |
+|---|---|---|
+| Crystal structure | CIF, PDB, XYZ, POSCAR/CONTCAR, supported Quantum ESPRESSO input | POSCAR/VASP, LAMMPS data, Quantum ESPRESSO input |
+| Scalar field | CHGCAR/LOCPOT, Gaussian Cube, XSF DATAGRID | — |
+| Phonon animation | supported phonon inputs and AXSF | — |
+| Wannier network | `wannier90_hr.dat` | — |
 
-### Setup
-1. Click the **Bot Icon** in the Top Navigation bar.
-2. Select your provider (OpenAI, DeepSeek, or Local Ollama).
-3. Enter your API key and click **Save**.
-   - Keys are stored in your OS Keychain — never in plain text.
-
-### Usage
-The LLM acts as a "Semantic Parameterizer" — it does not write code, but maps your intent to rigorous tool calls.
-
-**Example prompts:**
-- *"Replace all sodium atoms with potassium."*
-- *"Generate a 2×2×2 supercell."*
-- *"Cut a (110) surface with 3 layers and 15 Å vacuum."*
-
-The LLM presents a JSON command card. Click **Execute** to approve the operation.
+For a private or self-developed data source, do not assume a custom import format exists. A source adapter will be added only when a concrete dataset, coordinate convention, units, and target visualization are known.
 
 ---
 
-## 📁 Supported File Formats
+## Figure export
 
-| Format | Import | Export | Notes |
-|--------|--------|--------|-------|
-| CIF | ✅ | — | Via Gemmi (C++) |
-| PDB | ✅ | — | Via Gemmi |
-| XYZ | ✅ | — | |
-| POSCAR | ✅ | ✅ | VASP 5 format |
-| LAMMPS Data | — | ✅ | |
-| QE Input | ✅ | ✅ | Auto K-point density, IUPAC masses |
-| CHGCAR/LOCPOT | ✅ | — | Volumetric |
-| Gaussian Cube | ✅ | — | Volumetric |
-| XSF | ✅ | — | Volumetric (DATAGRID_3D) |
-| wannier90_hr.dat | ✅ | — | Tight-binding hopping Hamiltonian |
+Use the native export command to write the current rendered scene. Current export is an interactive-scene capture path; reproducible high-fidelity render profiles, advanced lighting, and tiled 4K/8K export are planned publication-rendering work rather than guarantees of the current release.
 
----
-
-*CrystalCanvas v0.6.0 — Copyright © 2026 Xiao Jiang and CrystalCanvas Contributors. Dual-licensed under MIT and Apache-2.0.*
+For troubleshooting, see [FAQ.md](FAQ.md). For a description of the product direction, see [ROADMAP.md](../ROADMAP.md).

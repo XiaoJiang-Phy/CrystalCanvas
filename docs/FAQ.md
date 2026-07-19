@@ -1,151 +1,92 @@
-# CrystalCanvas FAQ & Troubleshooting
+# CrystalCanvas FAQ and Troubleshooting
 
-> Version: v0.6.0 | Updated: 2026-04-14
-
----
-
-## Installation & Launch
-
-### macOS: "CrystalCanvas can't be opened because the developer cannot be verified"
-
-CrystalCanvas is not signed with an Apple Developer certificate. macOS Gatekeeper blocks unsigned applications by default.
-
-**Fix**:
-1. Open **System Settings** → **Privacy & Security**.
-2. Scroll to the **Security** section — you will see *"CrystalCanvas was blocked from use because it is not from an identified developer"*.
-3. Click **Open Anyway**.
-
-Alternatively, right-click (or Control-click) the `.app` in Finder and choose **Open** from the context menu.
+> Baseline: `v0.6.1` | Updated: 2026-07-19
 
 ---
 
-### Linux: Application crashes on launch with `wgpu` or Vulkan errors
+## Which platforms are supported?
 
-CrystalCanvas uses the `wgpu` crate for GPU rendering. On Linux this requires a working Vulkan ICD (Installable Client Driver).
+macOS Intel/Metal is the baseline development target and macOS Apple Silicon is continuously verified. Ubuntu/Vulkan is a secondary build and rendering-verification target. Windows support is deferred until it is required by the maintainer workflow.
 
-**Fix**:
-- **AMD / Intel (Mesa)**:
-  ```bash
-  sudo apt install mesa-vulkan-drivers
-  ```
-- **NVIDIA**: Install the proprietary driver (`nvidia-driver-535` or newer). The open-source `nouveau` driver lacks Vulkan support.
-- **Wayland compositing issues**: If the window appears but the viewport is blank, try:
-  ```bash
-  WEBKIT_DISABLE_COMPOSITING_MODE=1 ./crystal-canvas
-  ```
-- **Verify Vulkan**: Run `vulkaninfo | head -20` — if it prints GPU info, Vulkan is functional.
+Do not treat a successful launch on a non-baseline platform as proof that every GPU path has been validated. Report the operating system, GPU, driver, backend, and an error log when opening an issue.
 
 ---
 
-### Windows: Blank white screen on launch
+## macOS says that the developer cannot be verified
 
-A blank window typically means the Microsoft Edge WebView2 runtime failed to initialize the wgpu surface.
+The released application is not signed with a paid Apple Developer certificate. Move it to `/Applications`, Control-click it, choose **Open**, and confirm the dialog. If needed, run:
 
-**Fix**:
-1. Ensure Windows is fully updated.
-2. Install the latest GPU drivers from your vendor (NVIDIA/AMD/Intel).
-3. As a last resort, force the OpenGL backend via PowerShell (3D performance will be degraded):
-   ```powershell
-   $env:WGPU_BACKEND="gl"
-   .\CrystalCanvas.exe
-   ```
-
----
-
-## 3D Viewport & Rendering
-
-### Volumetric rendering (CHGCAR / Cube) fails with out-of-memory
-
-High-resolution volumetric grids (e.g., $200 \times 200 \times 200$ ≈ 32 MB of `f32` data) require GPU buffer allocation. If your GPU does not have enough VRAM, the upload will fail.
-
-CrystalCanvas wraps GPU buffer creation in `std::panic::catch_unwind`, so an OOM will return a user-visible error message instead of crashing the application.
-
-**Fix**:
-1. Reduce grid resolution in your DFT code before loading (e.g., lower `NGX`/`NGY`/`NGZ` in VASP, or use a coarser `ecutrho` in Quantum ESPRESSO).
-2. Close other GPU-intensive applications to free VRAM.
-
----
-
-### Isosurface color does not match the volume colormap
-
-After changing the colormap (e.g., from Viridis to Coolwarm), the isosurface may still show the old color until you adjust the isovalue slider.
-
-**Fix**: Drag the isovalue slider slightly. This triggers a re-dispatch of the Marching Cubes compute shader, which re-syncs the isosurface color with the active colormap.
-
----
-
-## Structural Operations
-
-### Slab generation fails: "Requires a conventional unit cell with symmetry"
-
-CrystalCanvas rejects slab cuts on cells with spacegroup P1 (no detected symmetry). Miller indices $(hkl)$ are defined relative to the conventional cell axes, so a P1 cell cannot correctly interpret them.
-
-**Fix**:
-1. Open the **Reciprocal Space** tool panel.
-2. Under **Standardization**, click **Conventional**.
-3. Retry the slab cut.
-
-If your structure was loaded from a file that lost symmetry information (e.g., an XYZ file), reload it from a CIF or POSCAR that includes the spacegroup.
-
----
-
-### Brillouin Zone shows a 3D polyhedron for a 2D slab
-
-The 2D BZ detector uses heuristics: it checks for a fractional vacancy gap $> 0.35$ along one axis **and** requires that the vacuum axis length exceeds twice the average of the other two axes ($c / \bar{a} > 2.0$). If your slab has a small vacuum layer, it may be classified as 3D.
-
-**Fix**: Regenerate the slab with a larger vacuum gap. As a rule of thumb, use at least 15 Å of vacuum to ensure reliable 2D detection.
-
----
-
-### Phonon animation fails: "Atom count mismatch"
-
-The phonon eigenvector file must contain displacement vectors for exactly the same number of atoms as the currently loaded crystal structure.
-
-**Fix**: Ensure that you loaded the correct structure file **before** loading the phonon data. If the structure was modified (e.g., by building a supercell), restore the original unit cell first via the **Supercell** panel → **Restore Original Cell**.
-
-Alternatively, use the **Load Phonon (Interactive)** button, which loads both the structure and phonon data from separate files in a single step.
-
----
-
-### Wannier hopping visualization is empty
-
-The `wannier90_hr.dat` file requires `num_wann ≤ num_atoms` because orbital centers are mapped to atomic positions. If your Wannier model has more orbitals than atoms, the mapping will fail.
-
-**Fix**: Ensure the loaded crystal has at least as many atoms as the number of Wannier functions. For multi-orbital systems, build a supercell or load the full unit cell.
-
----
-
-## Development & Build
-
-### `cargo build` fails with C++ compiler or `cxxbridge` errors
-
-The C++ physics kernel (Spglib, Gemmi, slab/supercell builders) is compiled automatically by `build.rs` via the `cxx` crate. You need a C++17-compatible toolchain.
-
-**Fix**:
-- **macOS**: `xcode-select --install`
-- **Linux**: `sudo apt install build-essential cmake`
-- **Windows**: Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload.
-
----
-
-### UI changes are not reflected after editing React code
-
-The development server must be running for Hot Module Replacement (HMR) to work.
-
-**Fix**:
 ```bash
-npx tauri dev
+sudo xattr -cr /Applications/CrystalCanvas.app
 ```
-This starts the Vite dev server alongside the Rust backend. Edits to `.tsx` files will hot-reload instantly. If you ran `npm run build` + `npx tauri dev`, the app may be serving stale assets from `dist/` — delete the `dist/` folder and restart.
 
 ---
 
-### Spglib detection returns wrong spacegroup
+## A structure or scalar file does not load
 
-Spglib uses a symmetry precision parameter (default `symprec = 1e-5`). If your structure has slight distortions (e.g., from a geometry optimization), it may be classified incorrectly.
+Check that the source is one of the documented formats and that its contents match its extension. The importer reports a structured parse or I/O error instead of replacing the committed structure on failure.
 
-**Fix**: This is expected behavior for near-threshold structures. If needed, manually round your coordinates to higher precision before loading.
+For a private format, convert it to a supported public format or retain the original data until a concrete source-adapter requirement is defined. Do not relabel an unknown file merely to bypass format detection.
 
 ---
 
-*Cross-references: [UserManual.md](./UserManual.md) · [DeveloperGuide.md](./DeveloperGuide.md) · [Algorithms.md](./Algorithms.md)*
+## The volumetric panel has no controls
+
+This is expected before a scalar grid has been loaded. Data-specific controls appear only after `VolumetricInfo` has been received with a finite, non-zero range. A zero, non-finite, or otherwise unusable range leaves dependent controls disabled and reports its status rather than sending invalid values to the renderer.
+
+If a large grid fails to load, preserve the original file and record the reported error, grid dimensions, GPU, and available memory. Do not assume that reducing a scientific grid is physically harmless; any resampling belongs in the producing workflow and must preserve the intended quantity and units.
+
+---
+
+## Slab construction is rejected for P1
+
+The current slab command requires a conventional unit cell with detected symmetry because its Miller-index interpretation is tied to conventional axes. Standardize or reload a suitable conventional representation, then retry. A failed slab request is atomic and does not change the current structure.
+
+---
+
+## The Brillouin-zone display is not what I expected
+
+The Brillouin-zone overlay is constructed from the committed lattice and the application's current dimensionality classification. Check the lattice parameters, periodic direction, and whether the imported structure contains the intended vacuum representation. Preserve the source structure and report the lattice plus the generated BZ information if the result is unexpected.
+
+The overlay is for visualization. It does not calculate bands, transport coefficients, EPC quantities, or superconducting observables.
+
+---
+
+## Phonon loading or animation fails
+
+The phonon source must be compatible with the currently loaded structure, including atom count and ordering. Reload the intended base structure before selecting the phonon source. Loading, selecting, or animating a phonon mode does not commit a structural edit.
+
+---
+
+## The Wannier network is empty or rejected
+
+Load a compatible base structure before `wannier90_hr.dat`. The current overlay maps Wannier orbital indices to the available intrinsic atom positions; it rejects models that cannot be represented by that structure. Changing the structure or creating a supercell merely to satisfy the count is not a substitute for a physically compatible mapping.
+
+---
+
+## A browser preview reports `not_in_tauri`
+
+That response is intentional. Browser/mock mode may render the UI but cannot mutate Rust `CrystalState` or native renderer resources. Run the Tauri desktop application for imports, structural operations, renderer mutations, and native dialogs.
+
+---
+
+## Space-group detection is unexpected
+
+Do not manually round or alter coordinates merely to force a desired space group. Preserve the original input, verify its unit cell and coordinate convention in the producing code, and compare against an independently known standardized representation. If the discrepancy remains, report the original file and the detected result.
+
+---
+
+## Development build fails
+
+Use the repository-local environment and the standard checks:
+
+```bash
+source dev_env.sh && cargo check --manifest-path src-tauri/Cargo.toml
+pnpm install --frozen-lockfile
+npm run check:ipc
+pnpm run tauri dev
+```
+
+For a C++/FFI failure, include the full compiler error, operating system, and toolchain version. Do not delete build artifacts or change lockfiles as a first troubleshooting step.
+
+See [UserManual.md](UserManual.md), [DeveloperGuide.md](DeveloperGuide.md), and [TestingGuide.md](TestingGuide.md) for the corresponding operating, architecture, and verification guidance.
