@@ -1,8 +1,8 @@
 # CrystalCanvas Developer Guide
 
-> Baseline: `v0.6.1` | Updated: 2026-07-19
+> Baseline: `v0.6.1` | Updated: 2026-07-20
 
-CrystalCanvas is a visualization-first desktop application. It turns supplied crystal structures and three-dimensional scientific data into interactive real-space or reciprocal-space scenes and reproducible figures. It is not an electronic-structure, EPC, transport, superconductivity, TCI, or workflow solver.
+CrystalCanvas is a visualization-first desktop application. It turns supplied crystal structures and three-dimensional scientific data into interactive real-space or reciprocal-space scenes and reproducible figures. It does not solve electronic-structure, EPC, transport, superconductivity, TCI, or workflow problems.
 
 For user-facing operation, see [UserManual.md](UserManual.md). For exact IPC wire shapes, see [IPC_Commands.md](IPC_Commands.md).
 
@@ -77,7 +77,7 @@ Rust CrystalState
                       └─ validated read-only React projection
 ```
 
-Panels receive the projection through props. A panel may own local display state such as a selected render mode, an open modal, or an in-flight operation, but it must not reconstruct or independently refresh the complete physical state.
+Panels receive the projection through props. A panel may own local display state, such as a selected render mode, an open modal, or an in-flight operation. It must not reconstruct or independently refresh the complete physical state.
 
 ### Loading a structure
 
@@ -91,7 +91,7 @@ path → importer/parser → prepared CrystalState → invariant validation
 
 ### Renderer-only controls
 
-Camera movement, selection presentation, BZ scale, isovalue, opacity, colormap, and Wannier visibility do not all represent structural mutations. A renderer-only command may update GPU presentation or a non-structural attachment without allocating a structural undo record. Document that distinction when adding a command; do not emit `state_changed` merely to force a panel refresh.
+Camera movement, selection presentation, BZ scale, isovalue, opacity, colormap, and Wannier visibility are not structural mutations. A renderer-only command may update GPU presentation or a non-structural attachment without allocating a structural undo record. Document this distinction when you add a command. Do not emit `state_changed` only to force a panel refresh.
 
 ---
 
@@ -180,7 +180,7 @@ Scientific panels are lazy-loaded through `components/panels/index.ts` and mount
 - `NumberInput`, `RangeInput`, and `SelectInput` for labeled controls;
 - `PanelError` for visible structured IPC failures.
 
-Commit local display state only after an awaited renderer IPC succeeds. If an operation can be repeated, guard it with a specific in-flight state rather than a single ambiguous boolean. Every input needs an associated label, invalid state, and disabled/busy behavior. Every listener needs an unlisten cleanup on unmount.
+Commit local display state only after the awaited renderer IPC succeeds. If an operation can be repeated, guard it with a specific in-flight state instead of an ambiguous boolean. Give every input a label, an invalid state, and disabled/busy behavior. Release every listener when its owner unmounts.
 
 ### Browser mode
 
@@ -197,7 +197,7 @@ Supported public formats are normalized before renderer consumption. The rendere
 - Modal/vector data: supported phonon and AXSF inputs.
 - Reciprocal-space overlays: Brillouin-zone information and Wannier90 `wannier90_hr.dat` hopping networks.
 
-Private or self-developed data formats receive no speculative container, plug-in, or converter framework. When a concrete dataset exists, its source adapter or converter must normalize declared coordinates, units, topology, and scalar/vector fields before reaching the renderer.
+Do not add a speculative container, plug-in, or converter framework for a private or self-developed format. Wait for a concrete dataset. Its adapter or converter must normalize the declared coordinates, units, topology, and scalar/vector fields before the data reach the renderer.
 
 ### Adding an importer
 
@@ -238,7 +238,7 @@ The `cxx` bridge provides a typed boundary, but that does not imply every value 
 6. Run `npm run check:ipc`, `npm run test:ipc`, TypeScript, and the focused Rust test.
 7. Update [IPC_Commands.md](IPC_Commands.md) after the checked contract is green.
 
-For events, define one owner, validate the payload, expose registration failure in development, and prove listener cleanup. A new event is not a shortcut around the single snapshot-refresh path.
+For each event, define one owner and validate the payload. Expose registration failures during development. Prove listener cleanup. Do not use a new event to bypass the single snapshot-refresh path.
 
 ---
 

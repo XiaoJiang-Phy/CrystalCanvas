@@ -1,8 +1,8 @@
 # CrystalCanvas IPC Contract Reference
 
-> Baseline: `v0.6.1` | Updated: 2026-07-19
+> Baseline: `v0.6.1` | Updated: 2026-07-20
 
-This document describes the reviewed Rust/TypeScript IPC boundary. The machine-checked sources of truth are [ipc/inventory.json](../ipc/inventory.json), [src/ipc/commands.generated.ts](../src/ipc/commands.generated.ts), and [src/ipc/contracts.ts](../src/ipc/contracts.ts). Run `npm run ipc:inventory` and `npm run check:ipc` after changing a command, event, or wire type.
+This document describes the reviewed Rust/TypeScript IPC boundary. The machine-checked sources of truth are [ipc/inventory.json](../ipc/inventory.json), [src/ipc/commands.generated.ts](../src/ipc/commands.generated.ts), and [src/ipc/contracts.ts](../src/ipc/contracts.ts). After you change a command, event, or wire type, run `npm run ipc:inventory` and `npm run check:ipc`.
 
 ---
 
@@ -234,7 +234,7 @@ Do not set success-dependent local state before the awaited call resolves. If a 
 | `tauri://file-drop`, `tauri://file-drop-hover` | `{ paths }` | supported legacy drop compatibility path |
 | `tauri://drag-leave`, `tauri://file-drop-cancelled` | `null` or `undefined` | drop cleanup |
 
-Listeners must release their `unlisten` callback on React unmount. Development failures to register a listener must remain visible; do not silently discard them.
+Release each listener's `unlisten` callback when React unmounts the owner. Keep listener-registration failures visible during development. Do not discard them silently.
 
 ---
 
@@ -250,7 +250,7 @@ const unlisten = await safeListen('state_changed', ({ payload }) => {
 return () => unlisten();
 ```
 
-Panels may update their local presentation state after a successful, non-structural renderer command. They must not optimistically update `CrystalState` projections before a transactional command succeeds, and they must not create a second full-state listener or refetch loop.
+Panels may update local presentation state after a successful non-structural renderer command. Do not update a `CrystalState` projection before a transactional command succeeds. Do not create a second full-state listener or refetch loop.
 
 ### Event ownership
 
