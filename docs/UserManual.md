@@ -1,14 +1,21 @@
 # CrystalCanvas User Manual
 
-> Baseline: `v0.6.1` | Updated: 2026-07-19
+> Baseline: `v0.6.1` | Updated: 2026-07-20
 
-CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes; it does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
+CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes. It does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
 
 ---
 
 ## Installation
 
-Download the macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases). The supported development baseline is macOS on Intel and Apple Silicon. The application is not signed with a paid Apple Developer certificate: move it to `/Applications`, Control-click it, select **Open**, and confirm once.
+Download the macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases). The development baseline supports macOS on Intel and Apple Silicon.
+
+The application does not have a paid Apple Developer signature. Complete these steps for the first launch:
+
+1. Move `CrystalCanvas.app` to `/Applications`.
+2. Control-click the application.
+3. Select **Open**.
+4. Confirm the macOS dialog.
 
 If Gatekeeper still blocks the first launch:
 
@@ -51,7 +58,7 @@ Use the top `a`, `b`, `c`, `a*`, `b*`, and `c*` controls for aligned camera view
 
 ## Load, inspect, and edit a structure
 
-Open a structure from the native menu or drop a supported file on the window. The left workspace shows the committed lattice and intrinsic sites after a successful load. Selecting an atom in the table selects the corresponding scene atom.
+Open a structure from the native menu. You can also drop a supported file on the window. After a successful load, the left workspace shows the committed lattice and intrinsic sites. Select a table row to select the corresponding scene atom.
 
 The structure tools provide:
 
@@ -68,13 +75,13 @@ Structural changes are validated and committed atomically. If an operation fails
 
 ### Slabs
 
-The **Slab (hkl)** inspector accepts Miller indices, layer count, and vacuum thickness in Å. Slab generation requires a conventional cell with detected symmetry; a P1 input must first be replaced with an appropriate conventional representation. Preview does not commit the structure; **Apply** does.
+The **Slab (hkl)** inspector accepts Miller indices, a layer count, and vacuum thickness in Å. Slab generation requires a conventional cell with detected symmetry. Replace a P1 input with an appropriate conventional representation before you generate the slab. **Preview** does not commit the structure. **Apply** commits it.
 
 ---
 
 ## Volumetric fields
 
-Open **Isosurface / Volume** and select **Load Volumetric Data**. Until a grid is loaded, the panel presents only an explicit empty state. After a valid grid is available, it shows its dimensions, range, and format, then enables render controls.
+Open **Isosurface / Volume**. Select **Load Volumetric Data**. Before a grid is loaded, the panel shows an explicit empty state. After a valid grid is available, the panel shows its dimensions, range, and format. It then enables the render controls.
 
 Available presentation controls include:
 
@@ -83,13 +90,19 @@ Available presentation controls include:
 - isovalue, opacity, density cutoff, and colormap; and
 - data-range-dependent controls only when the imported range is finite and non-zero.
 
-An invalid or unavailable range disables the dependent controls instead of sending unusable values to the renderer. Scalar colors remain quantitative presentation choices: record the selected range, sign convention, and colormap when preparing a figure.
+An invalid or unavailable range disables the dependent controls. CrystalCanvas does not send an unusable value to the renderer. When you prepare a figure, record the selected range, sign convention, and colormap.
 
 ---
 
 ## Phonon modes
 
-Open **Phonon Modes**, load a supported phonon/AXSF source, select a mode, set the amplitude, then play or pause the animation. The source structure and the mode data must describe the same atom ordering and count.
+The source structure and mode data must use the same atom order and atom count. To show a phonon mode:
+
+1. Open **Phonon Modes**.
+2. Load a supported phonon or AXSF source.
+3. Select a mode.
+4. Set the amplitude.
+5. Start or pause the animation.
 
 Phonon animation is a renderer presentation state, not a structural edit: playing, stopping, changing phase, or changing amplitude does not create undo entries or committed structure versions.
 
@@ -105,7 +118,7 @@ The **Wannier / Hopping** inspector loads a `wannier90_hr.dat` model, then expos
 
 ## Experimental Assistant
 
-The Assistant is an optional legacy experimental surface, closed by default. It is not required for any structure or visualization workflow and is not a research agent or solver. If used, review every proposed command before approval; a successful action is still subject to the same validation and transaction rules as a direct UI action.
+The Assistant is an optional legacy experimental surface. It is closed by default. It is not required for a structure or visualization workflow, and it is not a research agent or solver. Review every proposed command before you approve it. An approved command uses the same validation and transaction rules as a direct UI action.
 
 ---
 
@@ -124,6 +137,6 @@ For a private or self-developed data source, do not assume a custom import forma
 
 ## Figure export
 
-Use the native export command to write the current rendered scene. Current export is an interactive-scene capture path; reproducible high-fidelity render profiles, advanced lighting, and tiled 4K/8K export are planned publication-rendering work rather than guarantees of the current release.
+Use the native export command to write the current rendered scene. The current release captures the interactive scene. It does not guarantee reproducible high-fidelity profiles, advanced lighting, or tiled 4K/8K output. Those capabilities remain planned publication-rendering work.
 
 For troubleshooting, see [FAQ.md](FAQ.md). For a description of the product direction, see [ROADMAP.md](../ROADMAP.md).

@@ -1,8 +1,8 @@
 # CrystalCanvas Algorithms and Implementation Notes
 
-> Baseline: `v0.6.1` | Updated: 2026-07-19
+> Baseline: `v0.6.1` | Updated: 2026-07-20
 
-This document connects the current visualization and geometry algorithms to their implementation and regression gates. It is intended for contributors changing existing behavior, not as a validation report for a particular material, calculation, or source file.
+This document connects the current visualization and geometry algorithms to their implementation and regression gates. It guides contributors who change existing behavior. It is not a validation report for a material, calculation, or source file.
 
 CrystalCanvas does not infer scientific meaning that is absent from an input file. Before changing a structure, Brillouin-zone, slab, phonon, or other physical path, declare the input convention and establish a reproducible fixture. See [TestingGuide.md](TestingGuide.md).
 
@@ -21,7 +21,7 @@ L = \begin{bmatrix} \mathbf a & \mathbf b & \mathbf c \end{bmatrix},
 = f_a\mathbf a + f_b\mathbf b + f_c\mathbf c.
 $$
 
-Structure and geometry computation use `f64`. Prepared renderer instances and WGSL buffers use `f32`. A conversion to renderer precision must happen only after parsing, validation, and structural computation have succeeded.
+Structure and geometry computations use `f64`. Prepared renderer instances and WGSL buffers use `f32`. Convert to renderer precision only after parsing, validation, and structural computation succeed.
 
 Scalar grids use x-fastest flat indexing:
 
@@ -56,7 +56,7 @@ $$
 N_{\mathrm{out}} = N_{\mathrm{in}}\,|\det S|.
 $$
 
-The Rust preflight rejects an empty structure, singular or resource-exceeding expansions, invalid lattice parameters, and arithmetic/capacity overflow before allocating output buffers. The C++ kernel returns the transformed lattice, fractional positions, and atom types; Rust reconstructs the candidate `CrystalState` and revalidates it before commit.
+The Rust preflight rejects an empty structure, a singular or resource-exceeding expansion, invalid lattice parameters, and arithmetic or capacity overflow. It performs these checks before it allocates output buffers. The C++ kernel returns the transformed lattice, fractional positions, and atom types. Rust then reconstructs the candidate `CrystalState` and validates it again before commit.
 
 The IPC shapes intentionally differ:
 
@@ -119,7 +119,7 @@ $$
 
 clips a 2D Wigner–Seitz polygon, and embeds the polygon back into three dimensions. A degenerate in-plane area returns an empty `Unknown` result rather than fabricated geometry.
 
-The BZ overlay and labeled k path are derived from the committed lattice. They are not a band calculation, topology diagnosis, transport result, or proof that an external calculation used the same reciprocal convention. When adding an importer, retain enough metadata to compare its basis, periodic axes, and $2\pi$ convention explicitly.
+The BZ overlay and labeled k path are derived from the committed lattice. They are not a band calculation, topology diagnosis, transport result, or proof that an external calculation used the same reciprocal convention. When you add an importer, retain enough metadata to compare its basis, periodic axes, and $2\pi$ convention explicitly.
 
 ---
 
@@ -208,4 +208,4 @@ Before changing an algorithm:
 4. run the focused C++/Rust/GPU gate and the standard repository gates; and
 5. have Auditor check physical assumptions, failure atomicity, ownership, and unintended contract changes.
 
-There is no repository-wide physical Manifest declaring one material or simulation setup. Passing implementation tests therefore establishes software behavior only; it does not validate an unpublished scientific interpretation.
+There is no repository-wide physical Manifest that declares one material or simulation setup. Passing implementation tests therefore establishes software behavior only. It does not validate an unpublished scientific interpretation.

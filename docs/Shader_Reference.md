@@ -1,8 +1,8 @@
 # CrystalCanvas GPU Shader Reference
 
-> Baseline: `v0.6.1` | Updated: 2026-07-19
+> Baseline: `v0.6.1` | Updated: 2026-07-20
 
-CrystalCanvas uses WGSL exclusively. This reference maps every current shader to its Rust pipeline, buffers, entry points, and validation responsibilities. Shader code consumes prepared presentation data; it never owns crystal state or defines the scientific meaning of an imported field.
+CrystalCanvas uses WGSL exclusively. This reference maps each current shader to its Rust pipeline, buffers, entry points, and validation responsibilities. Shader code consumes prepared presentation data. It never owns crystal state or defines the scientific meaning of an imported field.
 
 ---
 
@@ -34,7 +34,7 @@ struct CameraUniforms {
 };
 ```
 
-Not every shader names the struct identically, but the Rust buffer and WGSL memory layout must agree exactly. WGSL matrices are column-major, matching the project convention. Do not reorder fields or add a member in only one shader: the same Rust camera buffer is bound to multiple pipelines.
+Not every shader gives the struct the same name. The Rust buffer and WGSL memory layout must still agree exactly. WGSL matrices are column-major, matching the project convention. Do not reorder fields or add a member in only one shader. The same Rust camera buffer is bound to multiple pipelines.
 
 ---
 
@@ -91,7 +91,7 @@ The fragment stage:
 4. evaluates the view-space normal and lighting at the nearest hit; and
 5. projects the analytic hit point and writes corrected fragment depth.
 
-The file also contains a placeholder fragment entry point, but the Rust pipeline uses the implementation entry point. Confirm the selected entry point in `renderer/pipeline.rs` before renaming or deleting either function.
+The file also contains a placeholder fragment entry point. The Rust pipeline uses the implementation entry point. Confirm the selected entry point in `renderer/pipeline.rs` before you rename or delete either function.
 
 The renderer separates opaque and partially occupied atom instances before drawing. Changes to alpha handling must preserve the opaque/transparent pass contract and source-index mapping used for picking.
 
@@ -109,7 +109,7 @@ Each bond instance supplies two Cartesian endpoints, a radius, and color. The ve
 
 The current shader draws the cylinder side surface and applies ambient, diffuse, and specular terms in the fragment stage. A zero-length segment would make the axis normalization invalid, so CPU scene preparation must continue to reject or omit degenerate bonds.
 
-Do not raise radial resolution or add caps solely for publication output without measuring interactive cost. Publication-quality geometry can use a separate export/render path when that design is approved.
+Do not raise radial resolution or add caps only for publication output until you measure the interactive cost. An approved publication-rendering design can use a separate export path.
 
 ---
 
@@ -229,7 +229,7 @@ For a new shader, document:
 - renderer ownership and cleanup lifecycle; and
 - the focused automated gate plus desktop verification scene.
 
-`cargo check` and `pnpm run build` are necessary but are not a substitute for executing the relevant wgpu pipeline. GPU-dependent tests may skip when no adapter is available; record that skip and complete the desktop check before considering a rendering node finished.
+Run `cargo check` and `pnpm run build`, but also execute the relevant wgpu pipeline. A GPU-dependent test may skip when no adapter is available. Record the skip and complete the desktop check before you mark the rendering Node complete.
 
 ---
 

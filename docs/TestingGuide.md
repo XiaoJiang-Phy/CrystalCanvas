@@ -1,21 +1,23 @@
 # CrystalCanvas Testing and TDD Guide
 
-> Baseline: `v0.6.1` | Updated: 2026-07-19
+> Baseline: `v0.6.1` | Updated: 2026-07-20
 
-CrystalCanvas uses small, independently gated development Nodes. A passing software test establishes only its stated contract; it is not a proof that a scientific model, convergence setting, or imported dataset is physically correct.
+CrystalCanvas uses small, independently gated development Nodes. A passing software test establishes only its stated contract. It does not prove that a scientific model, convergence setting, or imported dataset is physically correct.
 
 ---
 
 ## Node workflow
 
-Each Node follows this order:
+Use this order for each behavior-changing production Node:
 
 1. **Breaker** adds an independent failing gate for the required behavior and its important counterexamples.
 2. **Builder** makes the smallest production-code change that satisfies the established gate. Builder does not add a new test to make its own implementation pass.
 3. Run the focused gate and the relevant broader gates.
 4. **Auditor** checks ownership, lock order, contract changes, regressions, and scope before the Node receives its own commit.
 
-Do not proceed to the next Node while its gate is red. Do not weaken a tolerance, timing condition, physical expectation, or assertion merely to make a test pass.
+Do not proceed to the next Node while its gate is red. Do not weaken a valid tolerance, timing condition, physical expectation, or assertion to make a test pass.
+
+Documentation, read-only analysis, and mechanical refactoring do not require a new test. Run the relevant existing validation. An explicitly labeled non-production prototype may defer a new test, but it cannot support a release or a scientific conclusion until the applicable gate passes.
 
 ### What an independent red gate should contain
 
@@ -35,7 +37,7 @@ Avoid gates that only search for a preferred variable name or duplicate the exac
 
 ## Scientific and numerical tests
 
-For structural, slab, Brillouin-zone, phonon, or scalar-field work, run the `sci-validator` guard before building a physical test. A deterministic physical PASS requires a declared manifest, conventions, units, and an applicable registered executor. Without that evidence, record the software behavior without calling it a physics PASS; preserve unexpected evidence for `physics-audit` rather than tuning it away.
+Run the `sci-validator` guard before you change or execute structural, slab, Brillouin-zone, phonon, or scalar-field behavior, or before you make a physical claim from a test. Read-only work that adds no physical claim is exempt. A deterministic physical PASS requires a declared manifest, conventions, units, and an applicable registered executor. Without that evidence, record only the software behavior. Do not call it a physics PASS. Preserve unexpected evidence for `physics-audit`; do not tune it away.
 
 Project-wide software-test constraints:
 
@@ -70,7 +72,7 @@ The slab and surface-basis suites are geometry regression tests. Their acceptanc
 | `test_slab_layers.cpp` | layer clustering and termination shifting |
 | `test_slab_eigen.cpp` | legacy slab regression coverage retained during migration |
 
-For a fresh checkout, configure once before the build command:
+For a fresh checkout, configure the C++ tests before you build them:
 
 ```bash
 cmake -S cpp/tests -B cpp/tests/build
@@ -91,14 +93,14 @@ Notable v0.6.1 regression families include:
 - importer/exporter and FFI round-trip tests; and
 - isolated geometry and renderer-adjacent algorithm tests.
 
-Run a focused integration test while developing:
+Run a focused integration test during development:
 
 ```bash
 source dev_env.sh && cargo test --manifest-path src-tauri/Cargo.toml \
   --test test_phys_1c_failure_atomicity -- --nocapture
 ```
 
-Use `--no-fail-fast` for the final Rust gate so independent failures are all visible. Desktop-dependent smoke tests may report an explicit skip when no native Tauri runtime or GPU surface is available; a skip is not a desktop PASS.
+Use `--no-fail-fast` for the final Rust gate. This option keeps independent failures visible. A desktop-dependent smoke test may report an explicit skip when no native Tauri runtime or GPU surface is available. A skip is not a desktop PASS.
 
 ### TypeScript, IPC, and UI contract gates
 
@@ -140,7 +142,7 @@ node --test scripts/ui-contract.test.mjs
 node --test scripts/ipc-contract-runtime.test.mjs
 ```
 
-Do not change a source contract solely because a formatting refactor makes its regular expression inconvenient. First determine whether the test protects a real architecture invariant; if it does, preserve the invariant and update the smallest test expression necessary.
+Do not change a source contract only because a formatting refactor makes its regular expression inconvenient. First determine whether the test protects an architecture invariant. If it does, preserve the invariant and update only the necessary test expression.
 
 ---
 
@@ -162,7 +164,7 @@ pnpm run build
 git diff --check
 ```
 
-For a documentation-only Node, run the link, stale-term, and `git diff --check` verification relevant to the changed documents. Do not run expensive or unrelated suites merely to label documentation as physically validated.
+For a documentation-only Node, check links, stale terms, and `git diff --check`. Run only the checks that apply to the changed documents. Do not run unrelated suites to label documentation as physically validated.
 
 ### Choosing a focused gate
 
@@ -197,7 +199,7 @@ Use real structures for slab regressions only when the expected layer, terminati
 
 ## Desktop verification
 
-The native desktop path must be checked for changes that cannot be established by source contracts alone. Record the platform and backend, then exercise only the relevant checklist:
+Use the native desktop path for behavior that source contracts cannot establish. Record the platform and backend. Then run the relevant checks:
 
 - load a real structure and confirm left-workspace intrinsic counts;
 - perform undo/redo from the native menu and verify scene plus menu state;
