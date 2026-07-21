@@ -1241,3 +1241,274 @@ test('UI-1G PromptModal callers return and propagate mutation promises', () => {
         'Replace Atom must propagate its rejected mutation after recording the panel error',
     );
 });
+
+const ui_3_source_paths = [
+    'src/App.tsx',
+    'src/components/layout/LeftSidebar.tsx',
+    'src/components/layout/RightSidebar.tsx',
+    'src/components/layout/TopNavBar.tsx',
+    'src/components/layout/BottomStatusBar.tsx',
+    'src/components/layout/Shell.tsx',
+    'src/components/panels/index.ts',
+    'src/hooks/useCameraInteraction.ts',
+];
+
+const ui_3_sources = Object.fromEntries(await Promise.all(ui_3_source_paths.map(async (path) => [
+    path,
+    await readFile(new URL('../' + path, import.meta.url), 'utf8'),
+])));
+
+const ui_3_clean_sources = Object.fromEntries(Object.entries(ui_3_sources).map(([path, source]) => [
+    path,
+    strip_comments(source),
+]));
+
+const ui_3_desktop_cases = Object.freeze([
+    { viewport: '1280x720', theme: 'light' },
+    { viewport: '1280x720', theme: 'dark' },
+    { viewport: '1440x900', theme: 'light' },
+    { viewport: '1440x900', theme: 'dark' },
+    { viewport: '1920x1080', theme: 'light' },
+    { viewport: '1920x1080', theme: 'dark' },
+]);
+
+function class_attribute(source, marker) {
+    const start = source.indexOf(marker);
+    assert.ok(start >= 0, 'missing marker: ' + marker);
+    const tag_start = source.lastIndexOf('<', start);
+    const tag_end = source.indexOf('>', start);
+    assert.ok(tag_start >= 0 && tag_end >= 0, 'marker must occur in a JSX tag: ' + marker);
+    return source.slice(tag_start, tag_end + 1);
+}
+
+function assert_ui_3_embedded_command_groups(top_nav) {
+    for (const group of ['interaction', 'view', 'application']) {
+        const tag = class_attribute(top_nav, `data-command-group="${group}"`);
+        assert.doesNotMatch(tag, /\bcc-field\b|\bborder(?:-[\w\[\]/.]+)?\b|\bshadow(?:-[\w\[\]/.]+)?\b/,
+            group + ' commands must stay embedded in the shared chrome, not a permanent boxed surface');
+    }
+    assert.match(class_attribute(top_nav, 'data-command-group="interaction"'), /\bshrink-0\b/,
+        'interaction commands need a bounded desktop group');
+    assert.match(class_attribute(top_nav, 'data-command-group="view"'), /\bshrink-0\b/,
+        'view commands need a bounded desktop group');
+    assert.match(class_attribute(top_nav, 'data-command-group="application"'), /\bmin-w-0\b/,
+        'application commands must yield width before colliding with the centered view group');
+
+    const tool_button = top_nav.slice(top_nav.indexOf('const ToolButton'), top_nav.indexOf('const ViewButton'));
+    const view_button = top_nav.slice(top_nav.indexOf('const ViewButton'), top_nav.indexOf('const NavButton'));
+    assert.match(tool_button, /\bhover:bg-/, 'embedded interaction buttons need a lightweight hover state');
+    assert.match(tool_button, /\bbg-(?:white|emerald|slate)/, 'embedded interaction buttons need a lightweight active state');
+    assert.doesNotMatch(tool_button, /\bshadow(?:-[\w\[\]/.]+)?\b/,
+        'interaction buttons must not use a raised-card shadow for their active state');
+    assert.match(view_button, /\bhover:bg-/, 'embedded view buttons need a lightweight hover state');
+    assert.doesNotMatch(view_button, /(?:^|\s)(?:bg|border|shadow)(?:-[\w\[\]/.]+)?\b/,
+        'view buttons must not have a permanent background, border, or shadow');
+}
+
+function assert_ui_3_status_hierarchy(bottom_status) {
+    for (const group of ['summary', 'counters']) {
+        const marker = `data-status-group="${group}"`;
+        const tag = class_attribute(bottom_status, marker);
+        const group_window = bottom_status.slice(bottom_status.indexOf(marker), bottom_status.indexOf(marker) + 640);
+
+        assert.match(tag, /\bmin-w-0\b/, group + ' must permit bounded layout');
+        assert.match(tag, /\boverflow-hidden\b/, group + ' must confine its own scroll viewport');
+        assert.match(group_window,
+            /<div className="(?=[^"]*\bw-full\b)(?=[^"]*\boverflow-x-auto\b)(?=[^"]*\boverflow-y-hidden\b)(?=[^"]*\bcustom-scrollbar\b)[^"]*">/,
+            group + ' needs an intentional horizontal scroll path instead of silent clipping');
+    }
+
+    const counters = class_attribute(bottom_status, 'data-status-group="counters"');
+    assert.match(counters, /\bw-\[[^\]]+\]/,
+        'counters need an explicit width budget instead of consuming the summary track');
+    assert.match(counters, /\bmax-w-\[[^\]]+\]/,
+        'counters need a finite maximum width at large desktop sizes');
+}
+
+test('UI-3 documents every required desktop viewport and theme case', () => {
+    assert.deepEqual(ui_3_desktop_cases, [
+        { viewport: '1280x720', theme: 'light' },
+        { viewport: '1280x720', theme: 'dark' },
+        { viewport: '1440x900', theme: 'light' },
+        { viewport: '1440x900', theme: 'dark' },
+        { viewport: '1920x1080', theme: 'light' },
+        { viewport: '1920x1080', theme: 'dark' },
+    ]);
+});
+
+test('UI-3 omits the structure sidebar until a committed structure exists', () => {
+    const left_sidebar = ui_3_clean_sources['src/components/layout/LeftSidebar.tsx'];
+    const empty_branch = left_sidebar.slice(
+        left_sidebar.indexOf('if (!crystalState || numAtoms === 0)'),
+        left_sidebar.indexOf('const volume ='),
+    );
+
+    assert.match(empty_branch, /return null;/,
+        'the unloaded workbench must return no structure sidebar at all');
+    assert.doesNotMatch(empty_branch, /<aside\b|data-sidebar-surface="structure-workspace"|No structure loaded/,
+        'the unloaded workbench must not reserve or paint a structure surface');
+});
+
+test('UI-3 gives the loaded sidebar responsive density with a 1920 table fit and a narrow scroll path', () => {
+    const left_sidebar = ui_3_clean_sources['src/components/layout/LeftSidebar.tsx'];
+    const loaded_sidebar = left_sidebar.slice(
+        left_sidebar.indexOf('return (', left_sidebar.indexOf('const volume =')),
+        left_sidebar.indexOf('const InfoRow'),
+    );
+    const loaded_aside = loaded_sidebar.match(/<aside\b[^>]*>/)?.[0];
+    const atom_section = loaded_sidebar.slice(
+        loaded_sidebar.indexOf('data-sidebar-section="atoms"'),
+        loaded_sidebar.indexOf('</section>', loaded_sidebar.indexOf('data-sidebar-section="atoms"')),
+    );
+    const atom_table = atom_section.slice(atom_section.indexOf('<table'), atom_section.indexOf('</table>'));
+    const sidebar_width = loaded_aside?.match(/(?:^|\s)w-\[(\d+)px\]/)?.[1];
+    const table_width = atom_table.match(/\bmin-w-\[(\d+)px\]/)?.[1];
+
+    assert.ok(loaded_aside, 'loaded structure content needs one semantic sidebar surface');
+    assert.ok(Number(sidebar_width) > 0 && Number(sidebar_width) <= 300,
+        'the default sidebar must stay narrow so the viewport remains dominant');
+    assert.match(loaded_aside, /\b2xl:w-\[(?:3[2-9]\d|[4-9]\d{2,})px\]/,
+        'the 1920 desktop sidebar must expand enough to fit all declared table columns');
+    assert.doesNotMatch(loaded_aside, /\bw-\[340px\]/,
+        'the sidebar must not remain fixed at its oversized 340px width');
+    assert.ok(Number(table_width) >= 320,
+        'the atom table needs an explicit 1920 desktop minimum instead of compressing seven columns');
+    assert.match(atom_section, /\bmax-w-full\b/, 'the atom table scroll region must remain bounded by its sidebar');
+    assert.match(atom_section, /\boverflow-x-auto\b/, 'narrow desktop windows need an intentional horizontal scroll path');
+    for (const column of ['ID', 'El', 'x', 'y', 'z', 'Occ\\.', 'Color']) {
+        assert.match(atom_table, new RegExp(`>${column}<`), 'missing declared critical atom column: ' + column);
+    }
+});
+
+test('UI-3 gives the scientific tool rail an opaque separated surface without danger-state selection', () => {
+    const right_sidebar = ui_3_clean_sources['src/components/layout/RightSidebar.tsx'];
+    const rail = class_attribute(right_sidebar, 'data-tool-rail="scientific-tools"');
+    const selected_branch = right_sidebar.slice(
+        right_sidebar.indexOf("openAccordion === section.key"),
+        right_sidebar.indexOf(')}', right_sidebar.indexOf("openAccordion === section.key")),
+    );
+
+    assert.match(rail, /\bcc-(?:chrome|panel)\b/, 'tool rail needs an opaque shared workbench surface');
+    assert.match(rail, /\bborder-l\b/, 'tool rail needs a visible separator from the viewport');
+    assert.match(rail, /\bmin-h-0\b/);
+    assert.match(rail, /\boverflow-y-auto\b/);
+    assert.doesNotMatch(rail, /\brounded(?:-[\w\[\]/.]+)?\b|\bshadow(?:-[\w\[\]/.]+)?\b/,
+        'the tool rail itself must stay one continuous chrome surface');
+    assert.match(right_sidebar, /aria-label=\{section\.label\}/);
+    assert.match(right_sidebar, /aria-pressed=\{openAccordion === section\.key\}/);
+    assert.doesNotMatch(selected_branch, /\b(?:bg|text|border|ring)-(?:red|rose)-/,
+        'ordinary selected scientific tools must not use danger red as their only state signal');
+    assert.doesNotMatch(selected_branch, /\b(?:shadow|ring)(?:-[\w\[\]/.]+)?\b/,
+        'selected tool buttons must use an embedded state, not a raised or outlined card');
+});
+
+test('UI-3 preserves explicit brand, interaction, view, and application command groups', () => {
+    const top_nav = ui_3_clean_sources['src/components/layout/TopNavBar.tsx'];
+
+    for (const group of ['brand-global', 'interaction', 'view', 'application']) {
+        assert.match(top_nav, new RegExp(`data-command-group="${group}"`),
+            'top navigation needs an explicit ' + group + ' command group');
+    }
+    assert.match(top_nav, /<img[\s\S]*?alt="Logo"/, 'brand group must retain the accessible logo');
+    assert.match(top_nav, /tooltip="Select"[\s\S]*?tooltip="Move"[\s\S]*?tooltip="Rotate"[\s\S]*?tooltip="Measure\/Select"/,
+        'interaction group must retain all four interaction modes');
+    assert.equal((top_nav.match(/safeInvoke\('set_camera_view_axis'/g) || []).length, 7,
+        'view command ownership must remain in the top navigation');
+    assert_ui_3_embedded_command_groups(top_nav);
+});
+
+test('UI-3 bounds both status groups without changing their scientific text ownership', () => {
+    const bottom_status = ui_3_clean_sources['src/components/layout/BottomStatusBar.tsx'];
+
+    assert_ui_3_status_hierarchy(bottom_status);
+    for (const label of ['SpaceGroup:', 'Volume:', 'Phonon Mode', 'Bonds:', 'Total Atoms:', 'Selected:']) {
+        assert.match(bottom_status, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+            'status text must remain visible in its owning group: ' + label);
+    }
+});
+
+test('UI-3 rejects boxed command groups and status clipping regressions', () => {
+    const bottom_status = ui_3_clean_sources['src/components/layout/BottomStatusBar.tsx'];
+    const embedded_top = [
+        '<div data-command-group="interaction" className="flex shrink-0 items-center">',
+        '<div data-command-group="view" className="flex shrink-0 items-center">',
+        '<div data-command-group="application" className="flex min-w-0 items-center">',
+        'const ToolButton = () => <button className="hover:bg-slate-100 bg-emerald-100" />;',
+        'const ViewButton = () => <button className="hover:bg-slate-100 hover:text-emerald-600" />;',
+        'const NavButton = () => null;',
+    ].join('\n');
+
+    assert.throws(
+        () => assert_ui_3_embedded_command_groups(embedded_top.replace(
+            'className="flex shrink-0 items-center"',
+            'className="cc-field flex shrink-0 items-center border shadow-sm"',
+        )),
+        /permanent boxed surface/,
+        'semantic data markers must not permit a permanent command-group card',
+    );
+    assert.throws(
+        () => assert_ui_3_embedded_command_groups(embedded_top.replace(
+            'className="hover:bg-slate-100 hover:text-emerald-600"',
+            'className="bg-slate-100 border shadow-sm hover:bg-slate-200"',
+        )),
+        /permanent background, border, or shadow/,
+        'view buttons must not regress into individually boxed controls',
+    );
+    assert.throws(
+        () => assert_ui_3_status_hierarchy(bottom_status.replace('overflow-x-auto', 'overflow-x-clip')),
+        /intentional horizontal scroll path/,
+        'bounded status text must not degrade into clipping',
+    );
+    assert.throws(
+        () => assert_ui_3_status_hierarchy(bottom_status.replace(/\bw-\[[^\]]+\]\s+max-w-\[[^\]]+\]\s*/, '')),
+        /explicit width budget/,
+        'counters must not grow without an explicit desktop width budget',
+    );
+});
+
+test('UI-3 freezes command, lazy, selection, listener, and viewport ownership during presentation repair', () => {
+    const app = ui_3_clean_sources['src/App.tsx'];
+    const left_sidebar = ui_3_clean_sources['src/components/layout/LeftSidebar.tsx'];
+    const right_sidebar = ui_3_clean_sources['src/components/layout/RightSidebar.tsx'];
+    const top_nav = ui_3_clean_sources['src/components/layout/TopNavBar.tsx'];
+    const panel_index = ui_3_clean_sources['src/components/panels/index.ts'];
+    const camera_interaction = ui_3_clean_sources['src/hooks/useCameraInteraction.ts'];
+    const shell = ui_3_clean_sources['src/components/layout/Shell.tsx'];
+
+    assert.equal((left_sidebar.match(/safeInvoke\('update_lattice_params'/g) || []).length, 1);
+    assert.equal((top_nav.match(/safeInvoke\('set_camera_view_axis'/g) || []).length, 7);
+    assert.equal((right_sidebar.match(/safeInvoke\(/g) || []).length, 0,
+        'the presentation rail must not acquire scientific command ownership');
+    assert.equal((right_sidebar.match(/safeListen\(/g) || []).length, 0,
+        'the presentation rail must not acquire listener ownership');
+    for (const panel of [
+        'BondAnalysisPanel', 'VolumetricPanel', 'PhononPanel', 'BrillouinZonePanel', 'WannierPanel',
+        'SupercellPanel', 'SlabPanel', 'AtomOperationsPanel', 'MeasurementPanel',
+    ]) {
+        assert.match(panel_index, new RegExp(`${panel}: \\(\\) => import\\('./${panel}'\\)`));
+        assert.match(right_sidebar, new RegExp(`lazy\\(lazyConfig\\.${panel}\\)`));
+        assert.doesNotMatch(right_sidebar, new RegExp(`from ['"]\\.\\.\\/panels\\/${panel}['"]`));
+    }
+    assert.match(app, /const \[selectedAtoms, setSelectedAtoms\] = useState<number\[\]>\(\[\]\)/);
+    assert.doesNotMatch(left_sidebar, /useState<\s*CrystalState/);
+    assert.equal((app.match(/safeInvoke\('get_crystal_state'/g) || []).length, 1);
+    assert.match(shell, /ref=\{viewportRef\}/);
+    assert.match(camera_interaction, /const el = viewportRef\.current;/);
+    assert.doesNotMatch(right_sidebar, /\bonPointer(?:Down|Move|Up|Cancel)\s*=/);
+});
+
+test('UI-3 presentation surfaces retain the existing low-idle visual constraints', () => {
+    for (const path of [
+        'src/components/layout/LeftSidebar.tsx',
+        'src/components/layout/RightSidebar.tsx',
+        'src/components/layout/TopNavBar.tsx',
+        'src/components/layout/BottomStatusBar.tsx',
+        'src/components/layout/Shell.tsx',
+    ]) {
+        const source = ui_3_clean_sources[path];
+        assert.doesNotMatch(source, /\bbackdrop-blur(?:-[\w\[\]/.-]+)?\b/, path + ' must not add blur');
+        assert.doesNotMatch(source, /\b(?:bg-)?gradient(?:-to-[\w-]+)?\b/, path + ' must not add a gradient');
+        assert.doesNotMatch(source, /\btransition-all\b/, path + ' must not add an unbounded transition');
+    }
+    assert.doesNotMatch(index_css, /@import\s+url\s*\(/i, 'UI-3 must not add a remote font import');
+});

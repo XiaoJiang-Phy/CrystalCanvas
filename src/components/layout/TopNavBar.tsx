@@ -42,8 +42,8 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             />
 
             {/* Left: Brand + Basic Tools */}
-            <div className="flex min-w-0 items-center gap-4 relative z-10">
-                <div className="flex items-center gap-2 font-semibold text-base tracking-tight text-emerald-600 dark:text-emerald-400">
+            <div className="flex min-w-0 items-center gap-3 relative z-10">
+                <div data-command-group="brand-global" className="flex shrink-0 items-center gap-2 font-semibold text-base tracking-tight text-emerald-600 dark:text-emerald-400">
                     <img src={logoUrl} className="w-5 h-5 object-contain" alt="Logo" />
                     <div className="flex items-baseline gap-1.5">
                         <span>CrystalCanvas</span>
@@ -51,10 +51,10 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     </div>
                 </div>
 
-                <div className="h-5 w-px bg-slate-300 dark:bg-slate-700" />
+                <div className="h-6 w-px bg-[var(--cc-border)]" />
 
                 {/* Tool Group */}
-                <div className="flex items-center gap-0.5 bg-slate-100/80 dark:bg-slate-800/80 p-0.5 rounded-lg">
+                <div data-command-group="interaction" className="flex shrink-0 items-center gap-0.5">
                     <ToolButton icon={<MousePointerClick className="w-3.5 h-3.5" />} active={interactionMode === 'select'} onClick={() => setInteractionMode('select')} tooltip="Select" />
                     <ToolButton icon={<Move className="w-3.5 h-3.5" />} active={interactionMode === 'move'} onClick={() => setInteractionMode('move')} tooltip="Move" />
                     <ToolButton icon={<Rotate3D className="w-3.5 h-3.5" />} active={interactionMode === 'rotate'} onClick={() => setInteractionMode('rotate')} tooltip="Rotate" />
@@ -63,7 +63,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             </div>
 
             {/* Center: Axis View Buttons */}
-            <div className="flex shrink-0 items-center gap-1 relative z-10">
+            <div data-command-group="view" className="flex shrink-0 items-center gap-0.5 relative z-10">
                 <ViewButton label="a" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'a' })} />
                 <ViewButton label="b" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'b' })} />
                 <ViewButton label="c" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'c' })} />
@@ -73,7 +73,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
             </div>
 
             {/* Right: Toggles & Actions */}
-            <div className="flex min-w-0 items-center justify-end gap-2 relative z-10">
+            <div data-command-group="application" className="flex min-w-0 items-center justify-end gap-1 relative z-10">
                 <NavButton label="Reset View" onClick={() => safeInvoke('set_camera_view_axis', { axis: 'reset' })} />
                 <NavButton label="Symmetry" />
 
@@ -88,7 +88,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
                     <ToggleSwitch checked={showLabels} />
                 </button>
 
-                <div className="h-4 w-px bg-slate-300 dark:bg-slate-700" />
+                <div className="mx-1 h-4 w-px bg-[var(--cc-border)]" />
 
                 {/* LLM Assistant Toggle */}
                 <button
@@ -141,7 +141,7 @@ const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.Re
         className={cn(
             "p-1.5 rounded-md transition-colors duration-150",
             active
-                ? "bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400"
+                ? "bg-slate-200/80 dark:bg-slate-700/80 text-emerald-600 dark:text-emerald-400"
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200/50 dark:hover:bg-slate-700/50"
         )}
         aria-label={tooltip}
@@ -153,7 +153,7 @@ const ToolButton = ({ icon, active = false, tooltip, onClick }: { icon: React.Re
 );
 
 const ViewButton = ({ label, onClick }: { label: string, onClick?: () => void }) => (
-    <button onClick={onClick} data-tauri-drag-region="false" className="w-7 h-6 flex items-center justify-center text-xs font-mono font-medium rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors shadow-sm active:scale-[0.96] ml-0.5">
+    <button onClick={onClick} data-tauri-drag-region="false" className="w-7 h-7 flex items-center justify-center text-xs font-mono font-medium rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-200/70 hover:text-emerald-600 dark:hover:bg-slate-700/70 dark:hover:text-emerald-400 transition-colors active:bg-slate-300/70 dark:active:bg-slate-600/70">
         {label}
     </button>
 );

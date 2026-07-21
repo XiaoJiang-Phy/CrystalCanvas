@@ -30,24 +30,32 @@ export const BottomStatusBar: React.FC<{
 
     return (
         <div className="cc-chrome w-full h-7 shrink-0 border-t grid grid-cols-[minmax(0,1fr)_auto] items-center px-4 text-[11px] z-40 pointer-events-auto">
-            <div className="flex min-w-0 items-center gap-4 text-slate-500 dark:text-slate-400 tabular-nums">
-                {interactionMode && (
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">{modeLabel[interactionMode] || interactionMode}</span>
-                )}
-                <span>SpaceGroup: <span className="font-medium text-slate-700 dark:text-slate-300">#{crystalState?.spacegroup_number || '?'}</span> ({sg})</span>
-                <span>Volume: <span className="font-medium text-slate-700 dark:text-slate-300">{vol} Å³</span></span>
+            <div data-status-group="summary" className="min-w-0 overflow-hidden">
+                <div className="w-full overflow-x-auto overflow-y-hidden custom-scrollbar">
+                    <div className="flex min-w-max items-center gap-3 whitespace-nowrap text-slate-500 dark:text-slate-400 tabular-nums">
+                        {interactionMode && (
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400">{modeLabel[interactionMode] || interactionMode}</span>
+                        )}
+                        <span>SpaceGroup: <span className="font-medium text-slate-700 dark:text-slate-300">#{crystalState?.spacegroup_number || '?'}</span> ({sg})</span>
+                        <span>Volume: <span className="font-medium text-slate-700 dark:text-slate-300">{vol} Å³</span></span>
+                    </div>
+                </div>
             </div>
-            <div className="flex items-center justify-end gap-6 text-slate-500 dark:text-slate-400">
-                {activePhononMode && (
-                    <span className="text-amber-600 dark:text-amber-500">
-                        Phonon Mode {activePhononMode.index + 1}: <span className="font-medium">{activePhononMode.frequency_cm1.toFixed(2)} cm⁻¹</span>
-                    </span>
-                )}
-                {bondCount !== undefined && (
-                    <span>Bonds: <span className="font-medium text-slate-700 dark:text-slate-300">{bondCount}</span></span>
-                )}
-                <span>Total Atoms: <span className="font-medium text-slate-700 dark:text-slate-300">{numAtoms}</span></span>
-                <span>Selected: <span className={`font-medium ${selectedCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'}`}>{selectedCount}</span></span>
+            <div data-status-group="counters" className="w-[55vw] max-w-[42rem] min-w-0 overflow-hidden">
+                <div className="w-full overflow-x-auto overflow-y-hidden custom-scrollbar">
+                    <div className="flex min-w-max items-center justify-end gap-4 whitespace-nowrap text-slate-500 dark:text-slate-400">
+                        {activePhononMode && (
+                            <span className="text-amber-600 dark:text-amber-500">
+                                Phonon Mode {activePhononMode.index + 1}: <span className="font-medium">{activePhononMode.frequency_cm1.toFixed(2)} cm⁻¹</span>
+                            </span>
+                        )}
+                        {bondCount !== undefined && (
+                            <span>Bonds: <span className="font-medium text-slate-700 dark:text-slate-300">{bondCount}</span></span>
+                        )}
+                        <span>Total Atoms: <span className="font-medium text-slate-700 dark:text-slate-300">{numAtoms}</span></span>
+                        <span>Selected: <span className={`font-medium ${selectedCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'}`}>{selectedCount}</span></span>
+                    </div>
+                </div>
             </div>
         </div>
     );

@@ -94,7 +94,7 @@ export const RightSidebar: React.FC<{
             </div>
 
             <div
-                className="w-[44px] shrink-0 h-full min-h-0 flex flex-col items-center gap-1 overflow-y-auto py-2 pointer-events-auto custom-scrollbar"
+                className="cc-chrome w-[44px] shrink-0 h-full min-h-0 flex flex-col items-center gap-1 overflow-y-auto border-l border-[var(--cc-border)] py-2 pointer-events-auto custom-scrollbar"
                 data-tool-rail="scientific-tools"
                 role="toolbar"
                 aria-label="Scientific tools"
@@ -110,7 +110,7 @@ export const RightSidebar: React.FC<{
                         className={cn(
                             "w-9 h-9 flex items-center justify-center rounded-lg transition-colors duration-150",
                             openAccordion === section.key
-                                ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-emerald-500/30"
+                                ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
                                 : "text-slate-500 dark:text-slate-400 hover:bg-white/60 dark:hover:bg-slate-800/60 hover:text-slate-700 dark:hover:text-slate-200"
                         )}
                     >

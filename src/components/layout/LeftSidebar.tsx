@@ -28,18 +28,10 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 }) => {
     const [latticeError, setLatticeError] = useState<LatticeError | null>(null);
     const numAtoms = crystalState?.intrinsic_sites ?? 0;
+    const structureLabel = crystalState && numAtoms > 0 ? 'Structure workspace' : 'No structure loaded';
 
     if (!crystalState || numAtoms === 0) {
-        return (
-            <aside
-                className="cc-panel w-[240px] shrink-0 h-full pointer-events-auto p-4"
-                data-sidebar-surface="structure-workspace"
-                aria-label="Structure workspace"
-            >
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Structure</h2>
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">No structure loaded</p>
-            </aside>
-        );
+        return null;
     }
 
     const volume = crystalState.cell_a * crystalState.cell_b * crystalState.cell_c * Math.sqrt(
@@ -54,9 +46,9 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
     return (
         <aside
-            className="cc-panel w-[240px] shrink-0 h-full flex flex-col pointer-events-auto overflow-hidden"
+            className="cc-panel w-[280px] 2xl:w-[320px] shrink-0 pointer-events-auto overflow-hidden"
             data-sidebar-surface="structure-workspace"
-            aria-label="Structure workspace"
+            aria-label={structureLabel}
         >
             <section className="p-3" data-sidebar-section="structure" aria-labelledby="structure-sidebar-title">
                 <h2 id="structure-sidebar-title" className="text-sm font-semibold text-slate-800 dark:text-slate-200">
@@ -86,12 +78,12 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                 </div>
             </section>
 
-            <section className="min-h-0 flex-1 border-t border-slate-200 dark:border-slate-800" data-sidebar-section="atoms" aria-labelledby="atoms-sidebar-title">
+            <section className="border-t border-slate-200 dark:border-slate-800" data-sidebar-section="atoms" aria-labelledby="atoms-sidebar-title">
                 <div className="px-3 py-2">
                     <h2 id="atoms-sidebar-title" className="text-sm font-semibold text-slate-800 dark:text-slate-200">Atoms</h2>
                 </div>
-                <div className="max-h-[220px] overflow-auto border-t border-slate-200 dark:border-slate-800 text-[10px] custom-scrollbar">
-                    <table className="w-full text-left" aria-label="Intrinsic atom fractional coordinates" data-coordinate-system="fractional">
+                <div className="max-h-[220px] max-w-full overflow-x-auto overflow-y-auto border-t border-slate-200 dark:border-slate-800 text-[10px] custom-scrollbar">
+                    <table className="min-w-[320px] text-left" aria-label="Intrinsic atom fractional coordinates" data-coordinate-system="fractional">
                         <thead className="sticky top-0 z-10 bg-[var(--cc-field)] font-medium text-slate-500 dark:text-slate-400">
                             <tr>
                                 <th scope="col" className="px-2 py-1.5 text-center text-xs">ID</th>
