@@ -40,8 +40,28 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H });
     const panelRef = useRef<HTMLDivElement>(null);
     const resizingRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+    const resizeListenersRef = useRef<{
+        onMouseMove: (event: MouseEvent) => void;
+        onMouseUp: () => void;
+    } | null>(null);
+    const disposedRef = useRef<boolean>(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        disposedRef.current = false;
+
+        return () => {
+            disposedRef.current = true;
+            const listeners = resizeListenersRef.current;
+            resizingRef.current = null;
+            if (listeners) {
+                window.removeEventListener('mousemove', listeners.onMouseMove);
+                window.removeEventListener('mouseup', listeners.onMouseUp);
+                resizeListenersRef.current = null;
+            }
+        };
+    }, []);
 
     // Default models based on provider
     const providerDefaults: Record<LlmProvider, string> = {
@@ -65,9 +85,10 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
         try {
             const hasKey = await safeInvoke('check_api_key_status', { providerType: newProvider });
+            if (disposedRef.current) return;
             setApiKey(hasKey ? '********' : '');
         } catch {
-            setApiKey('');
+            if (!disposedRef.current) setApiKey('');
         }
     };
 
@@ -81,6 +102,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     const saveSettings = async () => {
         try {
             await safeInvoke('llm_configure', { providerType, apiKey, model });
+            if (disposedRef.current) return;
             setShowSettings(false);
             if (messages.length === 0) {
                 setMessages([{
@@ -90,6 +112,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
                 }]);
             }
         } catch (e) {
+            if (disposedRef.current) return;
             console.error('Failed to configure LLM:', e);
             alert('Failed to configure LLM provider.');
         }
@@ -105,6 +128,7 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
 
         try {
             const rawResponse = await safeInvoke('llm_chat', { userMessage: userMsg.text, selectedIndices: null });
+            if (disposedRef.current) return;
             const response = rawResponse || '';
 
             let cleanResponse = response;
@@ -142,13 +166,15 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
             }]);
 
         } catch (e: unknown) {
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'system',
-                text: `Error: ${String(e)}`,
-            }]);
+            if (!disposedRef.current) {
+                setMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'system',
+                    text: `Error: ${String(e)}`,
+                }]);
+            }
         } finally {
-            setLoading(false);
+            if (!disposedRef.current) setLoading(false);
         }
     };
 
@@ -160,17 +186,20 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     const handleExecute = async (json: string) => {
         try {
             await safeInvoke('llm_execute_command', { commandJson: json });
+            if (disposedRef.current) return;
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: 'system',
                 text: '✅ Command executed successfully.',
             }]);
         } catch (e: unknown) {
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'system',
-                text: `❌ Execution failed: ${String(e)}`,
-            }]);
+            if (!disposedRef.current) {
+                setMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'system',
+                    text: `❌ Execution failed: ${String(e)}`,
+                }]);
+            }
         }
     };
 
@@ -181,6 +210,11 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
     // ---- Resize via top-left corner drag handle ----
     const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
+        const previousListeners = resizeListenersRef.current;
+        if (previousListeners) {
+            window.removeEventListener('mousemove', previousListeners.onMouseMove);
+            window.removeEventListener('mouseup', previousListeners.onMouseUp);
+        }
         resizingRef.current = {
             startX: e.clientX,
             startY: e.clientY,
@@ -202,8 +236,10 @@ export const LlmAssistant: React.FC<LlmAssistantProps> = ({ isOpen, onClose }) =
             resizingRef.current = null;
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
+            resizeListenersRef.current = null;
         };
 
+        resizeListenersRef.current = { onMouseMove, onMouseUp };
         window.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
     }, [size]);
