@@ -19,7 +19,7 @@ import { useCameraInteraction } from './hooks/useCameraInteraction';
 function App() {
     const viewportRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
-    const [showAssistant, setShowAssistant] = useState(true);
+    const [showAssistant, setShowAssistant] = useState(false);
 
     // Global UI State
     const [isPerspective, setIsPerspective] = useState(false);
@@ -254,7 +254,7 @@ function App() {
                 </div>
 
                 {/* Overlays */}
-                <LlmAssistant isOpen={showAssistant} onClose={() => setShowAssistant(false)} />
+                {showAssistant && <LlmAssistant isOpen={showAssistant} onClose={() => setShowAssistant(false)} />}
                 <BottomStatusBar
                     crystalState={crystalState}
                     bondCount={bondCount}
