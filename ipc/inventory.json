@@ -1524,9 +1524,6 @@
     "tauri://drag-drop": "native_window",
     "tauri://drag-enter": "native_window",
     "tauri://drag-leave": "native_window",
-    "tauri://file-drop": "native_window",
-    "tauri://file-drop-cancelled": "native_window",
-    "tauri://file-drop-hover": "native_window",
     "undo_stack_changed": "state_sync",
     "view_projection_changed": "renderer_sync",
     "volumetric_loaded": "renderer_sync"
@@ -2439,21 +2436,6 @@
       "payload_type": null
     },
     {
-      "event": "tauri://file-drop-cancelled",
-      "file": "src/hooks/useFileDrop.ts",
-      "payload_type": null
-    },
-    {
-      "event": "tauri://file-drop-hover",
-      "file": "src/hooks/useFileDrop.ts",
-      "payload_type": null
-    },
-    {
-      "event": "tauri://file-drop",
-      "file": "src/hooks/useFileDrop.ts",
-      "payload_type": null
-    },
-    {
       "event": "view_projection_changed",
       "file": "src/hooks/useTauriMenu.ts",
       "payload_type": null
@@ -2478,15 +2460,6 @@
       "src/hooks/useFileDrop.ts"
     ],
     "tauri://drag-leave": [
-      "src/hooks/useFileDrop.ts"
-    ],
-    "tauri://file-drop": [
-      "src/hooks/useFileDrop.ts"
-    ],
-    "tauri://file-drop-cancelled": [
-      "src/hooks/useFileDrop.ts"
-    ],
-    "tauri://file-drop-hover": [
       "src/hooks/useFileDrop.ts"
     ],
     "view_projection_changed": [

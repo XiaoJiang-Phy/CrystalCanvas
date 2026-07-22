@@ -26,18 +26,20 @@ const isTauri = (): boolean => {
 
 /**
  * Safe wrapper around Tauri's invoke.
- * Returns undefined when not running in Tauri.
+ * Browser reads receive neutral validated fixtures; mutations reject explicitly.
  */
 export function safeInvoke<Command extends TypedIpcCommand>(
     cmd: Command,
     ...args: IpcArgs<Command> extends undefined ? [] : [args: IpcArgs<Command>]
-): Promise<IpcResult<Command> | (Command extends ReadIpcCommand ? undefined : never)>;
+): Promise<IpcResult<Command>>;
 export async function safeInvoke(
     cmd: TypedIpcCommand,
     args?: Record<string, unknown>
-): Promise<unknown | undefined> {
+): Promise<unknown> {
     if (!isTauri()) {
-        if (IPC_COMMAND_CLASSIFICATION[cmd] === 'read') return undefined;
+        if (browser_policy_for(cmd) === 'fixture') {
+            return browser_read_fixture(cmd as ReadIpcCommand);
+        }
         throw new IpcException({
             code: 'not_in_tauri',
             message: `IPC command '${cmd}' requires the Tauri runtime`,
@@ -52,6 +54,74 @@ export async function safeInvoke(
         console.warn(`[tauri-mock] invoke('${cmd}') failed:`, e);
         throw normalize_ipc_error(e);
     }
+}
+
+type BrowserReadFixtureFactory = {
+    [Command in ReadIpcCommand]: () => IpcResult<Command>;
+};
+
+const browser_read_fixtures: BrowserReadFixtureFactory = {
+    check_api_key_status: () => false,
+    generate_kpath_text: () => ({ qe: '', vasp: '' }),
+    get_bond_analysis: () => ({
+        bonds: [],
+        coordination: [],
+        bond_length_stats: [],
+        distortion_indices: [],
+        threshold_factor: 1,
+    }),
+    get_bz_label_positions: () => [],
+    get_crystal_state: empty_crystal_state,
+    get_kpath_info: () => ({ points: [], segments: [] }),
+    get_measurement_labels_screen: () => [],
+    get_measurements: () => [],
+    get_settings: () => ({
+        atom_scale: 1,
+        bond_tolerance: 0,
+        bond_radius: 0,
+        bond_color: [0, 0, 0, 1],
+        custom_atom_colors: {},
+    }),
+    get_volumetric_info: () => null,
+    pick_atom: () => null,
+    preview_slab: empty_crystal_state,
+    preview_supercell: empty_crystal_state,
+};
+
+function browser_policy_for(command: TypedIpcCommand): 'fixture' | 'reject' {
+    return IPC_COMMAND_CLASSIFICATION[command] === 'read' ? 'fixture' : 'reject';
+}
+
+function browser_read_fixture<Command extends ReadIpcCommand>(command: Command): IpcResult<Command> {
+    const factory = browser_read_fixtures[command] as () => IpcResult<Command>;
+    return validate_ipc_result(command, factory());
+}
+
+function empty_crystal_state(): IpcResult<'get_crystal_state'> {
+    return {
+        name: '',
+        cell_a: 0,
+        cell_b: 0,
+        cell_c: 0,
+        cell_alpha: 0,
+        cell_beta: 0,
+        cell_gamma: 0,
+        spacegroup_hm: '',
+        spacegroup_number: 0,
+        labels: [],
+        elements: [],
+        atomic_numbers: [],
+        fract_x: [],
+        fract_y: [],
+        fract_z: [],
+        occupancies: [],
+        cart_positions: [],
+        version: 0,
+        intrinsic_sites: 0,
+        is_2d: false,
+        vacuum_axis: null,
+        measurements: [],
+    };
 }
 
 /**

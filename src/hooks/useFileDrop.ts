@@ -7,42 +7,47 @@ interface UseFileDropProps {
 
 export function useFileDrop({ setIsDragging }: UseFileDropProps) {
     useEffect(() => {
-        let unlistenDrop = () => { };
-        let unlistenHover = () => { };
-        let unlistenCancel = () => { };
-        let unlistenDragDrop = () => { };
+        let disposed = false;
+        const unlistenHandlers: Array<() => void> = [];
+
+        const retainUnlisten = (registration: Promise<() => void>) => {
+            void registration.then((unlisten) => {
+                let released = false;
+                const release = () => {
+                    if (released) return;
+                    released = true;
+                    unlisten();
+                };
+                if (disposed) {
+                    release();
+                } else {
+                    unlistenHandlers.push(release);
+                }
+            }).catch((error) => {
+                console.warn('[file-drop] listener registration failed:', error);
+            });
+        };
 
         const handleDrop = (path: string | undefined) => {
             if (path) {
-                console.log('Got drop path:', path);
                 safeInvoke('load_cif_file', { path })
                     .catch(e => alert(`Failed to load structure:\n${e}`));
             }
         };
 
-        // Tauri v1 / fallback file drop event
-        safeListen('tauri://file-drop', (event) => {
+        retainUnlisten(safeListen('tauri://drag-drop', (event) => {
             setIsDragging(false);
             handleDrop(event.payload.paths?.[0]);
-        }).then(f => unlistenDrop = f).catch(console.warn);
+        }));
 
-        // Tauri v2 drag-drop event
-        safeListen('tauri://drag-drop', (event) => {
-            setIsDragging(false);
-            handleDrop(event.payload.paths?.[0]);
-        }).then(f => unlistenDragDrop = f).catch(console.warn);
-
-        safeListen('tauri://file-drop-hover', () => setIsDragging(true)).then(f => unlistenHover = f).catch(console.warn);
-        safeListen('tauri://drag-enter', () => setIsDragging(true)).catch(console.warn);
-
-        safeListen('tauri://file-drop-cancelled', () => setIsDragging(false)).then(f => unlistenCancel = f).catch(console.warn);
-        safeListen('tauri://drag-leave', () => setIsDragging(false)).catch(console.warn);
+        retainUnlisten(safeListen('tauri://drag-enter', () => setIsDragging(true)));
+        retainUnlisten(safeListen('tauri://drag-leave', () => setIsDragging(false)));
 
         return () => {
-            unlistenDrop();
-            unlistenHover();
-            unlistenCancel();
-            unlistenDragDrop();
+            if (disposed) return;
+            disposed = true;
+            for (const unlisten of unlistenHandlers) unlisten();
+            unlistenHandlers.length = 0;
         };
     }, [setIsDragging]);
 }

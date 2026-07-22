@@ -80,9 +80,6 @@ export interface IpcEventContract {
     'tauri://drag-drop': TauriDragPayload;
     'tauri://drag-enter': TauriDragPayload;
     'tauri://drag-leave': null | undefined;
-    'tauri://file-drop': { paths: string[] };
-    'tauri://file-drop-cancelled': null | undefined;
-    'tauri://file-drop-hover': { paths: string[] };
     undo_stack_changed: { can_undo: boolean; can_redo: boolean };
     view_projection_changed: { is_perspective: boolean };
     volumetric_loaded: VolumetricInfo;
@@ -479,14 +476,10 @@ export function normalize_ipc_error(value: unknown): IpcException {
 export function validate_ipc_event<Event extends TypedIpcEvent>(event: Event, value: unknown): IpcEventContract[Event] {
     if (event === 'state_changed' && is_record(value) && is_nonnegative_integer(value.version)) return value as IpcEventContract[Event];
     if (event === 'tauri://drag-leave' && (value === null || value === undefined)) return value as IpcEventContract[Event];
-    if (event === 'tauri://file-drop-cancelled' && (value === null || value === undefined)) return value as IpcEventContract[Event];
     if (event === 'menu-action' && typeof value === 'string') return value as IpcEventContract[Event];
     if ((event === 'tauri://drag-enter' || event === 'tauri://drag-drop') && is_record(value)
         && Array.isArray(value.paths) && value.paths.every((path) => typeof path === 'string')
         && is_record(value.position) && is_finite_number(value.position.x) && is_finite_number(value.position.y)) return value as IpcEventContract[Event];
-    if (event === 'tauri://file-drop' && is_record(value) && Array.isArray(value.paths) && value.paths.every((path) => typeof path === 'string')) return value as IpcEventContract[Event];
-    if (event === 'tauri://file-drop-hover' && is_record(value) && Array.isArray(value.paths)
-        && value.paths.every((path) => typeof path === 'string')) return value as IpcEventContract[Event];
     if (event === 'undo_stack_changed' && is_record(value) && typeof value.can_undo === 'boolean' && typeof value.can_redo === 'boolean') return value as IpcEventContract[Event];
     if (event === 'view_projection_changed' && is_record(value) && typeof value.is_perspective === 'boolean') return value as IpcEventContract[Event];
     if (event === 'volumetric_loaded' && is_volumetric_info(value)) return value as IpcEventContract[Event];
