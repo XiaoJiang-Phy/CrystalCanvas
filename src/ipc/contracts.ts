@@ -95,9 +95,12 @@ export interface IpcCommandContract {
     apply_niggli_reduce: { args: undefined; result: null };
     apply_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: null };
     apply_supercell: { args: { matrix: [[number, number, number], [number, number, number], [number, number, number]] }; result: null };
+    begin_atom_drag: { args: { indices: number[] }; result: string };
+    cancel_atom_drag: { args: { sessionId: string }; result: null };
     check_api_key_status: { args: { providerType: LlmProvider }; result: boolean };
     clear_measurements: { args: undefined; result: null };
     clear_wannier: { args: undefined; result: null };
+    commit_atom_drag: { args: { sessionId: string }; result: null };
     compute_brillouin_zone: { args: undefined; result: BzInfo };
     delete_atoms: { args: { indices: number[] }; result: null };
     export_file: { args: { format: ExportFileFormat; path: string }; result: null };
@@ -152,6 +155,7 @@ export interface IpcCommandContract {
     toggle_wannier_onsite: { args: { show: boolean }; result: null };
     translate_atoms_screen: { args: { indices: number[]; dx: number; dy: number }; result: null };
     undo: { args: undefined; result: null };
+    update_atom_drag: { args: { sessionId: string; dx: number; dy: number }; result: null };
     update_lattice_params: { args: { a: number; b: number; c: number; alpha: number; beta: number; gamma: number }; result: null };
     update_selection: { args: { indices: number[] }; result: null };
     update_settings: { args: { newSettings: AppSettingsDto }; result: null };
@@ -377,9 +381,12 @@ const IPC_RESULT_VALIDATORS: {
     apply_niggli_reduce: is_null,
     apply_slab: is_null,
     apply_supercell: is_null,
+    begin_atom_drag: (value) => typeof value === 'string',
+    cancel_atom_drag: is_null,
     check_api_key_status: (value) => typeof value === 'boolean',
     clear_measurements: is_null,
     clear_wannier: is_null,
+    commit_atom_drag: is_null,
     compute_brillouin_zone: is_bz_info,
     delete_atoms: is_null,
     export_file: is_null,
@@ -434,6 +441,7 @@ const IPC_RESULT_VALIDATORS: {
     toggle_wannier_onsite: is_null,
     translate_atoms_screen: is_null,
     undo: is_null,
+    update_atom_drag: is_null,
     update_lattice_params: is_null,
     update_selection: is_null,
     update_settings: is_null,

@@ -18,6 +18,73 @@ fn resolve_element(element_symbol: &str, supplied_atomic_number: u8) -> IpcResul
     Ok((formatted_symbol, atomic_number))
 }
 
+fn restore_failed_atom_drag(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    renderer_state: &State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    let atom_scene = crate::wannier::build_atoms_with_ghosts(cs, settings)
+        .and_then(crate::renderer::instance::prepare_atom_scene)?;
+    let line_scene = crate::renderer::instance::build_line_scene(cs, settings)?;
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    renderer.commit_atoms(atom_scene);
+    renderer.update_lines(&line_scene);
+    Ok(())
+}
+
+fn validate_atom_drag_collision(
+    cs: &crate::crystal_state::CrystalState,
+    selected_indices: &[usize],
+) -> IpcResult<()> {
+    // Keep drag commits on the same minimum-image overlap policy as atom creation.
+    const OVERLAP_THRESHOLD_A: f64 = 0.5;
+
+    if selected_indices.len() >= cs.intrinsic_sites {
+        return Ok(());
+    }
+    let remaining = cs
+        .intrinsic_sites
+        .checked_sub(selected_indices.len())
+        .ok_or_else(|| IpcError::invalid_argument("atom drag selection exceeds intrinsic atoms"))?;
+    let components = remaining
+        .checked_mul(3)
+        .ok_or_else(|| IpcError::render("atom drag collision buffer size overflow"))?;
+    let mut stationary_positions = Vec::new();
+    stationary_positions
+        .try_reserve_exact(components)
+        .map_err(|_| IpcError::render("unable to allocate atom drag collision buffer"))?;
+    for index in 0..cs.intrinsic_sites {
+        if selected_indices.binary_search(&index).is_ok() {
+            continue;
+        }
+        stationary_positions.push(cs.fract_x[index]);
+        stationary_positions.push(cs.fract_y[index]);
+        stationary_positions.push(cs.fract_z[index]);
+    }
+
+    let lattice = cs.get_lattice_col_major();
+    for &index in selected_indices {
+        let position = [cs.fract_x[index], cs.fract_y[index], cs.fract_z[index]];
+        let overlaps = unsafe {
+            crate::ffi::check_overlap_mic(
+                lattice.as_ptr(),
+                stationary_positions.as_ptr(),
+                remaining,
+                position.as_ptr(),
+                OVERLAP_THRESHOLD_A,
+            )
+        };
+        if overlaps {
+            return Err(IpcError::invalid_argument(
+                "atom drag collision detected: atom too close to a stationary atom",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn update_lattice_params(
     a: f64,
@@ -169,7 +236,7 @@ pub fn translate_atoms_screen(
             .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
         (r.camera.eye, r.camera.target, r.camera.up)
     };
-    
+
     let pan_speed = 0.001 * (eye - target).length();
     let forward = (target - eye).normalize();
     let right = forward.cross(up).normalize();
@@ -181,7 +248,7 @@ pub fn translate_atoms_screen(
     if translation.length_squared() == 0.0 {
         return Ok(());
     }
-    
+
     let mut cs = crystal_state
         .try_lock()
         .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
@@ -229,7 +296,7 @@ pub fn translate_atoms_screen(
     renderer.commit_atoms(atom_scene);
     renderer.update_lines(&line_scene);
     let version = crate::transaction::commit_version(&mut cs, pending_version)?;
-    
+
     drop(renderer);
     drop(settings);
     drop(cs);
@@ -237,6 +304,187 @@ pub fn translate_atoms_screen(
     app.emit(
         "state_changed",
         crate::transaction::StateChangedPayload { version },
+    )
+    .ok();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn begin_atom_drag(
+    mut indices: Vec<usize>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<String> {
+    if indices.is_empty() {
+        return Err(IpcError::invalid_argument(
+            "atom drag requires at least one atom index",
+        ));
+    }
+    indices.sort_unstable();
+    indices.dedup();
+
+    let cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    if indices.iter().any(|&index| index >= cs.intrinsic_sites) {
+        return Err(IpcError::invalid_argument(
+            "atom drag contains an out-of-range atom index",
+        ));
+    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    renderer.begin_atom_drag(indices, cs.version)
+}
+
+#[tauri::command]
+pub fn update_atom_drag(
+    session_id: String,
+    dx: f32,
+    dy: f32,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    if session_id.is_empty() {
+        return Err(IpcError::invalid_argument("atom drag session id is empty"));
+    }
+    if !dx.is_finite() || !dy.is_finite() {
+        return Err(IpcError::invalid_argument(
+            "atom drag screen delta must be finite",
+        ));
+    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    renderer.update_atom_drag(&session_id, dx, dy)
+}
+
+#[tauri::command]
+pub fn cancel_atom_drag(
+    session_id: String,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    if session_id.is_empty() {
+        return Err(IpcError::invalid_argument("atom drag session id is empty"));
+    }
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    renderer.cancel_atom_drag(&session_id)
+}
+
+#[tauri::command]
+pub fn commit_atom_drag(
+    session_id: String,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
+) -> IpcResult<()> {
+    if session_id.is_empty() {
+        return Err(IpcError::invalid_argument("atom drag session id is empty"));
+    }
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let mut undo_stack = undo_state
+        .lock()
+        .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
+    let settings = settings_state
+        .lock()
+        .map_err(|_| IpcError::lock("settings lock poisoned"))?;
+    let session = {
+        let mut renderer = renderer_state
+            .lock()
+            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+        renderer.take_atom_drag(&session_id)?
+    };
+    if cs.version != session.source_version {
+        let error = IpcError::busy("atom drag source version conflict");
+        restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+        return Err(error);
+    }
+    if session.translation.length_squared() == 0.0 {
+        return Ok(());
+    }
+    let pending_version = match crate::transaction::next_version(&cs) {
+        Ok(pending_version) => pending_version,
+        Err(error) => {
+            restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+            return Err(error);
+        }
+    };
+    let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
+    let rollback = match cs.translate_atoms_cartesian(&session.source_indices, session.translation)
+    {
+        Ok(rollback) => rollback,
+        Err(_) => {
+            restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+            return Err(IpcError::render("unable to allocate atom drag rollback"));
+        }
+    };
+    if let Err(error) = validate_atom_drag_collision(&cs, &session.source_indices) {
+        cs.rollback_atom_translation(rollback);
+        restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+        return Err(error);
+    }
+    if let Err(error) = cs.validate_structural_invariants() {
+        cs.rollback_atom_translation(rollback);
+        restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+        return Err(IpcError::invalid_argument(error));
+    }
+    let atom_scene =
+        match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
+            .and_then(crate::renderer::instance::prepare_atom_scene)
+        {
+            Ok(atom_scene) => atom_scene,
+            Err(error) => {
+                cs.rollback_atom_translation(rollback);
+                restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+                return Err(error);
+            }
+        };
+    let line_scene = match crate::renderer::instance::build_line_scene(&cs, &settings) {
+        Ok(line_scene) => line_scene,
+        Err(error) => {
+            cs.rollback_atom_translation(rollback);
+            restore_failed_atom_drag(&cs, &settings, &renderer_state)?;
+            return Err(error);
+        }
+    };
+    let mut renderer = match renderer_state.lock() {
+        Ok(renderer) => renderer,
+        Err(_) => {
+            cs.rollback_atom_translation(rollback);
+            return Err(IpcError::lock("renderer lock poisoned"));
+        }
+    };
+    let version = match crate::transaction::commit_version(&mut cs, pending_version) {
+        Ok(version) => version,
+        Err(error) => {
+            cs.rollback_atom_translation(rollback);
+            return Err(error);
+        }
+    };
+    cs.invalidate_structure_bound_data();
+    renderer.clear_structure_bound_overlays();
+    renderer.commit_atoms(atom_scene);
+    renderer.update_lines(&line_scene);
+    undo_stack.push(previous_state);
+    let can_undo = undo_stack.can_undo();
+    let can_redo = undo_stack.can_redo();
+    drop(renderer);
+    drop(settings);
+    drop(undo_stack);
+    drop(cs);
+    app.emit(
+        "state_changed",
+        crate::transaction::StateChangedPayload { version },
+    )
+    .ok();
+    app.emit(
+        "undo_stack_changed",
+        crate::transaction::UndoStackPayload { can_undo, can_redo },
     )
     .ok();
     Ok(())
@@ -312,7 +560,7 @@ pub fn update_selection(
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     renderer.update_bonds(&bond_instances);
     cs.selected_atoms = indices;
-    
+
     drop(renderer);
     drop(settings);
     drop(cs);

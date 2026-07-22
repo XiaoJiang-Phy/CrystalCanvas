@@ -23,6 +23,37 @@ pub struct PreparedVolumetric {
     volume_raycast_pipeline: crate::renderer::volume_raycast::VolumeRaycastPipeline,
 }
 
+#[derive(Clone, Copy)]
+struct AtomDragInstance {
+    base_position: [f32; 3],
+    base_radius: f32,
+    base_color: [f32; 4],
+}
+
+struct AtomDragInstances {
+    selected: Vec<AtomDragInstance>,
+    stationary: Vec<AtomInstance>,
+}
+
+pub(crate) struct AtomDragSession {
+    session_id: String,
+    pub(crate) source_version: u32,
+    pub(crate) source_indices: Vec<usize>,
+    pub(crate) translation: glam::Vec3,
+    opaque_instances: Vec<AtomDragInstance>,
+    transparent_instances: Vec<AtomDragInstance>,
+    opaque_preview_instances: Vec<AtomInstance>,
+    transparent_preview_instances: Vec<AtomInstance>,
+    opaque_stationary_buffer: Option<wgpu::Buffer>,
+    transparent_stationary_buffer: Option<wgpu::Buffer>,
+    opaque_preview_buffer: Option<wgpu::Buffer>,
+    transparent_preview_buffer: Option<wgpu::Buffer>,
+    opaque_stationary_count: u32,
+    transparent_stationary_count: u32,
+    opaque_preview_count: u32,
+    transparent_preview_count: u32,
+}
+
 /// Main rendering engine for CrystalCanvas.
 /// Manages the full render pipeline lifecycle: initialization, buffer updates, frame rendering.
 pub struct Renderer {
@@ -38,11 +69,17 @@ pub struct Renderer {
     // Instance data
     instance_buffer: wgpu::Buffer,
     instance_count: u32,
-    
+
     transparent_pipeline: wgpu::RenderPipeline,
     transparent_instance_buffer: wgpu::Buffer,
     transparent_instance_count: u32,
     atom_pick_data: Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
+    opaque_atom_instances: Vec<AtomInstance>,
+    transparent_atom_instances: Vec<AtomInstance>,
+    opaque_source_atom_indices: Vec<usize>,
+    transparent_source_atom_indices: Vec<usize>,
+    atom_drag: Option<AtomDragSession>,
+    next_atom_drag_session: u64,
 
     // Depth buffers (dual-pass architecture)
     opaque_depth_texture: wgpu::Texture,
@@ -54,7 +91,7 @@ pub struct Renderer {
     line_pipeline: wgpu::RenderPipeline,
     cell_line_buffer: wgpu::Buffer,
     cell_line_count: u32,
-    
+
     // Measurement lines
     measurement_line_buffer: wgpu::Buffer,
     measurement_line_count: u32,
@@ -90,6 +127,110 @@ pub struct Renderer {
     pub bz_scale: f32,
 }
 
+fn drag_instances(
+    atoms: &[AtomInstance],
+    source_atom_indices: &[usize],
+    selected_source_indices: &[usize],
+) -> crate::ipc::IpcResult<AtomDragInstances> {
+    if atoms.len() != source_atom_indices.len() {
+        return Err(crate::ipc::IpcError::render(
+            "atom drag source map does not match the render buffer",
+        ));
+    }
+    let selected_count = source_atom_indices
+        .iter()
+        .filter(|&&source_atom_index| {
+            selected_source_indices
+                .binary_search(&source_atom_index)
+                .is_ok()
+        })
+        .count();
+    let stationary_count = atoms
+        .len()
+        .checked_sub(selected_count)
+        .ok_or_else(|| crate::ipc::IpcError::render("atom drag selection exceeds render buffer"))?;
+    let mut selected = Vec::new();
+    selected
+        .try_reserve_exact(selected_count)
+        .map_err(|_| crate::ipc::IpcError::render("unable to allocate atom drag metadata"))?;
+    let mut stationary = Vec::new();
+    stationary
+        .try_reserve_exact(stationary_count)
+        .map_err(|_| {
+            crate::ipc::IpcError::render("unable to allocate atom drag stationary data")
+        })?;
+    for (&atom, &source_atom_index) in atoms.iter().zip(source_atom_indices) {
+        if selected_source_indices
+            .binary_search(&source_atom_index)
+            .is_ok()
+        {
+            selected.push(AtomDragInstance {
+                base_position: atom.position,
+                base_radius: atom.radius,
+                base_color: atom.color,
+            });
+        } else {
+            stationary.push(atom);
+        }
+    }
+    Ok(AtomDragInstances {
+        selected,
+        stationary,
+    })
+}
+
+fn drag_preview_instances(
+    instances: &[AtomDragInstance],
+) -> crate::ipc::IpcResult<Vec<AtomInstance>> {
+    let mut preview = Vec::new();
+    preview
+        .try_reserve_exact(instances.len())
+        .map_err(|_| crate::ipc::IpcError::render("unable to allocate atom drag preview"))?;
+    for instance in instances {
+        preview.push(AtomInstance {
+            position: instance.base_position,
+            radius: instance.base_radius,
+            color: instance.base_color,
+        });
+    }
+    Ok(preview)
+}
+
+fn drag_instance_buffer(
+    device: &wgpu::Device,
+    label: &'static str,
+    instances: &[AtomInstance],
+) -> Option<wgpu::Buffer> {
+    (!instances.is_empty()).then(|| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(instances),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        })
+    })
+}
+
+fn active_atom_drag_mut<'a>(
+    atom_drag: &'a mut Option<AtomDragSession>,
+    session_id: &str,
+) -> crate::ipc::IpcResult<&'a mut AtomDragSession> {
+    let session = atom_drag
+        .as_mut()
+        .ok_or_else(|| crate::ipc::IpcError::invalid_argument("no active atom drag session"))?;
+    if session.session_id != session_id {
+        return Err(crate::ipc::IpcError::invalid_argument(
+            "atom drag session does not match the active session",
+        ));
+    }
+    Ok(session)
+}
+
+fn upload_atom_instances(queue: &wgpu::Queue, buffer: &wgpu::Buffer, instances: &[AtomInstance]) {
+    if !instances.is_empty() {
+        queue.write_buffer(buffer, 0, bytemuck::cast_slice(instances));
+    }
+}
+
 impl Renderer {
     /// Create a new Renderer attached to the given window.
     /// Initializes GPU context, camera, pipeline, and an empty instance buffer.
@@ -118,7 +259,7 @@ impl Renderer {
         // Pipeline
         let (render_pipeline, camera_bind_group_layout) =
             pipeline::create_render_pipeline(&gpu.device, gpu.surface_format());
-            
+
         let transparent_pipeline = pipeline::create_transparent_atom_pipeline(
             &gpu.device,
             gpu.surface_format(),
@@ -160,7 +301,7 @@ impl Renderer {
                 contents: bytemuck::cast_slice(&dummy_instance),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
-            
+
         let transparent_instance_buffer =
             gpu.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -252,6 +393,12 @@ impl Renderer {
             transparent_instance_buffer,
             transparent_instance_count: 0,
             atom_pick_data: Arc::new(Vec::new()),
+            opaque_atom_instances: Vec::new(),
+            transparent_atom_instances: Vec::new(),
+            opaque_source_atom_indices: Vec::new(),
+            transparent_source_atom_indices: Vec::new(),
+            atom_drag: None,
+            next_atom_drag_session: 0,
             opaque_depth_texture,
             opaque_depth_view,
             transparent_depth_texture,
@@ -338,6 +485,11 @@ impl Renderer {
         self.instance_count = instance_count;
         self.transparent_instance_count = transparent_instance_count;
         self.atom_pick_data = scene.pick_data;
+        self.opaque_atom_instances = scene.opaque;
+        self.transparent_atom_instances = scene.transparent;
+        self.opaque_source_atom_indices = scene.opaque_source_atom_indices;
+        self.transparent_source_atom_indices = scene.transparent_source_atom_indices;
+        self.atom_drag = None;
         if let Some(buffer) = opaque_buffer {
             self.instance_buffer = buffer;
         }
@@ -356,6 +508,11 @@ impl Renderer {
         self.instance_count = 0;
         self.transparent_instance_count = 0;
         self.atom_pick_data = Arc::new(Vec::new());
+        self.opaque_atom_instances.clear();
+        self.transparent_atom_instances.clear();
+        self.opaque_source_atom_indices.clear();
+        self.transparent_source_atom_indices.clear();
+        self.atom_drag = None;
     }
 
     pub fn pick_scene_snapshot(&self) -> Arc<Vec<crate::renderer::ray_picking::PickAtom>> {
@@ -367,6 +524,187 @@ impl Renderer {
         snapshot: &Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
     ) -> bool {
         Arc::ptr_eq(&self.atom_pick_data, snapshot)
+    }
+
+    pub(crate) fn begin_atom_drag(
+        &mut self,
+        source_indices: Vec<usize>,
+        source_version: u32,
+    ) -> crate::ipc::IpcResult<String> {
+        if self.atom_drag.is_some() {
+            return Err(crate::ipc::IpcError::busy(
+                "an atom drag session is already active",
+            ));
+        }
+        self.next_atom_drag_session = self
+            .next_atom_drag_session
+            .checked_add(1)
+            .ok_or_else(|| crate::ipc::IpcError::busy("atom drag session id exhausted"))?;
+        let session_id = self.next_atom_drag_session.to_string();
+        let opaque_instances = drag_instances(
+            &self.opaque_atom_instances,
+            &self.opaque_source_atom_indices,
+            &source_indices,
+        )?;
+        let transparent_instances = drag_instances(
+            &self.transparent_atom_instances,
+            &self.transparent_source_atom_indices,
+            &source_indices,
+        )?;
+        let opaque_preview_instances = drag_preview_instances(&opaque_instances.selected)?;
+        let transparent_preview_instances =
+            drag_preview_instances(&transparent_instances.selected)?;
+        let opaque_stationary_count =
+            u32::try_from(opaque_instances.stationary.len()).map_err(|_| {
+                crate::ipc::IpcError::render("opaque atom drag stationary buffer exceeds u32 range")
+            })?;
+        let transparent_stationary_count = u32::try_from(transparent_instances.stationary.len())
+            .map_err(|_| {
+                crate::ipc::IpcError::render(
+                    "transparent atom drag stationary buffer exceeds u32 range",
+                )
+            })?;
+        let opaque_preview_count = u32::try_from(opaque_preview_instances.len()).map_err(|_| {
+            crate::ipc::IpcError::render("opaque atom drag preview exceeds u32 range")
+        })?;
+        let transparent_preview_count = u32::try_from(transparent_preview_instances.len())
+            .map_err(|_| {
+                crate::ipc::IpcError::render("transparent atom drag preview exceeds u32 range")
+            })?;
+        let opaque_stationary_buffer = drag_instance_buffer(
+            &self.gpu.device,
+            "Opaque Atom Drag Stationary Buffer",
+            &opaque_instances.stationary,
+        );
+        let transparent_stationary_buffer = drag_instance_buffer(
+            &self.gpu.device,
+            "Transparent Atom Drag Stationary Buffer",
+            &transparent_instances.stationary,
+        );
+        let opaque_preview_buffer = drag_instance_buffer(
+            &self.gpu.device,
+            "Opaque Atom Drag Preview Buffer",
+            &opaque_preview_instances,
+        );
+        let transparent_preview_buffer = drag_instance_buffer(
+            &self.gpu.device,
+            "Transparent Atom Drag Preview Buffer",
+            &transparent_preview_instances,
+        );
+        self.atom_drag = Some(AtomDragSession {
+            session_id: session_id.clone(),
+            source_version,
+            source_indices,
+            translation: glam::Vec3::ZERO,
+            opaque_instances: opaque_instances.selected,
+            transparent_instances: transparent_instances.selected,
+            opaque_preview_instances,
+            transparent_preview_instances,
+            opaque_stationary_buffer,
+            transparent_stationary_buffer,
+            opaque_preview_buffer,
+            transparent_preview_buffer,
+            opaque_stationary_count,
+            transparent_stationary_count,
+            opaque_preview_count,
+            transparent_preview_count,
+        });
+        Ok(session_id)
+    }
+
+    pub(crate) fn update_atom_drag(
+        &mut self,
+        session_id: &str,
+        dx: f32,
+        dy: f32,
+    ) -> crate::ipc::IpcResult<()> {
+        if !dx.is_finite() || !dy.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "atom drag screen delta must be finite",
+            ));
+        }
+        let translation = self.screen_drag_translation(dx, dy)?;
+        let session = active_atom_drag_mut(&mut self.atom_drag, session_id)?;
+        let candidate_translation = session.translation + translation;
+        if !candidate_translation.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "atom drag translation is not finite",
+            ));
+        }
+
+        session.translation = candidate_translation;
+        for (preview, instance) in session
+            .opaque_preview_instances
+            .iter_mut()
+            .zip(&session.opaque_instances)
+        {
+            preview.position =
+                (glam::Vec3::from_array(instance.base_position) + candidate_translation).to_array();
+        }
+        for (preview, instance) in session
+            .transparent_preview_instances
+            .iter_mut()
+            .zip(&session.transparent_instances)
+        {
+            preview.position =
+                (glam::Vec3::from_array(instance.base_position) + candidate_translation).to_array();
+        }
+        if let Some(buffer) = &session.opaque_preview_buffer {
+            upload_atom_instances(&self.gpu.queue, buffer, &session.opaque_preview_instances);
+        }
+        if let Some(buffer) = &session.transparent_preview_buffer {
+            upload_atom_instances(
+                &self.gpu.queue,
+                buffer,
+                &session.transparent_preview_instances,
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn take_atom_drag(
+        &mut self,
+        session_id: &str,
+    ) -> crate::ipc::IpcResult<AtomDragSession> {
+        let session = self
+            .atom_drag
+            .take()
+            .ok_or_else(|| crate::ipc::IpcError::invalid_argument("no active atom drag session"))?;
+        if session.session_id == session_id {
+            return Ok(session);
+        }
+        self.atom_drag = Some(session);
+        Err(crate::ipc::IpcError::invalid_argument(
+            "atom drag session does not match the active session",
+        ))
+    }
+
+    pub(crate) fn cancel_atom_drag(&mut self, session_id: &str) -> crate::ipc::IpcResult<()> {
+        let session = self
+            .atom_drag
+            .as_ref()
+            .ok_or_else(|| crate::ipc::IpcError::invalid_argument("no active atom drag session"))?;
+        if session.session_id != session_id {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "atom drag session does not match the active session",
+            ));
+        }
+        self.atom_drag = None;
+        Ok(())
+    }
+
+    fn screen_drag_translation(&self, dx: f32, dy: f32) -> crate::ipc::IpcResult<glam::Vec3> {
+        let pan_speed = 0.001 * (self.camera.eye - self.camera.target).length();
+        let forward = (self.camera.target - self.camera.eye).normalize();
+        let right = forward.cross(self.camera.up).normalize();
+        let up = right.cross(forward).normalize();
+        let translation = right * dx * pan_speed - up * dy * pan_speed;
+        if !translation.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "atom drag translation is not finite",
+            ));
+        }
+        Ok(translation)
     }
 
     /// Upload prepared cell boundaries, bonds, and measurement lines.
@@ -520,7 +858,16 @@ impl Renderer {
             // Atoms (impostor spheres — opaque, write depth via frag_depth)
             pass.set_pipeline(&self.render_pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            if self.instance_count > 0 {
+            if let Some(drag) = &self.atom_drag {
+                if let Some(buffer) = &drag.opaque_stationary_buffer {
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, 0..drag.opaque_stationary_count);
+                }
+                if let Some(buffer) = &drag.opaque_preview_buffer {
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..6, 0..drag.opaque_preview_count);
+                }
+            } else if self.instance_count > 0 {
                 pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
                 pass.draw(0..6, 0..self.instance_count);
             }
@@ -564,7 +911,10 @@ impl Renderer {
             || (self.show_isosurface
                 && (self.volume_render_mode == RendererVolumeMode::Isosurface
                     || self.volume_render_mode == RendererVolumeMode::Both))
-            || self.transparent_instance_count > 0;
+            || (self.atom_drag.is_none() && self.transparent_instance_count > 0)
+            || self.atom_drag.as_ref().is_some_and(|drag| {
+                drag.transparent_stationary_count > 0 || drag.transparent_preview_count > 0
+            });
 
         if needs_transparent_pass {
             encoder.copy_texture_to_texture(
@@ -630,9 +980,22 @@ impl Renderer {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
                 }
-                
+
                 // Translucent atoms last
-                if self.transparent_instance_count > 0 {
+                if let Some(drag) = &self.atom_drag {
+                    if let Some(buffer) = &drag.transparent_stationary_buffer {
+                        pass.set_pipeline(&self.transparent_pipeline);
+                        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..6, 0..drag.transparent_stationary_count);
+                    }
+                    if let Some(buffer) = &drag.transparent_preview_buffer {
+                        pass.set_pipeline(&self.transparent_pipeline);
+                        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.draw(0..6, 0..drag.transparent_preview_count);
+                    }
+                } else if self.transparent_instance_count > 0 {
                     pass.set_pipeline(&self.transparent_pipeline);
                     pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     pass.set_vertex_buffer(0, self.transparent_instance_buffer.slice(..));
@@ -1063,7 +1426,7 @@ impl Renderer {
         if let Some(iso_pipe) = &mut self.isosurface_pipeline {
             self.isosurface_dispatch_size =
                 iso_pipe.update_threshold(&self.gpu.queue, grid_dims, threshold);
-            
+
             // Dispatch compute pass immediately to update the mesh buffers
             let mut encoder =
                 self.gpu

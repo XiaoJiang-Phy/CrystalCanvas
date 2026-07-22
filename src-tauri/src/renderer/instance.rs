@@ -39,6 +39,8 @@ pub struct RenderAtomInstance {
 pub struct PreparedAtomScene {
     pub(crate) opaque: Vec<AtomInstance>,
     pub(crate) transparent: Vec<AtomInstance>,
+    pub(crate) opaque_source_atom_indices: Vec<usize>,
+    pub(crate) transparent_source_atom_indices: Vec<usize>,
     pub(crate) pick_data: Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
 }
 
@@ -70,6 +72,14 @@ pub fn prepare_atom_scene(
     pick_data
         .try_reserve_exact(pick_count)
         .map_err(|_| IpcError::render("unable to allocate atom pick scene"))?;
+    let mut opaque_source_atom_indices = Vec::new();
+    opaque_source_atom_indices
+        .try_reserve_exact(opaque_count)
+        .map_err(|_| IpcError::render("unable to allocate opaque atom source map"))?;
+    let mut transparent_source_atom_indices = Vec::new();
+    transparent_source_atom_indices
+        .try_reserve_exact(transparent_count)
+        .map_err(|_| IpcError::render("unable to allocate transparent atom source map"))?;
 
     for instance in instances {
         if let Some(radius) = instance.pick_radius {
@@ -81,14 +91,18 @@ pub fn prepare_atom_scene(
         }
         if instance.atom.color[3] >= 0.999 {
             opaque.push(instance.atom);
+            opaque_source_atom_indices.push(instance.source_atom_index);
         } else {
             transparent.push(instance.atom);
+            transparent_source_atom_indices.push(instance.source_atom_index);
         }
     }
 
     Ok(PreparedAtomScene {
         opaque,
         transparent,
+        opaque_source_atom_indices,
+        transparent_source_atom_indices,
         pick_data: Arc::new(pick_data),
     })
 }
@@ -352,10 +366,10 @@ pub fn build_instance_data(
         if let Some(custom_color) = settings.custom_atom_colors.get(&element_symbols[i]) {
             color = *custom_color;
         }
-        
+
         let occ = occupancies.get(i).copied().unwrap_or(1.0).clamp(0.0, 1.0);
         let alpha = occ.powf(0.6) as f32;
-        
+
         instances.push(AtomInstance {
             position: cart_positions[i],
             radius: {
@@ -900,7 +914,7 @@ mod tests {
         assert_eq!(instances.len(), 2);
         // occ = 1.0 -> alpha = 1.0
         assert!((instances[0].color[3] - 1.0).abs() < 1e-4);
-        
+
         // occ = 0.5 -> alpha = 0.5^0.6 ~ 0.65975
         let expected_alpha = 0.5f64.powf(0.6) as f32;
         assert!((instances[1].color[3] - expected_alpha).abs() < 1e-4);
