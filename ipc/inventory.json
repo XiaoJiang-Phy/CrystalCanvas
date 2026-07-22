@@ -6,9 +6,12 @@
     "apply_niggli_reduce",
     "apply_slab",
     "apply_supercell",
+    "begin_atom_drag",
+    "cancel_atom_drag",
     "check_api_key_status",
     "clear_measurements",
     "clear_wannier",
+    "commit_atom_drag",
     "compute_brillouin_zone",
     "delete_atoms",
     "export_file",
@@ -63,6 +66,7 @@
     "toggle_wannier_onsite",
     "translate_atoms_screen",
     "undo",
+    "update_atom_drag",
     "update_lattice_params",
     "update_selection",
     "update_settings",
@@ -91,11 +95,20 @@
     "apply_supercell": [
       "matrix"
     ],
+    "begin_atom_drag": [
+      "indices"
+    ],
+    "cancel_atom_drag": [
+      "sessionId"
+    ],
     "check_api_key_status": [
       "providerType"
     ],
     "clear_measurements": [],
     "clear_wannier": [],
+    "commit_atom_drag": [
+      "sessionId"
+    ],
     "compute_brillouin_zone": [],
     "delete_atoms": [
       "indices"
@@ -267,6 +280,11 @@
       "indices"
     ],
     "undo": [],
+    "update_atom_drag": [
+      "dx",
+      "dy",
+      "sessionId"
+    ],
     "update_lattice_params": [
       "a",
       "alpha",
@@ -383,6 +401,30 @@
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
+    "begin_atom_drag": {
+      "args": [
+        {
+          "name": "indices",
+          "optional": false,
+          "rust_type": "Vec<usize>",
+          "type": "Array<number>"
+        }
+      ],
+      "result": "string",
+      "rust_result": "IpcResult<String>"
+    },
+    "cancel_atom_drag": {
+      "args": [
+        {
+          "name": "sessionId",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
     "check_api_key_status": {
       "args": [
         {
@@ -402,6 +444,18 @@
     },
     "clear_wannier": {
       "args": [],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "commit_atom_drag": {
+      "args": [
+        {
+          "name": "sessionId",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
@@ -1157,6 +1211,30 @@
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
+    "update_atom_drag": {
+      "args": [
+        {
+          "name": "dx",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "dy",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "sessionId",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
     "update_lattice_params": {
       "args": [
         {
@@ -1303,6 +1381,7 @@
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
+      "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/file_io.rs",
       "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/main.rs",
@@ -1312,6 +1391,7 @@
     "undo_stack_changed": [
       "src-tauri/src/commands/analysis.rs",
       "src-tauri/src/commands/analysis.rs",
+      "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/editing.rs",
       "src-tauri/src/commands/file_io.rs",
@@ -1336,9 +1416,12 @@
     "apply_niggli_reduce": "committed_mutation",
     "apply_slab": "committed_mutation",
     "apply_supercell": "committed_mutation",
+    "begin_atom_drag": "renderer_only",
+    "cancel_atom_drag": "renderer_only",
     "check_api_key_status": "read",
     "clear_measurements": "committed_mutation",
     "clear_wannier": "renderer_only",
+    "commit_atom_drag": "committed_mutation",
     "compute_brillouin_zone": "renderer_only",
     "delete_atoms": "committed_mutation",
     "export_file": "external_io",
@@ -1393,6 +1476,7 @@
     "toggle_wannier_onsite": "renderer_only",
     "translate_atoms_screen": "high_frequency",
     "undo": "committed_mutation",
+    "update_atom_drag": "high_frequency",
     "update_lattice_params": "committed_mutation",
     "update_selection": "renderer_only",
     "update_settings": "renderer_only",

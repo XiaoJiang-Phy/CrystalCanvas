@@ -74,3 +74,8 @@ harness = false
 name = "test_sync_1c_tauri_smoke"
 path = "tests/test_sync_1c_tauri_smoke.rs"
 harness = false
+
+[[test]]
+name = "test_interact_1_drag_session_real"
+path = "tests/test_interact_1_drag_session_real.rs"
+harness = false

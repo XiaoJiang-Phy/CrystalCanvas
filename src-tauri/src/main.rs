@@ -429,7 +429,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                         log::error!(
                                             "Failed to build renderer scene: {}",
                                             error.message
-                            );
+                                        );
                                         return;
                                     }
                                 };
@@ -765,6 +765,10 @@ fn main() {
             commands::load_cif_file,
             commands::add_atom,
             commands::translate_atoms_screen,
+            commands::begin_atom_drag,
+            commands::update_atom_drag,
+            commands::commit_atom_drag,
+            commands::cancel_atom_drag,
             commands::delete_atoms,
             commands::update_selection,
             commands::substitute_atoms,
