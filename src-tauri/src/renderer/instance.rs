@@ -24,6 +24,144 @@ pub struct AtomInstance {
     pub color: [f32; 4],
 }
 
+/// Apply a presentation-only phonon displacement to preallocated atom instances.
+///
+/// The phase is reduced in `f64` before the result is converted to the GPU's
+/// `f32` instance representation. All inputs and candidate coordinates are
+/// validated before `output` is modified.
+pub fn apply_phonon_frame(
+    base: &[AtomInstance],
+    source_atom_indices: &[usize],
+    mode_displacements: &[[f32; 3]],
+    phase: f64,
+    display_scale: f64,
+    output: &mut [AtomInstance],
+) -> IpcResult<()> {
+    if base.len() != source_atom_indices.len() || base.len() != output.len() {
+        return Err(IpcError::invalid_argument(
+            "phonon frame buffers and source map must have equal lengths",
+        ));
+    }
+    if !phase.is_finite() || !display_scale.is_finite() {
+        return Err(IpcError::invalid_argument(
+            "phonon phase and display scale must be finite",
+        ));
+    }
+
+    for displacement in mode_displacements {
+        if !displacement.iter().all(|component| component.is_finite()) {
+            return Err(IpcError::invalid_argument(
+                "phonon displacement must be finite",
+            ));
+        }
+    }
+
+    let factor = display_scale * phase.rem_euclid(std::f64::consts::TAU).sin();
+    if !factor.is_finite() {
+        return Err(IpcError::invalid_argument(
+            "phonon display factor must be finite",
+        ));
+    }
+
+    for (instance, &source_atom_index) in base.iter().zip(source_atom_indices) {
+        if !instance
+            .position
+            .iter()
+            .all(|component| component.is_finite())
+            || !instance.radius.is_finite()
+            || !instance.color.iter().all(|component| component.is_finite())
+        {
+            return Err(IpcError::invalid_argument(
+                "phonon base instance must be finite",
+            ));
+        }
+        let displacement = mode_displacements.get(source_atom_index).ok_or_else(|| {
+            IpcError::invalid_argument("phonon source index has no mode displacement")
+        })?;
+        for axis in 0..3 {
+            let coordinate =
+                f64::from(instance.position[axis]) + factor * f64::from(displacement[axis]);
+            let gpu_coordinate = coordinate as f32;
+            if !coordinate.is_finite() || !gpu_coordinate.is_finite() {
+                return Err(IpcError::invalid_argument(
+                    "phonon display coordinate exceeds renderer precision",
+                ));
+            }
+        }
+    }
+
+    for ((display, instance), &source_atom_index) in
+        output.iter_mut().zip(base).zip(source_atom_indices)
+    {
+        let displacement = &mode_displacements[source_atom_index];
+        *display = *instance;
+        display.position = [
+            (f64::from(instance.position[0]) + factor * f64::from(displacement[0])) as f32,
+            (f64::from(instance.position[1]) + factor * f64::from(displacement[1])) as f32,
+            (f64::from(instance.position[2]) + factor * f64::from(displacement[2])) as f32,
+        ];
+    }
+    Ok(())
+}
+
+/// Validate that every phase in the display envelope remains representable by
+/// the GPU instance format. The displacement factor is bounded by
+/// `[-abs(display_scale), abs(display_scale)]`.
+pub fn validate_phonon_display_envelope(
+    base: &[AtomInstance],
+    source_atom_indices: &[usize],
+    mode_displacements: &[[f32; 3]],
+    display_scale: f64,
+) -> IpcResult<()> {
+    if base.len() != source_atom_indices.len() {
+        return Err(IpcError::invalid_argument(
+            "phonon frame buffers and source map must have equal lengths",
+        ));
+    }
+    if !display_scale.is_finite() {
+        return Err(IpcError::invalid_argument(
+            "phonon display scale must be finite",
+        ));
+    }
+
+    for displacement in mode_displacements {
+        if !displacement.iter().all(|component| component.is_finite()) {
+            return Err(IpcError::invalid_argument(
+                "phonon displacement must be finite",
+            ));
+        }
+    }
+
+    let scale_bound = display_scale.abs();
+    for (instance, &source_atom_index) in base.iter().zip(source_atom_indices) {
+        if !instance
+            .position
+            .iter()
+            .all(|component| component.is_finite())
+            || !instance.radius.is_finite()
+            || !instance.color.iter().all(|component| component.is_finite())
+        {
+            return Err(IpcError::invalid_argument(
+                "phonon base instance must be finite",
+            ));
+        }
+        let displacement = mode_displacements.get(source_atom_index).ok_or_else(|| {
+            IpcError::invalid_argument("phonon source index has no mode displacement")
+        })?;
+        for axis in 0..3 {
+            let offset = scale_bound * f64::from(displacement[axis]);
+            for coordinate in [f64::from(instance.position[axis]) + offset, f64::from(instance.position[axis]) - offset] {
+                if !coordinate.is_finite() || !(coordinate as f32).is_finite() {
+                    return Err(IpcError::invalid_argument(
+                        "phonon display coordinate exceeds renderer precision",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// CPU-side scene data for a rendered atom.
 ///
 /// The mapping remains outside the GPU vertex layout so renderer-only periodic

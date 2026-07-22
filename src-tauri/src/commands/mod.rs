@@ -20,6 +20,47 @@ pub use viewport::*;
 pub use volumetric::*;
 pub use wannier::*;
 
+#[derive(Clone, Default)]
+pub struct PhononFrameWake {
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl PhononFrameWake {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+
+    pub fn start(&self, app: tauri::AppHandle) -> crate::ipc::IpcResult<()> {
+        let generation = self
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .wrapping_add(1);
+        let wake_generation = std::sync::Arc::clone(&self.generation);
+        std::thread::Builder::new()
+            .name("phonon-frame-wake".into())
+            .spawn(move || {
+                while wake_generation.load(std::sync::atomic::Ordering::Acquire) == generation {
+                    std::thread::sleep(Self::INTERVAL);
+                    if wake_generation.load(std::sync::atomic::Ordering::Acquire) != generation {
+                        break;
+                    }
+                    if app.run_on_main_thread(|| {}).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| {
+                crate::ipc::IpcError::render(format!(
+                    "unable to start phonon frame wake: {error}"
+                ))
+            })?;
+        Ok(())
+    }
+
+    pub fn stop(&self) {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// Managed state to store the "base" primitive/standard unit cell before supercell/slab expansions.
 pub struct BaseCrystalState(pub std::sync::Mutex<Option<crate::crystal_state::CrystalState>>);
 

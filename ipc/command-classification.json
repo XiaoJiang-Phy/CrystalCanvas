@@ -51,6 +51,7 @@
     "set_isovalue": "renderer_only",
     "set_phonon_mode": "renderer_only",
     "set_phonon_phase": "high_frequency",
+    "set_phonon_playing": "renderer_only",
     "set_render_flags": "renderer_only",
     "set_volume_colormap": "renderer_only",
     "set_volume_density_cutoff": "renderer_only",

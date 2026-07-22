@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "crystalcanvas-v0.6.2-interact-2a-display-contract",
+  "project_root": ".",
+  "system": {
+    "physical_dimension": 3,
+    "computational_periodicity": 3,
+    "periodic_axes": ["x", "y", "z"],
+    "equilibrium": false,
+    "ensemble": "unspecified"
+  },
+  "resources": {
+    "max_file_size_mb": 1,
+    "max_uncompressed_npz_mb": 1,
+    "max_matrix_dimension": 16,
+    "max_frequency_points": 16,
+    "max_findings_per_rule": 16
+  },
+  "settings": {
+    "report_format": "json",
+    "fail_fast": false,
+    "advisory_enabled": false
+  },
+  "thresholds": {
+    "display_position_tolerance": {
+      "value": 0.000001,
+      "unit": "angstrom",
+      "source": "USER_CONFIG"
+    }
+  },
+  "artifacts": [
+    {
+      "id": "interact_2a_synthetic_display",
+      "role": "phonon_data",
+      "path": "src-tauri/tests/fixtures/interact_2a_phonon_display.yaml",
+      "format": "yaml",
+      "adapter": "phonon_yaml_v1",
+      "units": {
+        "base_position": "angstrom",
+        "display_scale": "angstrom",
+        "eigenvector": "dimensionless",
+        "phase": "radian"
+      },
+      "conventions": {
+        "display_relation": "r_display = r0 + display_scale * eigenvector * sin(phase)",
+        "eigenvector_normalization": "synthetic display direction; no physical normalization claim",
+        "phase_origin": "zero displacement at phase 0",
+        "periodic_source_mapping": "render images with the same source_atom_index share one intrinsic displacement",
+        "physical_time_interpretation": "none"
+      },
+      "metadata": {
+        "fixture_role": "software_display_contract",
+        "provenance": "v0.6.2 development plan section INTERACT-2A"
+      }
+    }
+  ],
+  "physical_context": {
+    "scope": "synthetic presentation-only regression; no physical validation claim",
+    "declaration_provenance": {
+      "source": "USER_CONFIG",
+      "confirmed_on": "2026-07-22",
+      "fields": [
+        "system.physical_dimension",
+        "system.computational_periodicity",
+        "system.periodic_axes",
+        "artifacts[0].units",
+        "artifacts[0].conventions"
+      ]
+    },
+    "requested_rules": [
+      "INTERACT_2A.DISPLAY_RELATION",
+      "INTERACT_2A.PERIODIC_SOURCE_MAPPING",
+      "INTERACT_2A.FINITE_GPU_DATA"
+    ]
+  }
+}

@@ -105,9 +105,7 @@ pub fn load_phonon(
         drop(cs);
         app.emit(
             "state_changed",
-            crate::transaction::StateChangedPayload {
-                version,
-            },
+            crate::transaction::StateChangedPayload { version },
         )
         .ok();
     }
@@ -128,13 +126,13 @@ pub fn load_phonon_interactive(
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
 ) -> IpcResult<Vec<crate::phonon::PhononModeSummary>> {
     log::info!("load_phonon_interactive: in={}, modes={}", scf_in, modes);
-    
+
     // 1. Load the crystal structure from scf_in now (since its parser is fully robust)
     let mut new_state = crate::io::qe_parser::parse_scf_in(&scf_in).map_err(IpcError::parse)?;
     new_state
         .validate_structural_invariants()
         .map_err(IpcError::parse)?;
-    
+
     // 2. Parse phonon data
     let data = crate::phonon::parse_phonon_file(&modes).map_err(IpcError::parse)?;
     if new_state.intrinsic_sites != data.n_atoms {
@@ -148,7 +146,7 @@ pub fn load_phonon_interactive(
     new_state.phonon_data = Some(data);
     new_state.active_phonon_mode = None;
     new_state.phonon_phase = 0.0;
-    
+
     let can_undo;
     let can_redo;
     let version;
@@ -156,7 +154,7 @@ pub fn load_phonon_interactive(
         let mut cs = crystal_state
             .lock()
             .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-        
+
         let mut u_stack = undo_state
             .lock()
             .map_err(|_| IpcError::lock("undo stack lock poisoned"))?;
@@ -177,7 +175,7 @@ pub fn load_phonon_interactive(
         *cs = new_state;
         renderer.commit_atoms(atom_scene);
         renderer.update_lines(&line_scene);
-        
+
         // Auto-adjust camera
         let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
         let center = cs.unit_cell_center();
@@ -229,7 +227,7 @@ pub fn load_axsf_phonon(
     new_state.phonon_data = Some(data);
     new_state.active_phonon_mode = None;
     new_state.phonon_phase = 0.0;
-    
+
     let can_undo;
     let can_redo;
     let version;
@@ -257,7 +255,7 @@ pub fn load_axsf_phonon(
         *cs = new_state;
         renderer.commit_atoms(atom_scene);
         renderer.update_lines(&line_scene);
-        
+
         let extent = cs.cell_a.max(cs.cell_b).max(cs.cell_c) as f32;
         let center = cs.unit_cell_center();
         let center_vec = glam::Vec3::from_array(center);
@@ -292,13 +290,20 @@ pub fn set_phonon_mode(
     mode_index: Option<usize>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    phonon_frame_wake: State<'_, crate::commands::PhononFrameWake>,
 ) -> IpcResult<()> {
     let mut cs = crystal_state
         .try_lock()
         .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
 
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     if let Some(idx) = mode_index {
-        let n_modes = cs.phonon_data.as_ref().map_or(0, |d| d.modes.len());
+        let phonon_data = cs.phonon_data.as_ref().ok_or_else(|| {
+            IpcError::invalid_argument("load phonon data before selecting a mode")
+        })?;
+        let n_modes = phonon_data.modes.len();
         if idx >= n_modes {
             return Err(IpcError::invalid_argument(format!(
                 "Mode index {} out of range (0..{})",
@@ -306,12 +311,12 @@ pub fn set_phonon_mode(
             )));
         }
 
-        // Hide bonds purely for physics visualization mode
-        let mut renderer = renderer_state
-            .lock()
-            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+        renderer.set_phonon_mode(Some(&phonon_data.modes[idx]))?;
         renderer.update_bonds(&[]);
+    } else {
+        renderer.set_phonon_mode(None)?;
     }
+    phonon_frame_wake.stop();
 
     cs.active_phonon_mode = mode_index;
     cs.phonon_phase = 0.0;
@@ -324,49 +329,44 @@ pub fn set_phonon_mode(
 pub fn set_phonon_phase(
     phase: f64,
     amplitude: Option<f64>,
-    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> IpcResult<()> {
-    let mut cs = crystal_state
-        .try_lock()
-        .map_err(|error| IpcError::from_try_lock(error, "crystal state"))?;
-
-    let amp = amplitude.unwrap_or(1.0);
-
-    if let (Some(mode_idx), Some(phonon_data)) = (cs.active_phonon_mode, &cs.phonon_data) {
-        if mode_idx < phonon_data.modes.len() {
-            let settings = settings_state
-                .try_lock()
-                .map_err(|error| IpcError::from_try_lock(error, "settings"))?;
-            let mode = &phonon_data.modes[mode_idx];
-            let sin_phase = phase.sin();
-            let n = cs.cart_positions.len().min(mode.eigenvectors.len());
-
-            let mut displaced = Vec::new();
-            displaced
-                .try_reserve_exact(cs.cart_positions.len())
-                .map_err(|_| IpcError::render("unable to allocate phonon displacement scene"))?;
-            displaced.extend_from_slice(&cs.cart_positions);
-            for i in 0..n {
-                displaced[i][0] += (amp * mode.eigenvectors[i][0] * sin_phase) as f32;
-                displaced[i][1] += (amp * mode.eigenvectors[i][1] * sin_phase) as f32;
-                displaced[i][2] += (amp * mode.eigenvectors[i][2] * sin_phase) as f32;
-            }
-
-            let atom_scene = crate::renderer::instance::prepare_atom_scene(
-                crate::wannier::build_atoms_with_ghosts_displaced(&cs, &displaced, &settings)?,
-            )?;
-            let mut renderer = renderer_state
-                .try_lock()
-                .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
-            renderer.commit_atoms(atom_scene);
-            cs.phonon_phase = phase;
-            return Ok(());
-        }
+    let display_scale = amplitude.unwrap_or(1.0);
+    if !phase.is_finite() || !display_scale.is_finite() {
+        return Err(IpcError::invalid_argument(
+            "phonon phase and display scale must be finite",
+        ));
     }
+    let mut renderer = renderer_state
+        .try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
+    renderer.set_phonon_phase(phase, display_scale)
+}
 
-    cs.phonon_phase = phase;
+/// Start or stop renderer-owned phonon presentation playback.
+#[tauri::command]
+pub fn set_phonon_playing(
+    playing: bool,
+    app: tauri::AppHandle,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    phonon_frame_wake: State<'_, crate::commands::PhononFrameWake>,
+) -> IpcResult<()> {
+    let mut renderer = renderer_state
+        .try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
+    let was_playing = renderer.phonon_is_playing();
+    renderer.set_phonon_playing(playing)?;
+
+    if playing {
+        if !was_playing {
+            if let Err(error) = phonon_frame_wake.start(app) {
+                let _ = renderer.set_phonon_playing(false);
+                return Err(error);
+            }
+        }
+    } else {
+        phonon_frame_wake.stop();
+    }
     Ok(())
 }
 
@@ -392,10 +392,10 @@ pub fn add_measurement(
                 cs.add_measurement(&indices)
                     .map_err(IpcError::invalid_argument)?,
             );
-        Ok(())
+            Ok(())
         },
     )?;
-    
+
     measurement.ok_or_else(|| IpcError::from("measurement transaction returned no result"))
 }
 
@@ -463,14 +463,14 @@ pub fn get_measurement_labels_screen(
             m.label_position[1],
             m.label_position[2],
         ]);
-        
+
         let clip = vp_matrix * pos_3d.extend(1.0);
-        
+
         // Z-clipping check
         if clip.w > 0.0 {
             let ndc_x = clip.x / clip.w;
             let ndc_y = clip.y / clip.w;
-            
+
             // Render only if roughly within viewport
             if ndc_x >= -1.2 && ndc_x <= 1.2 && ndc_y >= -1.2 && ndc_y <= 1.2 {
                 let text = match m.kind {

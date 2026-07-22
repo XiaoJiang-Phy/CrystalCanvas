@@ -120,6 +120,11 @@ test('Reciprocal renderer mutations accept only unit success responses', () => {
     }
 });
 
+test('Phonon playback mutation accepts only a unit success response', () => {
+    assert.equal(contracts.validate_ipc_result('set_phonon_playing', null), null);
+    assert.throws(() => contracts.validate_ipc_result('set_phonon_playing', undefined));
+});
+
 test('Hiding the Brillouin zone does not acquire the crystal-state lock', () => {
     const start = reciprocal_command_source.indexOf('pub fn toggle_bz_display');
     const end = reciprocal_command_source.indexOf('#[tauri::command]', start);
