@@ -801,6 +801,7 @@ fn main() {
             commands::load_axsf_phonon,
             commands::set_phonon_mode,
             commands::set_phonon_phase,
+            commands::set_phonon_display_scale,
             commands::set_phonon_playing,
             commands::update_lattice_params,
             commands::export_image,

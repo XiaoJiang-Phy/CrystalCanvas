@@ -140,6 +140,7 @@ export interface IpcCommandContract {
     set_isovalue: { args: { value: number }; result: null };
     set_phonon_mode: { args: { modeIndex?: number | null }; result: null };
     set_phonon_phase: { args: { phase: number; amplitude?: number | null }; result: null };
+    set_phonon_display_scale: { args: { displayScale: number }; result: null };
     set_phonon_playing: { args: { playing: boolean }; result: null };
     set_render_flags: { args: { showCell: boolean; showBonds: boolean }; result: null };
     set_volume_colormap: { args: { mode: VolumeColormap }; result: null };
@@ -427,6 +428,7 @@ const IPC_RESULT_VALIDATORS: {
     set_isovalue: is_null,
     set_phonon_mode: is_null,
     set_phonon_phase: is_null,
+    set_phonon_display_scale: is_null,
     set_phonon_playing: is_null,
     set_render_flags: is_null,
     set_volume_colormap: is_null,

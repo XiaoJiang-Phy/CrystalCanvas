@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { safeInvoke } from '../../utils/tauri-mock';
 import { IpcException, type IpcError } from '../../ipc/contracts';
 import { PhononModeSummary } from '../../types/crystal';
 import { PhononImportModal } from '../layout/PhononImportModal';
 import { PanelProps } from './index';
 import { ActionButton, PanelError, RangeInput, SelectInput } from './shared';
+
+type PhononControlOperation = 'mode' | 'playback' | 'scale' | 'reset';
 
 export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
     const [phononModes, setPhononModes] = useState<PhononModeSummary[] | null>(null);
@@ -13,8 +15,9 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
     const [amplitude, setAmplitude] = useState(1.0);
     const [isPhononModalOpen, setIsPhononModalOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
-    const [isSelectingMode, setIsSelectingMode] = useState(false);
+    const [activeControlOperation, setActiveControlOperation] = useState<PhononControlOperation | null>(null);
     const [error, setError] = useState<IpcError | null>(null);
+    const isControlBusy = activeControlOperation !== null;
 
     const setPanelError = (cause: unknown, fallback: string) => {
         if (cause instanceof IpcException) {
@@ -23,20 +26,6 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
         }
         setError({ code: 'internal_error', message: fallback, recoverable: false });
     };
-
-    useEffect(() => {
-        if (!isAnimating) return;
-        let animationFrameId: number;
-        const start = performance.now();
-
-        const render = (time: number) => {
-            const phase = ((time - start) / 1000.0) * 2.0 * Math.PI;
-            safeInvoke('set_phonon_phase', { phase, amplitude }).catch(console.error);
-            animationFrameId = requestAnimationFrame(render);
-        };
-        animationFrameId = requestAnimationFrame(render);
-        return () => cancelAnimationFrame(animationFrameId);
-    }, [isAnimating, amplitude]);
 
     const handle_load_phonon = () => {
         setIsPhononModalOpen(true);
@@ -72,12 +61,14 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
     };
 
     const handle_select_mode = async (idx: number) => {
-        if (isSelectingMode) return;
+        if (isControlBusy) return;
         setError(null);
-        setIsSelectingMode(true);
+        setActiveControlOperation('mode');
         try {
             await safeInvoke('set_phonon_mode', { modeIndex: idx });
             setActiveModeIdx(idx);
+            setIsAnimating(false);
+            setAmplitude(1.0);
             if (phononModes && onActivePhononModeUpdate) {
                 const mode = phononModes.find(m => m.index === idx);
                 onActivePhononModeUpdate(mode || null);
@@ -85,13 +76,55 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
         } catch (cause) {
             setPanelError(cause, 'Unable to select the phonon mode.');
         } finally {
-            setIsSelectingMode(false);
+            setActiveControlOperation(null);
+        }
+    };
+
+    const handle_toggle_animation = async () => {
+        if (isControlBusy) return;
+        const playing = !isAnimating;
+        setError(null);
+        setActiveControlOperation('playback');
+        try {
+            await safeInvoke('set_phonon_playing', { playing });
+            setIsAnimating(playing);
+        } catch (cause) {
+            setPanelError(cause, 'Unable to change phonon playback.');
+        } finally {
+            setActiveControlOperation(null);
+        }
+    };
+
+    const handle_set_amplitude = async (displayScale: number) => {
+        if (isControlBusy) return;
+        setError(null);
+        setActiveControlOperation('scale');
+        try {
+            await safeInvoke('set_phonon_display_scale', { displayScale });
+            setAmplitude(displayScale);
+        } catch (cause) {
+            setPanelError(cause, 'Unable to change phonon display scale.');
+        } finally {
+            setActiveControlOperation(null);
+        }
+    };
+
+    const handle_reset_animation = async () => {
+        if (isControlBusy) return;
+        setError(null);
+        setActiveControlOperation('reset');
+        try {
+            await safeInvoke('set_phonon_phase', { phase: 0, amplitude });
+        } catch (cause) {
+            setPanelError(cause, 'Unable to reset phonon animation.');
+        } finally {
+            setActiveControlOperation(null);
         }
     };
 
     return (
-        <div className="space-y-3" aria-busy={isLoading || isSelectingMode}>
-            <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handle_load_phonon} disabled={isLoading || isSelectingMode} busy={isLoading} />
+        <div className="space-y-3" aria-busy={isLoading || isControlBusy}>
+            <ActionButton label="Load Phonon Data (.mold/.dat)" onClick={handle_load_phonon} disabled={isLoading || isControlBusy} busy={isLoading} />
 
             {error && <PanelError error={error} message={error.message} />}
             {!phononModes && !isLoading && !error && <div role="status" className="text-xs text-[var(--cc-muted)]">No phonon modes are loaded.</div>}
@@ -102,8 +135,8 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
                         label="Select Mode"
                         value={activeModeIdx?.toString() ?? ''}
                         onChange={(value) => handle_select_mode(parseInt(value, 10))}
-                        disabled={isLoading || isSelectingMode}
-                        busy={isSelectingMode}
+                        disabled={isLoading || isControlBusy}
+                        busy={activeControlOperation === 'mode'}
                     >
                             <option value="" disabled>-- Select Mode --</option>
                             {Array.from(new Set(phononModes.map(m => m.q_point.join(',')))).map(qStr => {
@@ -129,15 +162,27 @@ export default function PhononPanel({ onActivePhononModeUpdate }: PanelProps) {
                         min={0.1}
                         max={5.0}
                         step={0.1}
-                        onChange={setAmplitude}
-                        disabled={isLoading || isSelectingMode}
+                        onChange={handle_set_amplitude}
+                        disabled={isLoading || isControlBusy}
+                        busy={activeControlOperation === 'scale'}
                     />
 
                     <ActionButton
                         label={isAnimating ? 'Pause Animation' : 'Play Animation'}
-                        onClick={() => setIsAnimating(!isAnimating)}
-                        disabled={activeModeIdx === null || isLoading || isSelectingMode}
+                        onClick={handle_toggle_animation}
+                        disabled={activeModeIdx === null || isLoading || isControlBusy}
+                        busy={activeControlOperation === 'playback'}
+                        busyLabel="Updating Animation…"
                         tone={isAnimating ? 'secondary' : 'primary'}
+                    />
+
+                    <ActionButton
+                        label="Reset Animation"
+                        onClick={handle_reset_animation}
+                        disabled={activeModeIdx === null || isLoading || isControlBusy}
+                        busy={activeControlOperation === 'reset'}
+                        busyLabel="Resetting Animation…"
+                        tone="secondary"
                     />
                 </>
             )}

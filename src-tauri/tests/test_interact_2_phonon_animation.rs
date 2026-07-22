@@ -532,6 +532,69 @@ fn phase_ipc_is_a_renderer_control_boundary_not_a_canonical_update() {
 }
 
 #[test]
+fn display_scale_ipc_is_a_renderer_only_phase_preserving_boundary() {
+    let analysis = include_str!("../src/commands/analysis.rs");
+    let renderer = include_str!("../src/renderer/renderer.rs");
+    let scale_command = command_body(analysis, "set_phonon_display_scale");
+    let scale_method = function_body(renderer, "set_phonon_display_scale");
+
+    assert_in_order(
+        scale_command,
+        &[
+            "renderer_state",
+            ".try_lock()",
+            "renderer.set_phonon_display_scale(display_scale)",
+        ],
+        "display-scale IPC must delegate through the renderer lock",
+    );
+    assert_absent(
+        scale_command,
+        &[
+            "crystal_state",
+            "settings_state",
+            "phonon_frame_wake",
+            "cart_positions",
+            "commit_version",
+            ".emit(",
+        ],
+        "display-scale IPC must not acquire canonical-state, wake, or event ownership",
+    );
+
+    assert_in_order(
+        scale_method,
+        &[
+            "if !display_scale.is_finite()",
+            "validate_phonon_display_envelope(",
+            "presentation.display_scale = display_scale",
+            "presentation.dirty = true",
+        ],
+        "display scale must validate before changing renderer presentation state",
+    );
+    assert_absent(
+        scale_method,
+        &[
+            "presentation.playback.seek(",
+            "presentation.playback.start(",
+            "presentation.playback.stop(",
+            "self.phonon_presentation =",
+            "CrystalState",
+            "UndoStack",
+            "cart_positions",
+            "frac_positions",
+            "commit_atoms",
+            "build_atoms_with_ghosts",
+            "prepare_atom_scene",
+            "next_version",
+            "commit_version",
+            "state_changed",
+            "undo_stack_changed",
+            ".emit(",
+        ],
+        "display scale must not take playback, canonical-state, snapshot, or event ownership",
+    );
+}
+
+#[test]
 fn mode_stop_and_clear_paths_cannot_mutate_canonical_coordinates() {
     let analysis = include_str!("../src/commands/analysis.rs");
     let mode = command_body(analysis, "set_phonon_mode");

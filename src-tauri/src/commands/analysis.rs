@@ -343,6 +343,18 @@ pub fn set_phonon_phase(
     renderer.set_phonon_phase(phase, display_scale)
 }
 
+/// Set phonon display scale without changing the renderer-owned playback phase.
+#[tauri::command]
+pub fn set_phonon_display_scale(
+    display_scale: f64,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    let mut renderer = renderer_state
+        .try_lock()
+        .map_err(|error| IpcError::from_try_lock(error, "renderer"))?;
+    renderer.set_phonon_display_scale(display_scale)
+}
+
 /// Start or stop renderer-owned phonon presentation playback.
 #[tauri::command]
 pub fn set_phonon_playing(

@@ -710,8 +710,6 @@ test('UI-1F preserves scientific symbols and the existing renderer/listener owne
     assert.equal((volumetric.match(/safeListen\(/g) || []).length, 1, 'volumetric panel must keep one event owner');
     assert.match(volumetric, /safeListen\('volumetric_loaded'/);
     assert.match(volumetric, /return\s*\(\)\s*=>\s*\{\s*unlisten\(\);\s*\}/);
-    assert.match(phonon, /safeInvoke\('set_phonon_phase',\s*\{\s*phase,\s*amplitude\s*\}\)/, 'UI-1F must not pre-implement INTERACT-2');
-    assert.match(phonon, /requestAnimationFrame\(render\)/, 'phonon frame ownership remains out of scope for UI-1F');
 });
 
 test('UI-1F gives every async scientific panel explicit busy, unavailable, and typed-error states', () => {
@@ -803,7 +801,6 @@ test('UI-1F keeps operation-specific busy labels without changing renderer comma
         [volumetric, 'set_volume_opacity_range', 1],
         [phonon, 'load_axsf_phonon', 1],
         [phonon, 'load_phonon_interactive', 1],
-        [phonon, 'set_phonon_phase', 1],
         [phonon, 'set_phonon_mode', 1],
         [brillouin_zone, 'get_bz_label_positions', 1],
         [brillouin_zone, 'compute_brillouin_zone', 1],
@@ -862,7 +859,21 @@ test('UI-1F commits discrete renderer state only after its IPC request is issued
     };
 
     assert_command_precedes_state(phonon, 'set_phonon_mode', 'setActiveModeIdx(idx)');
-    assert.match(phonon, /isSelectingMode/, 'phonon mode selection must reject overlapping requests');
+    const mode_handler_start = phonon.indexOf('const handle_select_mode');
+    const mode_handler_end = phonon.indexOf('const handle_toggle_animation', mode_handler_start);
+    assert.ok(mode_handler_start >= 0 && mode_handler_end > mode_handler_start,
+        'phonon panel must retain a dedicated mode-selection handler');
+    const mode_handler = phonon.slice(mode_handler_start, mode_handler_end);
+    const mode_guard = mode_handler.search(/if\s*\([^)]*\)\s*return;/);
+    const mode_invoke = mode_handler.indexOf("safeInvoke('set_phonon_mode'");
+    assert.ok(mode_guard >= 0 && mode_guard < mode_invoke,
+        'phonon mode selection must reject an overlapping control operation before issuing IPC');
+    const mode_select_start = phonon.indexOf('<SelectInput');
+    const mode_select_end = phonon.indexOf('</SelectInput>', mode_select_start);
+    assert.ok(mode_select_start >= 0 && mode_select_end > mode_select_start,
+        'phonon panel must retain its mode selector');
+    assert.match(phonon.slice(mode_select_start, mode_select_end), /disabled=\{[^}]+\}/,
+        'phonon mode selector must be disabled while a control operation is pending');
 
     assert_command_precedes_state(volumetric, 'set_volume_render_mode', 'setVolumeRenderMode(mode)', 2);
     assert_command_precedes_state(volumetric, 'set_isosurface_sign_mode', 'setSignMode(mode)', 2);
@@ -929,8 +940,6 @@ test('UI-1F retains its five lazy chunks and frame/listener boundaries during re
     }
     assert.equal((volumetric.match(/safeListen\(/g) || []).length, 1);
     assert.match(volumetric, /return\s*\(\)\s*=>\s*\{\s*unlisten\(\);\s*\}/);
-    assert.match(phonon, /safeInvoke\('set_phonon_phase',\s*\{\s*phase,\s*amplitude\s*\}\)/);
-    assert.match(phonon, /requestAnimationFrame\(render\)/);
 });
 
 test('UI-1F mounts VolumetricPanel in the persistent inspector tree', () => {

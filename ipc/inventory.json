@@ -49,6 +49,7 @@
     "set_isosurface_opacity",
     "set_isosurface_sign_mode",
     "set_isovalue",
+    "set_phonon_display_scale",
     "set_phonon_mode",
     "set_phonon_phase",
     "set_phonon_playing",
@@ -220,6 +221,9 @@
     ],
     "set_isovalue": [
       "value"
+    ],
+    "set_phonon_display_scale": [
+      "displayScale"
     ],
     "set_phonon_mode": [
       "modeIndex"
@@ -952,6 +956,18 @@
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
+    "set_phonon_display_scale": {
+      "args": [
+        {
+          "name": "displayScale",
+          "optional": false,
+          "rust_type": "f64",
+          "type": "number"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
     "set_phonon_mode": {
       "args": [
         {
@@ -1475,8 +1491,9 @@
     "set_isosurface_opacity": "renderer_only",
     "set_isosurface_sign_mode": "renderer_only",
     "set_isovalue": "renderer_only",
+    "set_phonon_display_scale": "renderer_only",
     "set_phonon_mode": "renderer_only",
-    "set_phonon_phase": "high_frequency",
+    "set_phonon_phase": "renderer_only",
     "set_phonon_playing": "renderer_only",
     "set_render_flags": "renderer_only",
     "set_volume_colormap": "renderer_only",
@@ -1915,6 +1932,14 @@
       "response_type": null
     },
     {
+      "command": "set_phonon_display_scale",
+      "file": "src/components/panels/PhononPanel.tsx",
+      "args": [
+        "displayScale"
+      ],
+      "response_type": null
+    },
+    {
       "command": "set_phonon_mode",
       "file": "src/components/panels/PhononPanel.tsx",
       "args": [
@@ -1928,6 +1953,14 @@
       "args": [
         "amplitude",
         "phase"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "set_phonon_playing",
+      "file": "src/components/panels/PhononPanel.tsx",
+      "args": [
+        "playing"
       ],
       "response_type": null
     },
@@ -2298,10 +2331,16 @@
       "src/components/panels/VolumetricPanel.tsx",
       "src/components/panels/VolumetricPanel.tsx"
     ],
+    "set_phonon_display_scale": [
+      "src/components/panels/PhononPanel.tsx"
+    ],
     "set_phonon_mode": [
       "src/components/panels/PhononPanel.tsx"
     ],
     "set_phonon_phase": [
+      "src/components/panels/PhononPanel.tsx"
+    ],
+    "set_phonon_playing": [
       "src/components/panels/PhononPanel.tsx"
     ],
     "set_render_flags": [
