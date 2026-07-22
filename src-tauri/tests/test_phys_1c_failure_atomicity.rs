@@ -42,10 +42,13 @@ fn in_place_failure_paths_restore_before_commit_or_event() {
 #[test]
 fn history_candidate_rejection_swaps_back_before_history_or_event() {
     let source = include_str!("../src/commands/editing.rs");
-    let undo_swap = position(source, "candidate.swap_structural_fields(&mut cs);\n    if let Err(error) = cs.validate_structural_invariants()");
-    let undo_restore = position(source, "candidate.swap_structural_fields(&mut cs);\n        }\n        return Err");
-    let undo_commit = position(source, "u_stack.commit_undo()");
-    let undo_event = position(source, "\"undo_stack_changed\",");
+    let undo_start = position(source, "pub fn undo(");
+    let undo_end = position(source, "pub fn redo(");
+    let undo = &source[undo_start..undo_end];
+    let undo_swap = position(undo, "candidate.swap_structural_fields(&mut cs);\n    if let Err(error) = cs.validate_structural_invariants()");
+    let undo_restore = position(undo, "candidate.swap_structural_fields(&mut cs);\n        }\n        return Err");
+    let undo_commit = position(undo, "u_stack.commit_undo()");
+    let undo_event = position(undo, "\"undo_stack_changed\",");
 
     assert!(undo_swap < undo_restore);
     assert!(undo_restore < undo_commit);
