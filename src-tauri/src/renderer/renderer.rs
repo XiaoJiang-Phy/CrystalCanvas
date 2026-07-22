@@ -789,6 +789,35 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn set_phonon_display_scale(
+        &mut self,
+        display_scale: f64,
+    ) -> crate::ipc::IpcResult<()> {
+        if !display_scale.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon display scale must be finite",
+            ));
+        }
+
+        if let Some(presentation) = &mut self.phonon_presentation {
+            validate_phonon_display_envelope(
+                &self.opaque_atom_instances,
+                &self.opaque_source_atom_indices,
+                &presentation.mode_displacements,
+                display_scale,
+            )?;
+            validate_phonon_display_envelope(
+                &self.transparent_atom_instances,
+                &self.transparent_source_atom_indices,
+                &presentation.mode_displacements,
+                display_scale,
+            )?;
+            presentation.display_scale = display_scale;
+            presentation.dirty = true;
+        }
+        Ok(())
+    }
+
     pub fn set_phonon_playing(&mut self, playing: bool) -> crate::ipc::IpcResult<()> {
         let Some(presentation) = &mut self.phonon_presentation else {
             if playing {
