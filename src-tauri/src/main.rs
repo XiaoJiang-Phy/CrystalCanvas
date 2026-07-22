@@ -749,6 +749,7 @@ fn main() {
             app.manage(std::sync::Mutex::new(loaded_settings));
             app.manage(commands::LlmState(std::sync::Mutex::new(None)));
             app.manage(commands::BaseCrystalState(std::sync::Mutex::new(None)));
+            app.manage(commands::PhononFrameWake::default());
             app.manage(std::sync::Mutex::new(crate::undo::UndoStack::new(20)));
 
             // --- Menu Construction ---
@@ -800,6 +801,7 @@ fn main() {
             commands::load_axsf_phonon,
             commands::set_phonon_mode,
             commands::set_phonon_phase,
+            commands::set_phonon_playing,
             commands::update_lattice_params,
             commands::export_image,
             commands::shift_termination,
@@ -836,8 +838,8 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::MainEventsCleared = event {
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::MainEventsCleared => {
                 let Some(renderer_mutex) =
                     app_handle.try_state::<std::sync::Mutex<renderer::renderer::Renderer>>()
                 else {
@@ -865,6 +867,21 @@ fn main() {
                         log::warn!("Render error: {:?}", e);
                     }
                 }
+                if !renderer.phonon_is_playing() {
+                    if let Some(phonon_frame_wake) =
+                        app_handle.try_state::<commands::PhononFrameWake>()
+                    {
+                        phonon_frame_wake.stop();
+                    }
+                }
             }
+            tauri::RunEvent::Exit => {
+                if let Some(phonon_frame_wake) =
+                    app_handle.try_state::<commands::PhononFrameWake>()
+                {
+                    phonon_frame_wake.stop();
+                }
+            }
+            _ => {}
         });
 }

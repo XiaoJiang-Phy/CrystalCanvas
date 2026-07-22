@@ -51,6 +51,7 @@
     "set_isovalue",
     "set_phonon_mode",
     "set_phonon_phase",
+    "set_phonon_playing",
     "set_render_flags",
     "set_volume_colormap",
     "set_volume_density_cutoff",
@@ -226,6 +227,9 @@
     "set_phonon_phase": [
       "amplitude",
       "phase"
+    ],
+    "set_phonon_playing": [
+      "playing"
     ],
     "set_render_flags": [
       "showBonds",
@@ -978,6 +982,18 @@
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
+    "set_phonon_playing": {
+      "args": [
+        {
+          "name": "playing",
+          "optional": false,
+          "rust_type": "bool",
+          "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
     "set_render_flags": {
       "args": [
         {
@@ -1461,6 +1477,7 @@
     "set_isovalue": "renderer_only",
     "set_phonon_mode": "renderer_only",
     "set_phonon_phase": "high_frequency",
+    "set_phonon_playing": "renderer_only",
     "set_render_flags": "renderer_only",
     "set_volume_colormap": "renderer_only",
     "set_volume_density_cutoff": "renderer_only",
@@ -1545,6 +1562,22 @@
       "response_type": null
     },
     {
+      "command": "begin_atom_drag",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "cancel_atom_drag",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "sessionId"
+      ],
+      "response_type": null
+    },
+    {
       "command": "check_api_key_status",
       "file": "src/components/layout/LlmAssistant.tsx",
       "args": [
@@ -1562,6 +1595,14 @@
       "command": "clear_wannier",
       "file": "src/components/panels/WannierPanel.tsx",
       "args": [],
+      "response_type": null
+    },
+    {
+      "command": "commit_atom_drag",
+      "file": "src/hooks/useCameraInteraction.ts",
+      "args": [
+        "sessionId"
+      ],
       "response_type": null
     },
     {
@@ -2038,19 +2079,19 @@
       "response_type": null
     },
     {
-      "command": "translate_atoms_screen",
+      "command": "undo",
+      "file": "src/hooks/useTauriMenu.ts",
+      "args": [],
+      "response_type": null
+    },
+    {
+      "command": "update_atom_drag",
       "file": "src/hooks/useCameraInteraction.ts",
       "args": [
         "dx",
         "dy",
-        "indices"
+        "sessionId"
       ],
-      "response_type": null
-    },
-    {
-      "command": "undo",
-      "file": "src/hooks/useTauriMenu.ts",
-      "args": [],
       "response_type": null
     },
     {
@@ -2147,6 +2188,12 @@
     "apply_supercell": [
       "src/components/panels/SupercellPanel.tsx"
     ],
+    "begin_atom_drag": [
+      "src/hooks/useCameraInteraction.ts"
+    ],
+    "cancel_atom_drag": [
+      "src/hooks/useCameraInteraction.ts"
+    ],
     "check_api_key_status": [
       "src/components/layout/LlmAssistant.tsx"
     ],
@@ -2155,6 +2202,9 @@
     ],
     "clear_wannier": [
       "src/components/panels/WannierPanel.tsx"
+    ],
+    "commit_atom_drag": [
+      "src/hooks/useCameraInteraction.ts"
     ],
     "compute_brillouin_zone": [
       "src/components/panels/BrillouinZonePanel.tsx"
@@ -2295,11 +2345,11 @@
     "toggle_wannier_onsite": [
       "src/components/panels/WannierPanel.tsx"
     ],
-    "translate_atoms_screen": [
-      "src/hooks/useCameraInteraction.ts"
-    ],
     "undo": [
       "src/hooks/useTauriMenu.ts"
+    ],
+    "update_atom_drag": [
+      "src/hooks/useCameraInteraction.ts"
     ],
     "update_lattice_params": [
       "src/components/layout/LeftSidebar.tsx"

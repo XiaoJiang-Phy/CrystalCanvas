@@ -4,11 +4,15 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
-use super::instance::{AtomInstance, PreparedAtomScene, RenderLineScene};
+use super::instance::{
+    apply_phonon_frame, validate_phonon_display_envelope, AtomInstance, PreparedAtomScene,
+    RenderLineScene,
+};
 use super::pipeline;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +37,205 @@ struct AtomDragInstance {
 struct AtomDragInstances {
     selected: Vec<AtomDragInstance>,
     stationary: Vec<AtomInstance>,
+}
+
+/// Monotonic presentation clock. Its rate has no physical-time interpretation.
+pub struct PhononPlayback {
+    anchor_phase: f64,
+    anchor_time: f64,
+    display_angular_velocity: f64,
+    playing: bool,
+}
+
+impl PhononPlayback {
+    pub fn new(display_angular_velocity: f64) -> crate::ipc::IpcResult<Self> {
+        if !display_angular_velocity.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon display rate must be finite",
+            ));
+        }
+        Ok(Self {
+            anchor_phase: 0.0,
+            anchor_time: 0.0,
+            display_angular_velocity,
+            playing: false,
+        })
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    pub fn phase_at(&self, now: f64) -> crate::ipc::IpcResult<f64> {
+        if !now.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon playback time must be finite",
+            ));
+        }
+        if !self.playing {
+            return Ok(self.anchor_phase);
+        }
+        if now < self.anchor_time {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon playback time cannot move backwards",
+            ));
+        }
+        let phase = self
+            .display_angular_velocity
+            .mul_add(now - self.anchor_time, self.anchor_phase);
+        if !phase.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon playback phase is not finite",
+            ));
+        }
+        Ok(phase.rem_euclid(std::f64::consts::TAU))
+    }
+
+    pub fn start(&mut self, now: f64) -> crate::ipc::IpcResult<()> {
+        if !now.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon playback time must be finite",
+            ));
+        }
+        if self.playing {
+            self.phase_at(now)?;
+            return Ok(());
+        }
+        self.anchor_time = now;
+        self.playing = true;
+        Ok(())
+    }
+
+    pub fn stop(&mut self, now: f64) -> crate::ipc::IpcResult<()> {
+        if !now.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon playback time must be finite",
+            ));
+        }
+        if !self.playing {
+            return Ok(());
+        }
+        let phase = self.phase_at(now)?;
+        self.anchor_phase = phase;
+        self.anchor_time = now;
+        self.playing = false;
+        Ok(())
+    }
+
+    pub fn seek(&mut self, phase: f64, now: f64) -> crate::ipc::IpcResult<()> {
+        if !phase.is_finite() || !now.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon phase and playback time must be finite",
+            ));
+        }
+        if self.playing && now < self.anchor_time {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon playback time cannot move backwards",
+            ));
+        }
+        self.anchor_phase = phase.rem_euclid(std::f64::consts::TAU);
+        self.anchor_time = now;
+        Ok(())
+    }
+
+    fn halt(&mut self) {
+        self.playing = false;
+    }
+}
+
+/// Renderer-owned presentation state for one selected phonon mode.
+struct PhononPresentation {
+    display_scale: f64,
+    dirty: bool,
+    mode_displacements: Vec<[f32; 3]>,
+    opaque_display_instances: Vec<AtomInstance>,
+    transparent_display_instances: Vec<AtomInstance>,
+    playback: PhononPlayback,
+    time_origin: Instant,
+}
+
+impl PhononPresentation {
+    fn new(
+        opaque_base_instances: &[AtomInstance],
+        transparent_base_instances: &[AtomInstance],
+        opaque_source_atom_indices: &[usize],
+        transparent_source_atom_indices: &[usize],
+        mode_displacements: &[[f64; 3]],
+    ) -> crate::ipc::IpcResult<Self> {
+        if opaque_base_instances.len() != opaque_source_atom_indices.len()
+            || transparent_base_instances.len() != transparent_source_atom_indices.len()
+        {
+            return Err(crate::ipc::IpcError::render(
+                "phonon source map does not match the render buffers",
+            ));
+        }
+        if opaque_source_atom_indices
+            .iter()
+            .chain(transparent_source_atom_indices)
+            .any(|&source_atom_index| source_atom_index >= mode_displacements.len())
+        {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon source index has no mode displacement",
+            ));
+        }
+
+        let mut prepared_displacements = Vec::new();
+        prepared_displacements
+            .try_reserve_exact(mode_displacements.len())
+            .map_err(|_| crate::ipc::IpcError::render("unable to allocate phonon displacements"))?;
+        for displacement in mode_displacements {
+            let prepared = [
+                displacement[0] as f32,
+                displacement[1] as f32,
+                displacement[2] as f32,
+            ];
+            if !prepared.iter().all(|component| component.is_finite()) {
+                return Err(crate::ipc::IpcError::invalid_argument(
+                    "phonon displacement must be finite",
+                ));
+            }
+            prepared_displacements.push(prepared);
+        }
+
+        validate_phonon_display_envelope(
+            opaque_base_instances,
+            opaque_source_atom_indices,
+            &prepared_displacements,
+            1.0,
+        )?;
+        validate_phonon_display_envelope(
+            transparent_base_instances,
+            transparent_source_atom_indices,
+            &prepared_displacements,
+            1.0,
+        )?;
+
+        let mut opaque_display_instances = Vec::new();
+        opaque_display_instances
+            .try_reserve_exact(opaque_base_instances.len())
+            .map_err(|_| {
+                crate::ipc::IpcError::render("unable to allocate opaque phonon instances")
+            })?;
+        opaque_display_instances.extend_from_slice(opaque_base_instances);
+
+        let mut transparent_display_instances = Vec::new();
+        transparent_display_instances
+            .try_reserve_exact(transparent_base_instances.len())
+            .map_err(|_| {
+                crate::ipc::IpcError::render("unable to allocate transparent phonon instances")
+            })?;
+        transparent_display_instances.extend_from_slice(transparent_base_instances);
+
+        Ok(Self {
+            display_scale: 1.0,
+            dirty: true,
+            mode_displacements: prepared_displacements,
+            opaque_display_instances,
+            transparent_display_instances,
+            playback: PhononPlayback::new(std::f64::consts::TAU)?,
+            time_origin: Instant::now(),
+        })
+    }
 }
 
 pub(crate) struct AtomDragSession {
@@ -78,6 +281,7 @@ pub struct Renderer {
     transparent_atom_instances: Vec<AtomInstance>,
     opaque_source_atom_indices: Vec<usize>,
     transparent_source_atom_indices: Vec<usize>,
+    phonon_presentation: Option<PhononPresentation>,
     atom_drag: Option<AtomDragSession>,
     next_atom_drag_session: u64,
 
@@ -397,6 +601,7 @@ impl Renderer {
             transparent_atom_instances: Vec::new(),
             opaque_source_atom_indices: Vec::new(),
             transparent_source_atom_indices: Vec::new(),
+            phonon_presentation: None,
             atom_drag: None,
             next_atom_drag_session: 0,
             opaque_depth_texture,
@@ -489,6 +694,7 @@ impl Renderer {
         self.transparent_atom_instances = scene.transparent;
         self.opaque_source_atom_indices = scene.opaque_source_atom_indices;
         self.transparent_source_atom_indices = scene.transparent_source_atom_indices;
+        self.phonon_presentation = None;
         self.atom_drag = None;
         if let Some(buffer) = opaque_buffer {
             self.instance_buffer = buffer;
@@ -512,6 +718,7 @@ impl Renderer {
         self.transparent_atom_instances.clear();
         self.opaque_source_atom_indices.clear();
         self.transparent_source_atom_indices.clear();
+        self.phonon_presentation = None;
         self.atom_drag = None;
     }
 
@@ -524,6 +731,104 @@ impl Renderer {
         snapshot: &Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
     ) -> bool {
         Arc::ptr_eq(&self.atom_pick_data, snapshot)
+    }
+
+    pub fn set_phonon_mode(
+        &mut self,
+        mode: Option<&crate::phonon::PhononMode>,
+    ) -> crate::ipc::IpcResult<()> {
+        if self.atom_drag.is_some() {
+            return Err(crate::ipc::IpcError::busy(
+                "cannot change phonon mode during an atom drag",
+            ));
+        }
+
+        self.phonon_presentation = match mode {
+            Some(mode) => Some(PhononPresentation::new(
+                &self.opaque_atom_instances,
+                &self.transparent_atom_instances,
+                &self.opaque_source_atom_indices,
+                &self.transparent_source_atom_indices,
+                &mode.eigenvectors,
+            )?),
+            None => None,
+        };
+        self.restore_phonon_base_instances();
+        Ok(())
+    }
+
+    pub fn set_phonon_phase(
+        &mut self,
+        phase: f64,
+        display_scale: f64,
+    ) -> crate::ipc::IpcResult<()> {
+        if !phase.is_finite() || !display_scale.is_finite() {
+            return Err(crate::ipc::IpcError::invalid_argument(
+                "phonon phase and display scale must be finite",
+            ));
+        }
+
+        if let Some(presentation) = &mut self.phonon_presentation {
+            validate_phonon_display_envelope(
+                &self.opaque_atom_instances,
+                &self.opaque_source_atom_indices,
+                &presentation.mode_displacements,
+                display_scale,
+            )?;
+            validate_phonon_display_envelope(
+                &self.transparent_atom_instances,
+                &self.transparent_source_atom_indices,
+                &presentation.mode_displacements,
+                display_scale,
+            )?;
+            let now = presentation.time_origin.elapsed().as_secs_f64();
+            presentation.playback.seek(phase, now)?;
+            presentation.display_scale = display_scale;
+            presentation.dirty = true;
+        }
+        Ok(())
+    }
+
+    pub fn set_phonon_playing(&mut self, playing: bool) -> crate::ipc::IpcResult<()> {
+        let Some(presentation) = &mut self.phonon_presentation else {
+            if playing {
+                return Err(crate::ipc::IpcError::invalid_argument(
+                    "select a phonon mode before starting playback",
+                ));
+            }
+            return Ok(());
+        };
+        let now = presentation.time_origin.elapsed().as_secs_f64();
+        if playing {
+            presentation.playback.start(now)?;
+        } else {
+            presentation.playback.stop(now)?;
+        }
+        presentation.dirty = true;
+        Ok(())
+    }
+
+    pub fn phonon_is_playing(&self) -> bool {
+        self.phonon_presentation
+            .as_ref()
+            .is_some_and(|presentation| presentation.playback.is_playing())
+    }
+
+    fn restore_phonon_base_instances(&mut self) {
+        if self.instance_count > 0 {
+            upload_atom_instances(
+                &self.gpu.queue,
+                &self.instance_buffer,
+                &self.opaque_atom_instances,
+            );
+        }
+        if self.transparent_instance_count > 0 {
+            upload_atom_instances(
+                &self.gpu.queue,
+                &self.transparent_instance_buffer,
+                &self.transparent_atom_instances,
+            );
+        }
     }
 
     pub(crate) fn begin_atom_drag(
@@ -827,6 +1132,50 @@ impl Renderer {
             self.gpu.queue.submit(std::iter::once(encoder.finish()));
             output.present();
             return Ok(());
+        }
+
+        if let Some(presentation) = &mut self.phonon_presentation {
+            if presentation.dirty || presentation.playback.is_playing() {
+                let now = presentation.time_origin.elapsed().as_secs_f64();
+                let frame_result = presentation.playback.phase_at(now).and_then(|phase| {
+                    apply_phonon_frame(
+                        &self.opaque_atom_instances,
+                        &self.opaque_source_atom_indices,
+                        &presentation.mode_displacements,
+                        phase,
+                        presentation.display_scale,
+                        &mut presentation.opaque_display_instances,
+                    )?;
+                    apply_phonon_frame(
+                        &self.transparent_atom_instances,
+                        &self.transparent_source_atom_indices,
+                        &presentation.mode_displacements,
+                        phase,
+                        presentation.display_scale,
+                        &mut presentation.transparent_display_instances,
+                    )
+                });
+
+                match frame_result {
+                    Ok(()) => {
+                        upload_atom_instances(
+                            &self.gpu.queue,
+                            &self.instance_buffer,
+                            &presentation.opaque_display_instances,
+                        );
+                        upload_atom_instances(
+                            &self.gpu.queue,
+                            &self.transparent_instance_buffer,
+                            &presentation.transparent_display_instances,
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!("phonon presentation frame rejected: {error:?}");
+                        presentation.playback.halt();
+                    }
+                }
+                presentation.dirty = false;
+            }
         }
 
         // ═══ Normal crystal rendering path ═══════════════════════════════
