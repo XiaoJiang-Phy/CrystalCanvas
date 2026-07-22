@@ -159,7 +159,8 @@ test('UI-2F preserves the fixed LLM command schemas and browser mutation failure
     assert.match(generated_commands, /llm_chat:\s*'external_io'/);
     assert.match(generated_commands, /llm_configure:\s*'external_io'/);
     assert.match(generated_commands, /llm_execute_command:\s*'committed_mutation'/);
-    assert.match(tauri_mock, /if \(IPC_COMMAND_CLASSIFICATION\[cmd\] === 'read'\) return undefined;/);
+    assert.doesNotMatch(tauri_mock, /IPC_COMMAND_CLASSIFICATION\[[^\]]+\]\s*===\s*'read'\)\s*return\s+undefined;/,
+        'browser read commands must not silently resolve undefined; IPC-3B supplies validator-approved fixtures');
     assert.match(tauri_mock, /throw new IpcException\(\{[\s\S]*?code:\s*'not_in_tauri',[\s\S]*?recoverable:\s*false,/,
         'browser LLM mutations must reject with a typed not_in_tauri error instead of resolving as success');
 });
