@@ -5,6 +5,13 @@
 # ----- Internal project docs (not for GitHub) -----
 # Roadmap, design docs, TDD, knowledge base
 doc/
+# PERF-1B audit evidence is the narrow tracked exception.
+!doc/
+doc/*
+!doc/DECISION_LOG.md
+!doc/v0.6.2_performance_report.md
+!doc/v0.6.2_visualization_perf_report.json
+!doc/v0.6.2_visualization_perf_run_context.json
 .env
 .env.*
 
@@ -12,6 +19,8 @@ doc/
 /target/
 **/*.rs.bk
 Cargo.lock
+# The benchmarked Tauri application lockfile is a reproducibility input.
+!/src-tauri/Cargo.lock
 
 # ----- C++ Build Artifacts -----
 /build/
@@ -78,6 +87,8 @@ Thumbs.db
 
 # ----- Logs and Temp Files -----
 *.log
+# Authorized scientific exceptions must survive workspace cleanup.
+!/EVOLUTION.log
 /tmp/
 
 # ----- AI Agent Rules and Docs -----

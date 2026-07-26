@@ -1,0 +1,11 @@
+# Known Exceptions
+
+## 2026-07-26 — PERF-1A performance-only synthetic fixtures
+
+- **Authorized by**: user
+- **Scope**: Execute only commit `1f0d97d1df17086a289bbae7ce67d211de9c7977` with the four PERF-1A synthetic fixtures (500, 1,000, 5,000, and 10,000 intrinsic atoms) for software performance measurement.
+- **Evidence condition**: The fixtures are explicitly `performance_only`; the recorded minimum spacing is `0.8 Å`. The available `sci-validator` path is `NOT_AUDITABLE` because these generated fixtures do not provide a registered canonical-structure artifact and executor result.
+- **Risk and impact**: The synthetic non-physical spacing and scene distribution can differ from real structures. Results apply only to this fixed software workload. They must not support claims about physical structures, distances, material properties, or scientific conclusions.
+- **Authorization boundary**: This exception permits the benchmark execution only. It does not convert the preflight result to PASS and does not authorize physical-model changes or numerical conclusions.
+- **Authorized execution**: `2026-07-26T02:09:35Z` through `2026-07-26T02:09:54Z` on commit `1f0d97d1df17086a289bbae7ce67d211de9c7977`.
+- **Bound evidence**: raw report SHA-256 `ae703f06ba1d95ca8a81d0b7cbceccf448d282bd67066adbe7cc6f9713a5c5b4`; run-context SHA-256 `604d7a40d40c4dc052a0f7c14f0f5a191718c8a28469912c724aafd690edc44b`; Cargo lock SHA-256 `dc43c7bb1b37e56c7c90b130e7352ba4177c7b12ac681cbc340ea033effed728`; benchmark binary SHA-256 `5695312ff325d11cb28c5b838214831bd34661f2bcf8b1b4f426a177de3636e5`.
