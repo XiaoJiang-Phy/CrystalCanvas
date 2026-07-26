@@ -12,7 +12,7 @@
     "check:ipc": "node scripts/generate-ipc-commands.mjs --check && node scripts/check-ipc-contract.mjs",
     "generate:ipc": "node scripts/generate-ipc-commands.mjs",
     "ipc:inventory": "node scripts/ipc-inventory.mjs",
-    "test:ipc": "node --test scripts/*.test.mjs",
+    "test:ipc": "node --test scripts/ipc-inventory.test.mjs scripts/ipc-contract-runtime.test.mjs scripts/browser-ipc-policy.test.mjs scripts/event-lifecycle.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
