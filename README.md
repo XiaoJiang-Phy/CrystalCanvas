@@ -10,9 +10,9 @@ CrystalCanvas is a research-oriented visualization application built with Rust, 
 
 The project does not aim to become a general electronic-structure solver, workflow manager, database browser, or AI research platform. DFT, DFPT, Wannier, EPC, transport, superconductivity, and many-body calculations remain in specialized external codes. CrystalCanvas focuses on the part ordinary two-dimensional plotting tools handle poorly: structure-aware three-dimensional scientific visualization.
 
-> **Latest release**: `v0.6.1`
+> **Latest release**: `v0.6.2`
 >
-> **Current development line**: `v0.6.2` release candidate (REL-2 closure pending)
+> **Current development line**: `v0.7.0` publication-rendering core
 >
 > **Primary platform**: macOS Intel and Apple Silicon
 
@@ -20,7 +20,7 @@ The project does not aim to become a general electronic-structure solver, workfl
 
 ## Download
 
-[![Download for macOS](https://img.shields.io/badge/Download_v0.6.1-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
+[![Download for macOS](https://img.shields.io/badge/Download_v0.6.2-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
 
 > [!WARNING]
 > The application is not signed with a paid Apple Developer certificate. If macOS blocks the first launch, move `CrystalCanvas.app` to `/Applications`, right-click it, choose **Open**, and confirm once more.

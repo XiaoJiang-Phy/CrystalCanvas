@@ -9,3 +9,12 @@
 - **Authorization boundary**: This exception permits the benchmark execution only. It does not convert the preflight result to PASS and does not authorize physical-model changes or numerical conclusions.
 - **Authorized execution**: `2026-07-26T02:09:35Z` through `2026-07-26T02:09:54Z` on commit `1f0d97d1df17086a289bbae7ce67d211de9c7977`.
 - **Bound evidence**: raw report SHA-256 `ae703f06ba1d95ca8a81d0b7cbceccf448d282bd67066adbe7cc6f9713a5c5b4`; run-context SHA-256 `604d7a40d40c4dc052a0f7c14f0f5a191718c8a28469912c724aafd690edc44b`; Cargo lock SHA-256 `dc43c7bb1b37e56c7c90b130e7352ba4177c7b12ac681cbc340ea033effed728`; benchmark binary SHA-256 `5695312ff325d11cb28c5b838214831bd34661f2bcf8b1b4f426a177de3636e5`.
+
+## 2026-07-26 — v0.6.2 direct release
+
+- **Authorized by**: user
+- **Scope**: Promote the synchronized `v0.6.2` application version and documentation in one release operation, without requiring the extended REL-2 Auditor/physical-test/desktop-matrix closure.
+- **Available evidence**: `cargo check --offline`, frozen frontend installation, IPC inventory and contracts, 35 scoped IPC/browser/event tests, TypeScript validation, frontend production build, and retained PERF-1A/PERF-1B evidence passed on the recorded candidate lineage.
+- **Unrun checks**: full `cargo test`, C++ `ctest`, native Intel desktop smoke, Apple Silicon / Metal execution, and Ubuntu / Vulkan execution.
+- **Risk and impact**: the release can contain regressions that only the unrun physical or platform-specific checks would detect. Performance evidence remains limited to the authorized synthetic software workload and cannot support physical or scientific conclusions.
+- **Authorization boundary**: this exception authorizes the `v0.6.2` release and public tracking of its release/architecture evidence. It does not convert unrun checks to PASS or waive physics safety for future calculations.

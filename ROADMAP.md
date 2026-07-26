@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-07-26 | Latest release: `v0.6.1` | Primary target: macOS / Metal
+> Updated 2026-07-26 | Latest release: `v0.6.2` | Primary target: macOS / Metal
 
 ## Product Direction
 
@@ -27,19 +27,9 @@ The project does not plan to become a DFT, EPC, transport, superconductivity, TC
 | `v0.5.0` | 2026-04-11 | Wannier hopping visualization and toolbar redesign |
 | `v0.6.0` | 2026-04-14 | measurement, undo/redo, partial occupancy, modular commands and panels |
 | `v0.6.1` | 2026-07-18 | verified IPC contracts, intrinsic-only state, atomic transactions, physical input gates, single versioned snapshot refresh |
+| `v0.6.2` | 2026-07-26 | compact workbench, closed-by-default Assistant, renderer-owned interaction updates, lifecycle hardening, and recorded performance baselines |
 
 ## Planned Releases
-
-### `v0.6.2` — Scientific Workbench Hardening
-
-- finish the compact opaque desktop workbench and remaining density corrections;
-- make the experimental Assistant closed by default and freeze further product expansion;
-- coalesce atom dragging into renderer previews plus one committed mutation;
-- move phonon phase updates out of per-frame React-to-Tauri IPC;
-- close native event and browser-mock lifecycle gaps;
-- measure 500–10,000 atom interaction and rendering behavior before introducing complex performance protocols.
-
-This version does not add new scientific domains. Its release remains blocked until the REL-2 evidence and platform gates close.
 
 ### `v0.7.0` — Publication Rendering Core
 

@@ -46,6 +46,9 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: validate release metadata
+        run: node --test scripts/release-closure.test.mjs
+
       - name: extract changelog
         id: extract_changelog
         shell: bash

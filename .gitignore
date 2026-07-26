@@ -2,10 +2,9 @@
 # CrystalCanvas .gitignore
 # ===========================
 
-# ----- Internal project docs (not for GitHub) -----
-# Roadmap, design docs, TDD, knowledge base
+# ----- Internal project docs -----
+# Release architecture and evidence files below are explicit tracked exceptions.
 doc/
-# PERF-1B audit evidence is the narrow tracked exception.
 !doc/
 doc/*
 !doc/DECISION_LOG.md
