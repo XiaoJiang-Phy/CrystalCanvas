@@ -47,6 +47,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+sha2 = "0.10"
 tempfile = "3.10"
 
 [[bench]]
@@ -63,6 +64,10 @@ path = "bin/render_demo.rs"
 
 [[bench]]
 name = "bench_volumetric"
+harness = false
+
+[[bench]]
+name = "bench_visualization"
 harness = false
 
 [[test]]

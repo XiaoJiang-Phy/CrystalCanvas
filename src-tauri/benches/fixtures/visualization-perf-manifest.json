@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "performance_only": true,
+  "generator": {
+    "kind": "deterministic_fractional_grid",
+    "seed": 20260602
+  },
+  "datasets": [
+    {
+      "id": "visualization-500",
+      "performance_only": true,
+      "intrinsic_atoms": 500,
+      "grid_dimensions": [10, 10, 5],
+      "lattice_angstrom": [8.0, 8.0, 4.0],
+      "minimum_distance_angstrom": 0.8,
+      "sha256": "5dae2a95ce010ae0468fffd856b2347c30591ec6067539b636aa309037debd79"
+    },
+    {
+      "id": "visualization-1000",
+      "performance_only": true,
+      "intrinsic_atoms": 1000,
+      "grid_dimensions": [10, 10, 10],
+      "lattice_angstrom": [8.0, 8.0, 8.0],
+      "minimum_distance_angstrom": 0.8,
+      "sha256": "ac90e17ae42362946ced6ea6a6a0122e0d9cfd5d287bea651983c1d0f1ef5fbb"
+    },
+    {
+      "id": "visualization-5000",
+      "performance_only": true,
+      "intrinsic_atoms": 5000,
+      "grid_dimensions": [20, 25, 10],
+      "lattice_angstrom": [16.0, 20.0, 8.0],
+      "minimum_distance_angstrom": 0.8,
+      "sha256": "361638f3741366b3d1a72c475b21db5f77597678cd6f9a832f961a89c2a71dd2"
+    },
+    {
+      "id": "visualization-10000",
+      "performance_only": true,
+      "intrinsic_atoms": 10000,
+      "grid_dimensions": [25, 20, 20],
+      "lattice_angstrom": [20.0, 16.0, 16.0],
+      "minimum_distance_angstrom": 0.8,
+      "sha256": "572e0eae995da67f69d8fcc53a45d902e67688793f6cbc2e925ad2fa7b230688"
+    }
+  ]
+}

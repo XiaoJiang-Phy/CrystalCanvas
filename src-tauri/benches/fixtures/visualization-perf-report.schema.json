@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "required_context": [
+    "commit",
+    "worktree_clean",
+    "release_build",
+    "os",
+    "cpu",
+    "gpu",
+    "architecture",
+    "viewport",
+    "power_state",
+    "warmup_iterations",
+    "measurement_iterations"
+  ],
+  "required_summary_statistics": ["median", "p95", "max"],
+  "required_diagnostics": [
+    "per_frame_frontend_ipc",
+    "per_frame_frontend_ipc_evidence",
+    "production_instrumentation_default"
+  ],
+  "unavailable_metric_status": "NOT_AVAILABLE",
+  "same_state_version_required": true,
+  "production_instrumentation_default": "disabled"
+}
