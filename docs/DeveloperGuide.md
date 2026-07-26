@@ -1,6 +1,6 @@
 # CrystalCanvas Developer Guide
 
-> Baseline: `v0.6.2` | Updated: 2026-07-26
+> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
 
 CrystalCanvas is a visualization-first desktop application. It turns supplied crystal structures and three-dimensional scientific data into interactive real-space or reciprocal-space scenes and reproducible figures. It does not solve electronic-structure, EPC, transport, superconductivity, TCI, or workflow problems.
 
@@ -149,7 +149,11 @@ The renderer currently presents:
 
 An interaction preview may update only temporary renderer state. It must not allocate a committed version, write an undo entry, or request a full frontend snapshot. A later commit performs one complete validation and one transaction.
 
-High-fidelity publication rendering is a future offscreen/export path. It must remain separable from the low-cost interactive viewport.
+Atom movement follows this boundary through one `begin_atom_drag` session, coalesced renderer-only `update_atom_drag` previews, and exactly one `commit_atom_drag` or `cancel_atom_drag` terminal operation. A successful commit validates the source version and creates one structural mutation; preview deltas do not create snapshots or undo entries.
+
+Phonon playback phase is renderer-owned. React sends explicit play/pause, display-scale, and reset operations, but it does not run a per-frame phonon IPC loop or rebuild the complete Cartesian scene for every frame.
+
+The `v0.7.0` development line owns the separate high-fidelity publication-rendering path. It must remain separable from the low-cost interactive viewport.
 
 ### Prepared atom scenes
 

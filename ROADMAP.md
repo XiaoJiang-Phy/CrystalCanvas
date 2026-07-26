@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-07-26 | Latest release: `v0.6.2` | Primary target: macOS / Metal
+> Updated 2026-07-26 | Latest release: `v0.6.2` | Current development: `v0.7.0` | Primary target: macOS / Metal
 
 ## Product Direction
 

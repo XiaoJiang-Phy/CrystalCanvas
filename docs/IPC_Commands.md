@@ -1,6 +1,6 @@
 # CrystalCanvas IPC Contract Reference
 
-> Baseline: `v0.6.2` | Updated: 2026-07-26
+> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
 
 This document describes the reviewed Rust/TypeScript IPC boundary. The machine-checked sources of truth are [ipc/inventory.json](../ipc/inventory.json), [src/ipc/commands.generated.ts](../src/ipc/commands.generated.ts), and [src/ipc/contracts.ts](../src/ipc/contracts.ts). After you change a command, event, or wire type, run `npm run ipc:inventory` and `npm run check:ipc`.
 
@@ -82,7 +82,11 @@ The argument column below is the frontend TypeScript wire shape. `—` means no 
 | `load_cif_file` | `{ path }` | `null` | unified structure-loader entry despite the historical name |
 | `add_atom` | `{ elementSymbol, atomicNumber, fractPos }` | `null` | fractional position triplet; committed structural mutation |
 | `delete_atoms` | `{ indices }` | `null` | intrinsic indices only |
-| `translate_atoms_screen` | `{ indices, dx, dy }` | `null` | existing committed translation command; drag-session replacement is future work |
+| `translate_atoms_screen` | `{ indices, dx, dy }` | `null` | retained direct committed translation command; interactive pointer dragging uses the session commands below |
+| `begin_atom_drag` | `{ indices }` | `string` | starts one renderer preview session bound to the current structural version |
+| `update_atom_drag` | `{ sessionId, dx, dy }` | `null` | coalesced renderer-only preview; no version, undo entry, or snapshot refresh |
+| `commit_atom_drag` | `{ sessionId }` | `null` | validates and commits the prepared displacement exactly once |
+| `cancel_atom_drag` | `{ sessionId }` | `null` | discards the preview and restores the committed scene |
 | `substitute_atoms` | `{ indices, newElementSymbol, newAtomicNumber }` | `null` | committed structural mutation |
 | `update_lattice_params` | `{ a, b, c, alpha, beta, gamma }` | `null` | finite validated lattice parameters |
 | `update_selection` | `{ indices }` | `null` | selection/presentation update |
@@ -120,7 +124,9 @@ The argument column below is the frontend TypeScript wire shape. `—` means no 
 | `load_phonon_interactive` | `{ scfIn, scfOut, modes }` | `PhononModeSummary[]` | coordinated Quantum ESPRESSO-style sources |
 | `load_axsf_phonon` | `{ path }` | `PhononModeSummary[]` | structure/mode import from AXSF |
 | `set_phonon_mode` | `{ modeIndex? }` | `null` | `null` clears active mode |
-| `set_phonon_phase` | `{ phase, amplitude? }` | `null` | renderer presentation; no version or undo record |
+| `set_phonon_playing` | `{ playing }` | `null` | starts or stops renderer-owned playback |
+| `set_phonon_display_scale` | `{ displayScale }` | `null` | changes amplitude without changing renderer-owned phase |
+| `set_phonon_phase` | `{ phase, amplitude? }` | `null` | explicit renderer reset/update; not a frontend per-frame loop |
 
 ### Volumetric rendering
 
@@ -202,7 +208,7 @@ const measurement = await safeInvoke('add_measurement', { indices: [0, 1] });
 
 `preview_supercell` accepts the contract's flat nine-value `expansion` and returns a non-committed `CrystalState` preview. Its low-level consumer is column-major. `apply_supercell` accepts a nested 3×3 `matrix`, adapts it at the command boundary, and commits through the transaction path. Do not substitute one public shape for the other or transpose values speculatively in a caller.
 
-`set_phonon_phase` is the existing high-frequency animation path. Its per-frame IPC behavior is intentionally retained until the dedicated interaction-animation work replaces it; it is not a structural commit and must not create undo entries or versions.
+Phonon playback advances inside the renderer after one `set_phonon_playing` command. React does not issue `set_phonon_phase` on every frame. Play/pause, display-scale, and explicit phase reset remain presentation operations and do not create structural versions, undo entries, or complete snapshot refreshes.
 
 ### Structured error handling
 

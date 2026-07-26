@@ -1,6 +1,6 @@
 # CrystalCanvas Testing and TDD Guide
 
-> Baseline: `v0.6.2` | Updated: 2026-07-26
+> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
 
 CrystalCanvas uses small, independently gated development Nodes. A passing software test establishes only its stated contract. It does not prove that a scientific model, convergence setting, or imported dataset is physically correct.
 
@@ -86,7 +86,7 @@ cmake -S cpp/tests -B cpp/tests/build
 source dev_env.sh && cargo test --no-fail-fast --manifest-path src-tauri/Cargo.toml
 ```
 
-Notable v0.6.1 regression families include:
+Notable retained regression families include:
 
 - `test_phys_1a_input_gate.rs`, `test_phys_1b_structural_invariants.rs`, and the PHYS-1C atomicity tests;
 - `test_sync_1c_tauri_smoke.rs` for versioned snapshot synchronization;
@@ -104,7 +104,7 @@ Use `--no-fail-fast` for the final Rust gate. This option keeps independent fail
 
 ### TypeScript, IPC, and UI contract gates
 
-The repository has source-level Node gates, not an unconfigured frontend test backlog. The current suite contains 96 `node:test` cases across IPC inventory, runtime contracts, state refresh, and UI contracts.
+The repository has source-level Node gates, not an unconfigured frontend test backlog. The gates cover IPC inventory and runtime contracts, state refresh, browser mutation policy, native event lifecycle, the compact workbench, Assistant lifecycle, atom-drag sessions, renderer-owned phonon playback, performance evidence, and release metadata.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -115,14 +115,25 @@ npm run test:ipc
 pnpm run build
 ```
 
-These gates check, among other things:
+The standard IPC commands above check, among other things:
 
 - Rust command/event inventory against TypeScript contracts;
 - camelCase frontend arguments and snake_case Rust parameters;
-- `state_changed { version }` ownership and complete snapshot refresh;
-- listener lifecycle and Tauri/browser-mock boundaries;
-- UI-1 structure workspace, tool rail, panel, accessibility, and error-surface contracts; and
-- lazy panel boundaries and the currently retained phonon frame path.
+- structured DTO/error validation and lock-order contracts;
+- listener lifecycle and Tauri/browser-mock boundaries; and
+- browser mutation rejection and native listener cleanup.
+
+Run the v0.6.2 interaction and workbench gates when those surfaces change:
+
+```bash
+node --test scripts/ui-contract.test.mjs scripts/ui-assistant.test.mjs
+node --test scripts/interaction-contract.test.mjs scripts/phonon-interaction.test.mjs
+node --test scripts/release-closure.test.mjs
+```
+
+The UI and interaction gates additionally cover the single versioned snapshot owner, compact workspace, lazy panels, accessibility/error surfaces, closed Assistant lifecycle, drag-session terminal ownership, and renderer-owned phonon playback.
+
+The performance contract and retained decision use dedicated scripts. The dynamic benchmark probe is an explicitly authorized, synthetic software workload; it is not physical or scientific evidence. Follow the recorded run context before executing it.
 
 Source-level UI gates complement, but do not replace, desktop verification of native menus, GPU rendering, pointer interaction, and file dialogs.
 
@@ -134,6 +145,14 @@ Source-level UI gates complement, but do not replace, desktop verification of na
 | `sync-1b-no-explicit-refetch.test.mjs` | prevents panels from creating full snapshot refreshes |
 | `sync-1c-single-refresh.test.mjs` | unique owner and duplicate-version coalescing |
 | `ui-contract.test.mjs` | UI-1 surfaces, shared primitives, lifecycle, accessibility, and regressions |
+| `ui-assistant.test.mjs` | closed-by-default Assistant lifecycle and product boundary |
+| `interaction-contract.test.mjs` | drag-session ownership, coalescing, cancellation, and single commit |
+| `phonon-interaction.test.mjs` | renderer-owned playback and absence of frontend per-frame phase IPC |
+| `event-lifecycle.test.mjs` | canonical native file-drop registration and cleanup |
+| `browser-ipc-policy.test.mjs` | typed browser mutation rejection and absence of mock state ownership |
+| `perf-benchmark.test.mjs` | synthetic performance-fixture and report contracts |
+| `perf-decision.test.mjs` | retained architecture decision bound to measured evidence |
+| `release-closure.test.mjs` | synchronized release versions, documentation, workflow, and exception metadata |
 
 Run one source-level suite directly when iterating:
 

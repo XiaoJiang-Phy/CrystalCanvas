@@ -1,6 +1,6 @@
 # CrystalCanvas Algorithms and Implementation Notes
 
-> Baseline: `v0.6.2` | Updated: 2026-07-26
+> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
 
 This document connects the current visualization and geometry algorithms to their implementation and regression gates. It guides contributors who change existing behavior. It is not a validation report for a material, calculation, or source file.
 
@@ -181,7 +181,7 @@ Distance, angle, and dihedral overlays reference two, three, or four intrinsic i
 
 **Implementation**: `src-tauri/src/phonon.rs`, `src-tauri/src/wannier.rs`, and their command/panel modules
 
-Phonon loaders verify that the supplied mode atom count matches the accepted intrinsic structure. Selecting a mode and changing its phase update renderer presentation coordinates; they do not replace the baseline Cartesian coordinates, create a structural version, or add an undo record. The current frontend per-frame IPC path remains until the dedicated animation node replaces it.
+Phonon loaders verify that the supplied mode atom count matches the accepted intrinsic structure. Selecting a mode configures renderer presentation data. Playback time and phase then advance inside the renderer; React sends explicit play/pause, display-scale, and reset operations instead of per-frame phase IPC. These operations do not replace baseline Cartesian coordinates, create a structural version, add an undo record, or request complete frontend snapshots.
 
 Wannier hopping networks are parsed from `wannier90_hr.dat`, validated for finite values and valid orbital/shell mappings, then filtered by orbital, lattice shell, magnitude, onsite visibility, and master visibility. Neighbor-cell endpoints may require renderer ghost atoms or lines. Those ghosts must remain outside `CrystalState`, snapshots, atom tables, selection counts, and exported structures.
 
