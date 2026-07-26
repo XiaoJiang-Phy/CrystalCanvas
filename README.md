@@ -91,9 +91,10 @@ Quantitative scalar colors must remain interpretable. Lighting and ambient occlu
 
 ## Roadmap
 
+`v0.6.2` is released. Its workbench hardening, renderer-owned interaction updates, lifecycle gates, and retained performance evidence are recorded in the [release notes](CHANGELOG.md#062---2026-07-26).
+
 | Version | Theme | Scope |
 |---|---|---|
-| `v0.6.2` | Scientific Workbench Hardening | delivered the compact desktop workbench, coalesced atom dragging, renderer-driven phonon animation, event lifecycle gates, and evidence-based performance baselines |
 | `v0.7.0` | Publication Rendering Core | add a separate high-fidelity export path with reproducible cameras and materials, advanced lighting, transparent backgrounds, antialiasing, and tiled 4K/8K output |
 | `v0.8.0` | Advanced Volumetric and Field Figures | compose multiple scalar-field layers with signed isosurfaces, slices, contours, clipping, transfer functions, correct transparency, quantitative colorbars, and units |
 | `v0.9.0` | Reciprocal Space and Fermi Surfaces | visualize Fermi-surface sheets, Brillouin-zone clipping, cutting planes, isoenergy surfaces, and imported reciprocal-space quantities such as velocity, lifetime, EPC strength, spectral weight, or superconducting gap |
