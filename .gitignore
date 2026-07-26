@@ -15,6 +15,9 @@ doc/*
 !doc/v0.6.2_visualization_perf_report.json
 !doc/v0.6.2_visualization_perf_run_context.json
 !doc/v0.6.2_release_evidence.json
+!doc/v0.6.2_release_audit.md
+!doc/v0.6.2_release_runs/
+!doc/v0.6.2_release_runs/**
 .env
 .env.*
 
