@@ -1,6 +1,6 @@
 # CrystalCanvas GPU Shader Reference
 
-> Baseline: `v0.6.1` | Updated: 2026-07-20
+> Baseline: `v0.6.2` | Updated: 2026-07-26
 
 CrystalCanvas uses WGSL exclusively. This reference maps each current shader to its Rust pipeline, buffers, entry points, and validation responsibilities. Shader code consumes prepared presentation data. It never owns crystal state or defines the scientific meaning of an imported field.
 

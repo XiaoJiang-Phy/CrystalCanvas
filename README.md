@@ -12,7 +12,7 @@ The project does not aim to become a general electronic-structure solver, workfl
 
 > **Latest release**: `v0.6.1`
 >
-> **Current development line**: `v0.6.2` scientific-workbench and interaction hardening
+> **Current development line**: `v0.6.2` release candidate (REL-2 closure pending)
 >
 > **Primary platform**: macOS Intel and Apple Silicon
 

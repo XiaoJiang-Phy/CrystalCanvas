@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+This section describes the v0.6.2 release candidate. REL-2 closure remains pending.
+
+### Changed
+
+- **Scientific Workbench**: Replaced persistent glass-like chrome with compact opaque desktop surfaces and retained the existing Rust-owned snapshot boundary.
+- **Constrained Assistant**: The legacy Assistant is closed by default, unmounted while closed, and remains limited to explicit preview and manual execution.
+- **Interaction Ownership**: Atom dragging now uses renderer-owned previews and one validated commit. Phonon phase updates remain renderer-owned and avoid per-frame frontend IPC.
+- **Lifecycle Policy**: Native file-drop listeners have canonical ownership and browser mutations reject with typed not_in_tauri errors.
+
+### Fixed
+
+- Bound pointer capture, cancellation, and delayed preview/commit paths to one drag session owner.
+- Prevented repeated event listeners and duplicate state-loading paths across native lifecycle cleanup.
+
+### Validation
+
+- Added independent UI, interaction, phonon, event-lifecycle, browser-policy, visualization-performance, performance-decision, and REL-2 closure gates.
+- Recorded the four-dataset performance baseline and the retain-current-architecture decision without inventing a performance budget.
+
 ## [0.6.1] - 2026-07-18
 
 ### Changed

@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-07-18 | Latest release: `v0.6.1` | Primary target: macOS / Metal
+> Updated 2026-07-26 | Latest release: `v0.6.1` | Primary target: macOS / Metal
 
 ## Product Direction
 
@@ -39,7 +39,7 @@ The project does not plan to become a DFT, EPC, transport, superconductivity, TC
 - close native event and browser-mock lifecycle gaps;
 - measure 500–10,000 atom interaction and rendering behavior before introducing complex performance protocols.
 
-This version does not add new scientific domains. It prepares a stable visualization platform for later rendering work.
+This version does not add new scientific domains. Its release remains blocked until the REL-2 evidence and platform gates close.
 
 ### `v0.7.0` — Publication Rendering Core
 

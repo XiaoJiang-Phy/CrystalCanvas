@@ -1,6 +1,6 @@
 # CrystalCanvas Testing and TDD Guide
 
-> Baseline: `v0.6.1` | Updated: 2026-07-20
+> Baseline: `v0.6.2` | Updated: 2026-07-26
 
 CrystalCanvas uses small, independently gated development Nodes. A passing software test establishes only its stated contract. It does not prove that a scientific model, convergence setting, or imported dataset is physically correct.
 

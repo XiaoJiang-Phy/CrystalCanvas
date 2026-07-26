@@ -1,6 +1,6 @@
 # CrystalCanvas User Manual
 
-> Baseline: `v0.6.1` | Updated: 2026-07-20
+> Baseline: `v0.6.2` | Updated: 2026-07-26
 
 CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes. It does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
 

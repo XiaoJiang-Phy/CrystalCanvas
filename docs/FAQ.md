@@ -1,6 +1,6 @@
 # CrystalCanvas FAQ and Troubleshooting
 
-> Baseline: `v0.6.1` | Updated: 2026-07-20
+> Baseline: `v0.6.2` | Updated: 2026-07-26
 
 ---
 

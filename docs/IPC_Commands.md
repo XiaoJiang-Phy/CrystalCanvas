@@ -1,6 +1,6 @@
 # CrystalCanvas IPC Contract Reference
 
-> Baseline: `v0.6.1` | Updated: 2026-07-20
+> Baseline: `v0.6.2` | Updated: 2026-07-26
 
 This document describes the reviewed Rust/TypeScript IPC boundary. The machine-checked sources of truth are [ipc/inventory.json](../ipc/inventory.json), [src/ipc/commands.generated.ts](../src/ipc/commands.generated.ts), and [src/ipc/contracts.ts](../src/ipc/contracts.ts). After you change a command, event, or wire type, run `npm run ipc:inventory` and `npm run check:ipc`.
 

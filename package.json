@@ -1,6 +1,6 @@
 {
   "name": "crystal-canvas",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "GPU-accelerated scientific visualization for crystal structures, volumetric fields, phonons, Wannier models, and reciprocal space",
   "author": "Xiao Jiang and CrystalCanvas Contributors",
   "license": "MIT OR Apache-2.0",
