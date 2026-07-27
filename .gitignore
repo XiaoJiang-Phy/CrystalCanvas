@@ -4,6 +4,7 @@
 
 # ----- Internal project docs (not for GitHub) -----
 # Roadmap, design docs, overview, and env config
+doc/
 roadmap.md
 Overview.md
 docs/
