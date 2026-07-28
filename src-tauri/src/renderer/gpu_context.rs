@@ -6,7 +6,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
 use wgpu;
 
-use super::render_config::RenderConfig;
+use super::render_config::{PUBLICATION_MSAA_FEATURE, RenderConfig};
 
 /// Holds all wgpu GPU resources needed for rendering.
 /// Created once at startup, lives for the application lifetime.
@@ -53,9 +53,6 @@ impl GpuContext {
         }))
         .expect("Failed to find a suitable GPU adapter");
 
-        // Log device capabilities
-        let render_config = RenderConfig::from_adapter(&adapter);
-
         // Request device with default limits (sufficient for ≤1K atoms)
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -76,6 +73,19 @@ impl GpuContext {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+        let publication_msaa_x4 = adapter
+            .get_texture_format_features(surface_format)
+            .flags
+            .contains(PUBLICATION_MSAA_FEATURE)
+            && adapter
+                .get_texture_format_features(wgpu::TextureFormat::Depth32Float)
+                .flags
+                .contains(PUBLICATION_MSAA_FEATURE);
+        let render_config = RenderConfig::from_adapter_and_device(
+            &adapter,
+            &device,
+            publication_msaa_x4,
+        );
 
         let alpha_mode = if surface_caps
             .alpha_modes

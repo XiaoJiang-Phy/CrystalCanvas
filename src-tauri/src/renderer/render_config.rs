@@ -4,8 +4,12 @@
 
 use wgpu;
 
-/// Runtime GPU configuration captured from the adapter at initialization.
-/// Used to log device capabilities and enforce feature constraints.
+const PUBLICATION_SAMPLE_FALLBACK: [u32; 2] = [4, 1];
+pub const PUBLICATION_MSAA_FEATURE: wgpu::TextureFormatFeatureFlags =
+    wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4;
+
+/// Runtime limits negotiated for the active device at initialization.
+/// These are the limits the renderer may actually use, not adapter maxima.
 #[derive(Debug, Clone)]
 pub struct RenderConfig {
     /// Name of the GPU device (e.g. "Intel Iris Plus Graphics 640")
@@ -26,15 +30,20 @@ pub struct RenderConfig {
     pub max_compute_workgroup_size: [u32; 3],
     /// Maximum size of a storage buffer binding
     pub max_storage_buffer_size: u64,
+    /// Whether the active publication color/depth format pair supports 4x MSAA.
+    pub publication_msaa_x4: bool,
 }
 
 impl RenderConfig {
-    /// Capture GPU configuration from a wgpu Adapter.
-    /// Logs all relevant device info for diagnostics.
-    pub fn from_adapter(adapter: &wgpu::Adapter) -> Self {
+    /// Capture adapter identity and the negotiated device limits.
+    pub fn from_adapter_and_device(
+        adapter: &wgpu::Adapter,
+        device: &wgpu::Device,
+        publication_msaa_x4: bool,
+    ) -> Self {
         let info = adapter.get_info();
-        let limits = adapter.limits();
-        
+        let limits = device.limits();
+
         let supports_compute_shaders = limits.max_compute_workgroup_size_x > 0;
 
         let config = Self {
@@ -51,6 +60,7 @@ impl RenderConfig {
                 limits.max_compute_workgroup_size_z,
             ],
             max_storage_buffer_size: limits.max_storage_buffer_binding_size as u64,
+            publication_msaa_x4,
         };
 
         log::info!("=== GPU Device Baseline ===");
@@ -63,10 +73,28 @@ impl RenderConfig {
         );
         log::info!("  Max tex 2D: {}", config.max_texture_dimension_2d);
         log::info!("  Bind groups:{}", config.max_bind_groups);
-        log::info!("  Compute:    {} (Max wg: {:?})", config.supports_compute_shaders, config.max_compute_workgroup_size);
-        log::info!("  Storage Buf:{} MB", config.max_storage_buffer_size / (1024 * 1024));
+        log::info!(
+            "  Compute:    {} (Max wg: {:?})",
+            config.supports_compute_shaders,
+            config.max_compute_workgroup_size
+        );
+        log::info!(
+            "  Storage Buf:{} MB",
+            config.max_storage_buffer_size / (1024 * 1024)
+        );
+        log::info!("  Publication MSAA x4: {}", config.publication_msaa_x4);
         log::info!("===========================");
 
         config
+    }
+
+    pub fn publication_sampling(&self) -> (u32, u32) {
+        let requested_samples = PUBLICATION_SAMPLE_FALLBACK[0];
+        let selected_samples = if self.publication_msaa_x4 {
+            PUBLICATION_SAMPLE_FALLBACK[0]
+        } else {
+            PUBLICATION_SAMPLE_FALLBACK[1]
+        };
+        (requested_samples, selected_samples)
     }
 }

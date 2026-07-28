@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "crystal-canvas"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "bytemuck",
@@ -1008,10 +1008,12 @@ dependencies = [
  "image",
  "keyring",
  "log",
+ "moxcms",
  "open",
  "pollster",
  "raw-window-handle",
  "reqwest 0.12.28",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2",

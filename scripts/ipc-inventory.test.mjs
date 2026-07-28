@@ -5,7 +5,10 @@ import { analyze_contract, assert_contract, create_inventory } from './ipc-inven
 test('IPC inventory classifies every registered command and event', async () => {
     const inventory = await create_inventory();
     assert.doesNotThrow(() => assert_contract(inventory));
-    assert.deepEqual(inventory.backend_command_args.export_image, ['bgMode', 'height', 'path', 'width']);
+    assert.deepEqual(inventory.backend_command_args.export_image,
+        ['bgMode', 'height', 'path', 'publicationProfile', 'width']);
+    assert.deepEqual(inventory.backend_command_args.export_blender_scene,
+        ['path', 'publicationProfile']);
     assert.deepEqual(inventory.backend_command_args.pick_atom, ['screenH', 'screenW', 'x', 'y']);
 });
 

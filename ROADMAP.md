@@ -1,6 +1,6 @@
 # CrystalCanvas Roadmap
 
-> Updated 2026-07-26 | Latest release: `v0.6.2` | Current development: `v0.7.0` | Primary target: macOS / Metal
+> Updated 2026-07-28 | Latest release: `v0.7.0` | Current development: `v0.8.0` | Primary target: macOS / Metal
 
 ## Product Direction
 
@@ -28,18 +28,9 @@ The project does not plan to become a DFT, EPC, transport, superconductivity, TC
 | `v0.6.0` | 2026-04-14 | measurement, undo/redo, partial occupancy, modular commands and panels |
 | `v0.6.1` | 2026-07-18 | verified IPC contracts, intrinsic-only state, atomic transactions, physical input gates, single versioned snapshot refresh |
 | `v0.6.2` | 2026-07-26 | compact workbench, closed-by-default Assistant, renderer-owned interaction updates, lifecycle hardening, and recorded performance baselines |
+| `v0.7.0` | 2026-07-28 | bounded 4K/8K publication rendering, fixed look profiles, versioned sidecars, and one-way Blender GLB export |
 
 ## Planned Releases
-
-### `v0.7.0` — Publication Rendering Core
-
-- separate the low-cost interactive viewport from a high-fidelity offscreen export path;
-- capability-checked MSAA/SSAA and deterministic fallback;
-- SSAO, soft shadows, and contact shadows for geometric depth;
-- transparent background and explicit color-space handling;
-- orthographic and perspective camera presets;
-- reproducible materials, lighting, atom radii, bond radii, and scene settings;
-- tiled 4K/8K export without requiring continuous high-cost rendering in the viewport.
 
 ### `v0.8.0` — Advanced Volumetric and Field Figures
 

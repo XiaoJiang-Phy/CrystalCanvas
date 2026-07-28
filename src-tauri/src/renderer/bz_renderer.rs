@@ -92,7 +92,7 @@ impl BzSubViewport {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let (point_pipeline, layout) = pipeline::create_render_pipeline(&gpu.device, format);
+        let (point_pipeline, layout) = pipeline::create_render_pipeline(&gpu.device, format, 1);
         
         let camera_bind_group_layout = layout;
         let camera_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -104,7 +104,7 @@ impl BzSubViewport {
             }],
         });
 
-        let line_pipeline = pipeline::create_line_pipeline(&gpu.device, format, &camera_bind_group_layout);
+        let line_pipeline = pipeline::create_line_pipeline(&gpu.device, format, &camera_bind_group_layout, 1);
 
         let edge_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BZ Empty Edge Buffer"),

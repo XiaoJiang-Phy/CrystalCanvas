@@ -10,10 +10,14 @@ use wgpu::util::DeviceExt;
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
 use super::instance::{
-    apply_phonon_frame, validate_phonon_display_envelope, AtomInstance, PreparedAtomScene,
-    RenderLineScene,
+    AtomInstance, LineVertex, PreparedAtomScene, RenderLineScene, apply_phonon_frame,
+    validate_phonon_display_envelope,
 };
 use super::pipeline;
+use super::publication_look::{
+    PublicationCellLineBackground, PublicationCellLineStyle, PublicationLookProfile,
+    PublicationLookUniform,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererVolumeMode {
@@ -295,6 +299,7 @@ pub struct Renderer {
     line_pipeline: wgpu::RenderPipeline,
     cell_line_buffer: wgpu::Buffer,
     cell_line_count: u32,
+    cell_line_vertices: Vec<LineVertex>,
 
     // Measurement lines
     measurement_line_buffer: wgpu::Buffer,
@@ -329,6 +334,657 @@ pub struct Renderer {
     pub bz_viewport: Option<crate::renderer::bz_renderer::BzSubViewport>,
     pub show_bz: bool,
     pub bz_scale: f32,
+}
+
+const MAX_PUBLICATION_READBACK_BYTES: u64 = 192 * 1024 * 1024;
+const MAX_PUBLICATION_TOTAL_GPU_BYTES: u64 = 384 * 1024 * 1024;
+const MAX_PUBLICATION_PEAK_CPU_BYTES: u64 = 384 * 1024 * 1024;
+const PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES: u64 = 256;
+const PUBLICATION_LOOK_UNIFORM_BYTES: u64 = 256;
+const PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
+const PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
+const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
+pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 7;
+const PUBLICATION_FRAMING_MARGIN: f32 = 0.08;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OffscreenReadbackLayout {
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    staging_size: u64,
+    rgba_len: usize,
+}
+
+/// Background policy is resolved at the command boundary before GPU allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PublicationBackground {
+    Transparent,
+    White,
+    Black,
+    Current,
+}
+
+pub(crate) fn cell_line_style_for_background(
+    background: PublicationBackground,
+    current_background: wgpu::Color,
+) -> Result<PublicationCellLineStyle, String> {
+    let background = match background {
+        PublicationBackground::White => PublicationCellLineBackground::White,
+        PublicationBackground::Black => PublicationCellLineBackground::Black,
+        PublicationBackground::Transparent => PublicationCellLineBackground::Transparent,
+        PublicationBackground::Current => {
+            let channels = [
+                current_background.r,
+                current_background.g,
+                current_background.b,
+                current_background.a,
+            ];
+            if !channels
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            {
+                return Err("publication current background is invalid".to_owned());
+            }
+            let luminance = 0.2126 * current_background.r
+                + 0.7152 * current_background.g
+                + 0.0722 * current_background.b;
+            if luminance >= 0.5 {
+                PublicationCellLineBackground::White
+            } else {
+                PublicationCellLineBackground::Black
+            }
+        }
+    };
+    Ok(PublicationCellLineStyle::for_background(background))
+}
+
+fn publication_srgb_rgba_to_linear(color: [f32; 4]) -> [f32; 4] {
+    let convert = |value: f32| {
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [
+        convert(color[0]),
+        convert(color[1]),
+        convert(color[2]),
+        color[3],
+    ]
+}
+
+fn fit_visible_structure_to_export(
+    mut camera: Camera,
+    width: u32,
+    height: u32,
+    opaque_atoms: &[AtomInstance],
+    transparent_atoms: &[AtomInstance],
+    cell_lines: &[LineVertex],
+    bonds: &[crate::renderer::instance::BondInstance],
+) -> Result<Camera, String> {
+    if width == 0 || height == 0 {
+        return Err("publication framing dimensions must be non-zero".to_owned());
+    }
+    let forward = (camera.target - camera.eye).normalize_or_zero();
+    let right = forward.cross(camera.up).normalize_or_zero();
+    let up = right.cross(forward).normalize_or_zero();
+    if forward.length_squared() <= f32::EPSILON
+        || right.length_squared() <= f32::EPSILON
+        || up.length_squared() <= f32::EPSILON
+    {
+        return Err("publication camera basis is degenerate".to_owned());
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    let mut include_sphere = |position: [f32; 3], radius: f32| -> Result<(), String> {
+        let position = glam::Vec3::from_array(position);
+        if !position.is_finite() || !radius.is_finite() || radius < 0.0 {
+            return Err("publication framing structure bounds are invalid".to_owned());
+        }
+        let relative = position - camera.target;
+        let projected =
+            glam::Vec3::new(relative.dot(right), relative.dot(up), relative.dot(forward));
+        let radius = glam::Vec3::splat(radius);
+        min = min.min(projected - radius);
+        max = max.max(projected + radius);
+        Ok(())
+    };
+    for atom in opaque_atoms.iter().chain(transparent_atoms) {
+        if atom.radius <= 0.0 {
+            return Err("publication framing atom bounds are invalid".to_owned());
+        }
+        include_sphere(atom.position, atom.radius)?;
+    }
+    for line in cell_lines {
+        include_sphere(line.position, 0.0)?;
+    }
+    for bond in bonds {
+        include_sphere(bond.start, bond.radius)?;
+        include_sphere(bond.end, bond.radius)?;
+    }
+    if !min.is_finite() || !max.is_finite() || min.x > max.x || min.y > max.y || min.z > max.z {
+        return Err("publication framing has no visible atom bounds".to_owned());
+    }
+    let center = (min + max) * 0.5;
+    let structure_translation = right * center.x + up * center.y + forward * center.z;
+    camera.eye += structure_translation;
+    camera.target += structure_translation;
+    let span = max - min;
+    let aspect = width as f32 / height as f32;
+    let inner = 1.0 - 2.0 * PUBLICATION_FRAMING_MARGIN;
+    if !aspect.is_finite() || aspect <= 0.0 || inner <= 0.0 {
+        return Err("publication framing aspect is invalid".to_owned());
+    }
+    camera.set_aspect(width as f32, height as f32);
+    let half_depth = span.z * 0.5;
+    camera.znear = 0.01;
+    if camera.is_perspective {
+        let half_vertical = (camera.fovy_deg.to_radians() * 0.5).tan() * inner;
+        let half_horizontal = half_vertical * aspect;
+        if !half_vertical.is_finite()
+            || !half_horizontal.is_finite()
+            || half_vertical <= 0.0
+            || half_horizontal <= 0.0
+        {
+            return Err("publication perspective framing is invalid".to_owned());
+        }
+        let required_distance = (span.x * 0.5 / half_horizontal + half_depth)
+            .max(span.y * 0.5 / half_vertical + half_depth)
+            .max(camera.znear + half_depth + 1.0e-3);
+        camera.eye = camera.target - forward * required_distance;
+        camera.zfar = (required_distance + half_depth + 1.0).max(10.0);
+    } else {
+        camera.orthographic_scale = (span.y / inner).max(span.x / (aspect * inner)).max(1.0e-3);
+        let current_distance = (camera.target - camera.eye).length();
+        let required_distance = current_distance.max(camera.znear + half_depth + 1.0e-3);
+        camera.eye = camera.target - forward * required_distance;
+        camera.zfar = (required_distance + half_depth + 1.0).max(10.0);
+    }
+    Ok(camera)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PublicationAlphaMode {
+    Premultiplied,
+}
+
+/// Immutable export-only state. It holds no physical scene data and never
+/// aliases mutable interactive camera or presentation state.
+pub(crate) struct PublicationRenderConfig {
+    width: u32,
+    height: u32,
+    camera: Camera,
+    background: wgpu::Color,
+    alpha_mode: PublicationAlphaMode,
+    target_format: wgpu::TextureFormat,
+    requested_samples: u32,
+    selected_samples: u32,
+    tile_dimensions: [u32; 2],
+    tile_layout: [u32; 2],
+    look_profile: PublicationLookProfile,
+    cell_line_style: PublicationCellLineStyle,
+    publication_bond_instances: Vec<crate::renderer::instance::BondInstance>,
+    readback_layout: OffscreenReadbackLayout,
+    admission: PublicationExportAdmissionReceipt,
+}
+
+/// Per-export pipelines. They are deliberately local to one export and reused
+/// by every tile; this is not a cross-export pipeline cache.
+struct PublicationPipelines {
+    render: wgpu::RenderPipeline,
+    transparent: wgpu::RenderPipeline,
+    line: wgpu::RenderPipeline,
+    bond: wgpu::RenderPipeline,
+    camera_bind_group_layout: wgpu::BindGroupLayout,
+    look_bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl PublicationPipelines {
+    fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat, sample_count: u32) -> Self {
+        let pipelines = pipeline::create_publication_pipelines(device, target_format, sample_count);
+        Self {
+            render: pipelines.render,
+            transparent: pipelines.transparent,
+            line: pipelines.line,
+            bond: pipelines.bond,
+            camera_bind_group_layout: pipelines.camera_bind_group_layout,
+            look_bind_group_layout: pipelines.look_bind_group_layout,
+        }
+    }
+}
+
+/// Readback pixels with the semantics required by the publication encoder.
+pub(crate) struct PublicationRenderResult {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    alpha_mode: PublicationAlphaMode,
+}
+
+impl PublicationRenderResult {
+    pub(crate) fn into_rgba(self) -> Vec<u8> {
+        self.rgba
+    }
+
+    pub(crate) fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    pub(crate) fn is_premultiplied_alpha(&self) -> bool {
+        self.alpha_mode == PublicationAlphaMode::Premultiplied
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportRequest {
+    pub width: u32,
+    pub height: u32,
+    pub publication_bond_instance_count: u32,
+    pub needs_transparent_depth: bool,
+    pub has_measurement_overlays: bool,
+    pub has_hopping_overlays: bool,
+    pub has_isosurface: bool,
+    pub has_volume: bool,
+    pub has_phonon_presentation: bool,
+    pub has_atom_drag: bool,
+    pub show_bz: bool,
+    pub has_measurement_state: bool,
+    pub has_selection_highlights: bool,
+    pub has_wannier_overlay: bool,
+    pub has_active_phonon_state: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PublicationExportSourceState {
+    pub has_measurement_state: bool,
+    pub has_selection_highlights: bool,
+    pub has_wannier_overlay: bool,
+    pub has_active_phonon_state: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportLimits {
+    pub max_texture_dimension_2d: u32,
+    pub max_buffer_size: u64,
+    pub publication_msaa_x4: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationRenderPlan {
+    pub requested_samples: u32,
+    pub selected_samples: u32,
+    pub tile_dimensions: [u32; 2],
+    pub tile_layout: [u32; 2],
+    pub tile_overlap_pixels: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportResourceEstimate {
+    pub staging_bytes: u64,
+    pub rgba_bytes: u64,
+    pub tile_rgba_bytes: u64,
+    pub resolve_color_bytes: u64,
+    pub msaa_color_bytes: u64,
+    pub opaque_depth_bytes: u64,
+    pub transparent_depth_bytes: u64,
+    pub depth_replay_color_bytes: u64,
+    pub look_uniform_bytes: u64,
+    pub publication_bond_bytes: u64,
+    pub jpeg_rgb_bytes: u64,
+    pub max_encoded_bytes: u64,
+    pub export_camera_uniform_bytes: u64,
+    pub gpu_driver_reserve_bytes: u64,
+    pub cpu_encoder_reserve_bytes: u64,
+    pub transient_gpu_bytes: u64,
+    pub readback_peak_cpu_bytes: u64,
+    pub png_encode_peak_cpu_bytes: u64,
+    pub jpeg_encode_peak_cpu_bytes: u64,
+    pub peak_cpu_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportBudgets {
+    pub max_readback_bytes: u64,
+    pub max_transient_gpu_bytes: u64,
+    pub max_peak_cpu_bytes: u64,
+    pub gpu_driver_reserve_bytes: u64,
+    pub cpu_encoder_reserve_bytes: u64,
+    pub encoded_overhead_bytes: u64,
+    pub max_recipe_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportAdmissionReceipt {
+    pub(crate) policy_version: u32,
+    pub(crate) request: PublicationExportRequest,
+    pub(crate) limits: PublicationExportLimits,
+    pub(crate) budgets: PublicationExportBudgets,
+    pub(crate) render_plan: PublicationRenderPlan,
+    pub(crate) estimate: PublicationExportResourceEstimate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationExportRejection {
+    ZeroDimensions,
+    MeasurementOverlays,
+    HoppingOverlays,
+    Isosurface,
+    Volume,
+    PhononPresentation,
+    AtomDrag,
+    BrillouinZone,
+    MeasurementState,
+    SelectionHighlights,
+    WannierOverlay,
+    ActivePhononState,
+    TextureDimensionLimit,
+    RowByteOverflow,
+    PaddedRowByteOverflow,
+    StagingByteOverflow,
+    StagingAddressSpace,
+    CpuByteOverflow,
+    RowLayoutLimit,
+    PaddedRowLayoutLimit,
+    DeviceBufferLimit,
+    ReadbackBudget,
+    TransientGpuBudget,
+    PeakCpuBudget,
+    PolicyVersion,
+    ReceiptMismatch,
+}
+
+impl std::fmt::Display for PublicationExportRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ZeroDimensions => "publication export dimensions must be non-zero",
+            Self::MeasurementOverlays => {
+                "publication export currently rejects measurement overlays"
+            }
+            Self::HoppingOverlays => "publication export currently rejects hopping overlays",
+            Self::Isosurface => "publication export currently rejects isosurface rendering",
+            Self::Volume => "publication export currently rejects volume rendering",
+            Self::PhononPresentation => "publication export currently rejects phonon presentation",
+            Self::AtomDrag => "publication export currently rejects atom drag preview",
+            Self::BrillouinZone => "publication export currently rejects Brillouin-zone view",
+            Self::MeasurementState => "publication export currently rejects measurement state",
+            Self::SelectionHighlights => {
+                "publication export currently rejects selection highlights"
+            }
+            Self::WannierOverlay => "publication export currently rejects Wannier overlays",
+            Self::ActivePhononState => "publication export currently rejects phonon state",
+            Self::TextureDimensionLimit => {
+                "publication export dimensions exceed the active device limit"
+            }
+            Self::RowByteOverflow => "offscreen row byte count overflow",
+            Self::PaddedRowByteOverflow => "offscreen padded row byte count overflow",
+            Self::StagingByteOverflow => "offscreen staging byte count overflow",
+            Self::StagingAddressSpace => "offscreen staging buffer exceeds addressable memory",
+            Self::CpuByteOverflow => "offscreen CPU byte count overflow",
+            Self::RowLayoutLimit => "offscreen row exceeds wgpu copy layout limits",
+            Self::PaddedRowLayoutLimit => "offscreen padded row exceeds wgpu copy layout limits",
+            Self::DeviceBufferLimit => {
+                "publication export readback exceeds the active device buffer limit"
+            }
+            Self::ReadbackBudget => "publication export readback exceeds the policy budget",
+            Self::TransientGpuBudget => {
+                "publication export transient GPU allocation exceeds the policy budget"
+            }
+            Self::PeakCpuBudget => {
+                "publication export peak CPU allocation exceeds the policy budget"
+            }
+            Self::PolicyVersion => "publication export receipt has an unsupported policy version",
+            Self::ReceiptMismatch => {
+                "publication export receipt does not match its request and limits"
+            }
+        })
+    }
+}
+
+impl std::error::Error for PublicationExportRejection {}
+
+const fn publication_export_budgets() -> PublicationExportBudgets {
+    PublicationExportBudgets {
+        max_readback_bytes: MAX_PUBLICATION_READBACK_BYTES,
+        max_transient_gpu_bytes: MAX_PUBLICATION_TOTAL_GPU_BYTES,
+        max_peak_cpu_bytes: MAX_PUBLICATION_PEAK_CPU_BYTES,
+        gpu_driver_reserve_bytes: PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES,
+        cpu_encoder_reserve_bytes: PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES,
+        encoded_overhead_bytes: PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES,
+        max_recipe_bytes: MAX_PUBLICATION_RECIPE_BYTES,
+    }
+}
+
+fn offscreen_readback_layout(
+    width: u32,
+    height: u32,
+) -> Result<OffscreenReadbackLayout, PublicationExportRejection> {
+    let unpadded_bytes_per_row = u64::from(width)
+        .checked_mul(4)
+        .ok_or(PublicationExportRejection::RowByteOverflow)?;
+    let alignment = u64::from(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let padded_bytes_per_row = unpadded_bytes_per_row
+        .checked_add(alignment - 1)
+        .ok_or(PublicationExportRejection::PaddedRowByteOverflow)?
+        / alignment
+        * alignment;
+    let staging_size = padded_bytes_per_row
+        .checked_mul(u64::from(height))
+        .ok_or(PublicationExportRejection::StagingByteOverflow)?;
+    usize::try_from(staging_size).map_err(|_| PublicationExportRejection::StagingAddressSpace)?;
+    let rgba_len = unpadded_bytes_per_row
+        .checked_mul(u64::from(height))
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or(PublicationExportRejection::CpuByteOverflow)?;
+
+    Ok(OffscreenReadbackLayout {
+        unpadded_bytes_per_row: u32::try_from(unpadded_bytes_per_row)
+            .map_err(|_| PublicationExportRejection::RowLayoutLimit)?,
+        padded_bytes_per_row: u32::try_from(padded_bytes_per_row)
+            .map_err(|_| PublicationExportRejection::PaddedRowLayoutLimit)?,
+        staging_size,
+        rgba_len,
+    })
+}
+
+fn publication_render_plan(
+    request: PublicationExportRequest,
+    limits: PublicationExportLimits,
+) -> Result<PublicationRenderPlan, PublicationExportRejection> {
+    if limits.max_texture_dimension_2d == 0 {
+        return Err(PublicationExportRejection::TextureDimensionLimit);
+    }
+    let selected_samples = if limits.publication_msaa_x4 { 4 } else { 1 };
+    let mut tile_dimensions = [
+        request.width.min(limits.max_texture_dimension_2d),
+        request.height.min(limits.max_texture_dimension_2d),
+    ];
+    loop {
+        let plan = PublicationRenderPlan {
+            requested_samples: 4,
+            selected_samples,
+            tile_layout: [
+                request.width.div_ceil(tile_dimensions[0]),
+                request.height.div_ceil(tile_dimensions[1]),
+            ],
+            tile_dimensions,
+            tile_overlap_pixels: 0,
+        };
+        let estimate = publication_export_resource_estimate(request, plan)?;
+        if estimate.transient_gpu_bytes <= publication_export_budgets().max_transient_gpu_bytes {
+            return Ok(plan);
+        }
+        if tile_dimensions == [1, 1] {
+            return Err(PublicationExportRejection::TransientGpuBudget);
+        }
+        let axis = usize::from(tile_dimensions[1] > tile_dimensions[0]);
+        tile_dimensions[axis] = tile_dimensions[axis].div_ceil(2).max(1);
+    }
+}
+
+fn publication_export_resource_estimate(
+    request: PublicationExportRequest,
+    plan: PublicationRenderPlan,
+) -> Result<PublicationExportResourceEstimate, PublicationExportRejection> {
+    let layout = offscreen_readback_layout(plan.tile_dimensions[0], plan.tile_dimensions[1])?;
+    let full_layout = offscreen_readback_layout(request.width, request.height)?;
+    let rgba_bytes = u64::try_from(full_layout.rgba_len)
+        .map_err(|_| PublicationExportRejection::CpuByteOverflow)?;
+    let tile_rgba_bytes =
+        u64::try_from(layout.rgba_len).map_err(|_| PublicationExportRejection::CpuByteOverflow)?;
+    let msaa_color_bytes = if plan.selected_samples > 1 {
+        tile_rgba_bytes
+            .checked_mul(u64::from(plan.selected_samples))
+            .ok_or(PublicationExportRejection::TransientGpuBudget)?
+    } else {
+        0
+    };
+    let resolve_color_bytes = tile_rgba_bytes;
+    let opaque_depth_bytes = tile_rgba_bytes
+        .checked_mul(u64::from(plan.selected_samples))
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    let transparent_depth_bytes = request
+        .needs_transparent_depth
+        .then_some(opaque_depth_bytes)
+        .unwrap_or(0);
+    let depth_replay_color_bytes = (request.needs_transparent_depth && plan.selected_samples > 1)
+        .then_some(msaa_color_bytes)
+        .unwrap_or(0);
+    let publication_bond_bytes = u64::from(request.publication_bond_instance_count)
+        .checked_mul(std::mem::size_of::<crate::renderer::instance::BondInstance>() as u64)
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    let budgets = publication_export_budgets();
+    let max_encoded_bytes = rgba_bytes
+        .checked_add(budgets.encoded_overhead_bytes)
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let total_gpu_bytes = resolve_color_bytes
+        .checked_add(msaa_color_bytes)
+        .and_then(|value| value.checked_add(opaque_depth_bytes))
+        .and_then(|value| value.checked_add(transparent_depth_bytes))
+        .and_then(|value| value.checked_add(depth_replay_color_bytes))
+        .and_then(|value| value.checked_add(layout.staging_size))
+        .and_then(|value| value.checked_add(PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES))
+        .and_then(|value| value.checked_add(PUBLICATION_LOOK_UNIFORM_BYTES))
+        .and_then(|value| value.checked_add(publication_bond_bytes))
+        .and_then(|value| value.checked_add(budgets.gpu_driver_reserve_bytes))
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    let readback_peak_cpu_bytes = rgba_bytes
+        .checked_add(tile_rgba_bytes)
+        .and_then(|value| value.checked_add(layout.staging_size))
+        .and_then(|value| value.checked_add(publication_bond_bytes))
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let jpeg_rgb_bytes = rgba_bytes
+        .checked_div(4)
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let png_encode_peak_cpu_bytes = rgba_bytes
+        .checked_add(publication_bond_bytes)
+        .and_then(|value| value.checked_add(budgets.cpu_encoder_reserve_bytes))
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let jpeg_encode_peak_cpu_bytes = rgba_bytes
+        .checked_add(jpeg_rgb_bytes)
+        .and_then(|value| value.checked_add(publication_bond_bytes))
+        .and_then(|value| value.checked_add(budgets.cpu_encoder_reserve_bytes))
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let peak_cpu_bytes = readback_peak_cpu_bytes
+        .max(png_encode_peak_cpu_bytes)
+        .max(jpeg_encode_peak_cpu_bytes);
+
+    Ok(PublicationExportResourceEstimate {
+        staging_bytes: layout.staging_size,
+        rgba_bytes,
+        tile_rgba_bytes,
+        resolve_color_bytes,
+        msaa_color_bytes,
+        opaque_depth_bytes,
+        transparent_depth_bytes,
+        depth_replay_color_bytes,
+        look_uniform_bytes: PUBLICATION_LOOK_UNIFORM_BYTES,
+        publication_bond_bytes,
+        jpeg_rgb_bytes,
+        max_encoded_bytes,
+        export_camera_uniform_bytes: PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES,
+        gpu_driver_reserve_bytes: budgets.gpu_driver_reserve_bytes,
+        cpu_encoder_reserve_bytes: budgets.cpu_encoder_reserve_bytes,
+        transient_gpu_bytes: total_gpu_bytes,
+        readback_peak_cpu_bytes,
+        png_encode_peak_cpu_bytes,
+        jpeg_encode_peak_cpu_bytes,
+        peak_cpu_bytes,
+    })
+}
+
+fn finish_publication_export_error_scopes(device: &wgpu::Device) -> Result<(), String> {
+    device.poll(wgpu::Maintain::Wait);
+    let validation_error = pollster::block_on(device.pop_error_scope());
+    let out_of_memory_error = pollster::block_on(device.pop_error_scope());
+    let internal_error = pollster::block_on(device.pop_error_scope());
+    if let Some(error) = validation_error {
+        return Err(format!("publication export GPU validation error: {error}"));
+    }
+    if let Some(error) = out_of_memory_error {
+        return Err(format!("publication export GPU allocation error: {error}"));
+    }
+    if let Some(error) = internal_error {
+        return Err(format!("publication export GPU internal error: {error}"));
+    }
+    Ok(())
+}
+
+fn unpack_publication_readback(
+    data: &[u8],
+    layout: OffscreenReadbackLayout,
+    height: u32,
+    target_format: wgpu::TextureFormat,
+) -> Result<Vec<u8>, String> {
+    let expected_staging_bytes = usize::try_from(layout.staging_size)
+        .map_err(|_| "offscreen staging buffer exceeds addressable memory".to_owned())?;
+    if data.len() != expected_staging_bytes {
+        return Err("offscreen readback size does not match its declared layout".to_owned());
+    }
+
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(layout.rgba_len)
+        .map_err(|_| "unable to allocate offscreen RGBA output".to_owned())?;
+    let is_bgra = matches!(
+        target_format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+
+    for row in 0..height {
+        let offset = usize::try_from(
+            u64::from(row)
+                .checked_mul(u64::from(layout.padded_bytes_per_row))
+                .ok_or_else(|| "offscreen row offset overflow".to_owned())?,
+        )
+        .map_err(|_| "offscreen row offset exceeds addressable memory".to_owned())?;
+        let row_end = offset
+            .checked_add(
+                usize::try_from(layout.unpadded_bytes_per_row)
+                    .map_err(|_| "offscreen row length exceeds addressable memory".to_owned())?,
+            )
+            .ok_or_else(|| "offscreen row end overflow".to_owned())?;
+        let row_data = data
+            .get(offset..row_end)
+            .ok_or_else(|| "offscreen row exceeds mapped staging data".to_owned())?;
+        if is_bgra {
+            // BGRA -> RGBA. The copy layout is already top-to-bottom.
+            for pixel in row_data.chunks_exact(4) {
+                rgba.push(pixel[2]);
+                rgba.push(pixel[1]);
+                rgba.push(pixel[0]);
+                rgba.push(pixel[3]);
+            }
+        } else {
+            rgba.extend_from_slice(row_data);
+        }
+    }
+    if rgba.len() != layout.rgba_len {
+        return Err("offscreen readback produced an unexpected RGBA length".to_owned());
+    }
+    Ok(rgba)
 }
 
 fn drag_instances(
@@ -436,6 +1092,241 @@ fn upload_atom_instances(queue: &wgpu::Queue, buffer: &wgpu::Buffer, instances: 
 }
 
 impl Renderer {
+    pub(crate) fn publication_export_camera(
+        &self,
+        width: u32,
+        height: u32,
+        publication_bond_instances: &[crate::renderer::instance::BondInstance],
+    ) -> Result<Camera, String> {
+        fit_visible_structure_to_export(
+            self.camera,
+            width,
+            height,
+            &self.opaque_atom_instances,
+            &self.transparent_atom_instances,
+            if self.show_cell {
+                &self.cell_line_vertices
+            } else {
+                &[]
+            },
+            if self.show_bonds {
+                publication_bond_instances
+            } else {
+                &[]
+            },
+        )
+    }
+
+    pub(crate) fn publication_export_request(
+        &self,
+        width: u32,
+        height: u32,
+        source_state: PublicationExportSourceState,
+        publication_bond_instance_count: u32,
+    ) -> PublicationExportRequest {
+        PublicationExportRequest {
+            width,
+            height,
+            publication_bond_instance_count,
+            needs_transparent_depth: self.transparent_instance_count > 0,
+            has_measurement_overlays: self.measurement_line_count > 0,
+            has_hopping_overlays: self.hopping_instance_count > 0,
+            has_isosurface: self.isosurface_pipeline.is_some(),
+            has_volume: self.volume_raycast_pipeline.is_some(),
+            has_phonon_presentation: self.phonon_presentation.is_some(),
+            has_atom_drag: self.atom_drag.is_some(),
+            show_bz: self.show_bz,
+            has_measurement_state: source_state.has_measurement_state,
+            has_selection_highlights: source_state.has_selection_highlights,
+            has_wannier_overlay: source_state.has_wannier_overlay,
+            has_active_phonon_state: source_state.has_active_phonon_state,
+        }
+    }
+
+    pub(crate) fn publication_export_limits(&self) -> PublicationExportLimits {
+        let limits = &self.gpu.render_config;
+        PublicationExportLimits {
+            max_texture_dimension_2d: limits.max_texture_dimension_2d,
+            max_buffer_size: limits.max_buffer_size,
+            publication_msaa_x4: limits.publication_msaa_x4,
+        }
+    }
+
+    pub(crate) fn publication_render_config_with_profile(
+        &self,
+        admission: &PublicationExportAdmissionReceipt,
+        background: PublicationBackground,
+        look_profile: PublicationLookProfile,
+        publication_bond_instances: Vec<crate::renderer::instance::BondInstance>,
+    ) -> Result<PublicationRenderConfig, String> {
+        let publication_bond_instance_count = u32::try_from(publication_bond_instances.len())
+            .map_err(|_| "publication bond instance count overflow".to_owned())?;
+        if publication_bond_instance_count != admission.request.publication_bond_instance_count {
+            return Err("publication bond scene changed after admission".to_owned());
+        }
+        self.validate_publication_export_receipt(admission)?;
+        let width = admission.request.width;
+        let height = admission.request.height;
+        let target_format = self.gpu.surface_format();
+        if !target_format.is_srgb() {
+            return Err(format!(
+                "publication render requires an sRGB target format, got {target_format:?}"
+            ));
+        }
+
+        let cell_line_style = cell_line_style_for_background(background, self.clear_color)?;
+        let background = match background {
+            PublicationBackground::Transparent => wgpu::Color::TRANSPARENT,
+            PublicationBackground::White => wgpu::Color::WHITE,
+            PublicationBackground::Black => wgpu::Color::BLACK,
+            PublicationBackground::Current => self.clear_color,
+        };
+        let camera = self.publication_export_camera(width, height, &publication_bond_instances)?;
+
+        let plan = admission.render_plan;
+        look_profile.validate_fixed()?;
+        Ok(PublicationRenderConfig {
+            width,
+            height,
+            camera,
+            background,
+            alpha_mode: PublicationAlphaMode::Premultiplied,
+            target_format,
+            requested_samples: plan.requested_samples,
+            selected_samples: plan.selected_samples,
+            tile_dimensions: plan.tile_dimensions,
+            tile_layout: plan.tile_layout,
+            look_profile,
+            cell_line_style,
+            publication_bond_instances,
+            readback_layout: offscreen_readback_layout(
+                plan.tile_dimensions[0],
+                plan.tile_dimensions[1],
+            )
+            .map_err(|error| error.to_string())?,
+            admission: *admission,
+        })
+    }
+}
+
+#[must_use]
+pub fn evaluate_publication_export_admission(
+    request: PublicationExportRequest,
+    limits: PublicationExportLimits,
+) -> Result<PublicationExportAdmissionReceipt, PublicationExportRejection> {
+    if request.width == 0 || request.height == 0 {
+        return Err(PublicationExportRejection::ZeroDimensions);
+    }
+    if request.has_measurement_overlays {
+        return Err(PublicationExportRejection::MeasurementOverlays);
+    }
+    if request.has_hopping_overlays {
+        return Err(PublicationExportRejection::HoppingOverlays);
+    }
+    if request.has_isosurface {
+        return Err(PublicationExportRejection::Isosurface);
+    }
+    if request.has_volume {
+        return Err(PublicationExportRejection::Volume);
+    }
+    if request.has_phonon_presentation {
+        return Err(PublicationExportRejection::PhononPresentation);
+    }
+    if request.has_atom_drag {
+        return Err(PublicationExportRejection::AtomDrag);
+    }
+    if request.show_bz {
+        return Err(PublicationExportRejection::BrillouinZone);
+    }
+    if request.has_measurement_state {
+        return Err(PublicationExportRejection::MeasurementState);
+    }
+    if request.has_selection_highlights {
+        return Err(PublicationExportRejection::SelectionHighlights);
+    }
+    if request.has_wannier_overlay {
+        return Err(PublicationExportRejection::WannierOverlay);
+    }
+    if request.has_active_phonon_state {
+        return Err(PublicationExportRejection::ActivePhononState);
+    }
+    let budgets = publication_export_budgets();
+    let render_plan = publication_render_plan(request, limits)?;
+    let estimate = publication_export_resource_estimate(request, render_plan)?;
+    if estimate.staging_bytes > limits.max_buffer_size
+        || estimate.publication_bond_bytes > limits.max_buffer_size
+    {
+        return Err(PublicationExportRejection::DeviceBufferLimit);
+    }
+    if estimate.rgba_bytes > budgets.max_readback_bytes {
+        return Err(PublicationExportRejection::ReadbackBudget);
+    }
+    if estimate.transient_gpu_bytes > budgets.max_transient_gpu_bytes {
+        return Err(PublicationExportRejection::TransientGpuBudget);
+    }
+    if estimate.peak_cpu_bytes > budgets.max_peak_cpu_bytes {
+        return Err(PublicationExportRejection::PeakCpuBudget);
+    }
+
+    Ok(PublicationExportAdmissionReceipt {
+        policy_version: PUBLICATION_EXPORT_POLICY_VERSION,
+        request,
+        limits,
+        budgets,
+        render_plan,
+        estimate,
+    })
+}
+
+pub(crate) fn validate_publication_export_receipt_fields(
+    receipt: &PublicationExportAdmissionReceipt,
+) -> Result<(), PublicationExportRejection> {
+    if receipt.policy_version != PUBLICATION_EXPORT_POLICY_VERSION {
+        return Err(PublicationExportRejection::PolicyVersion);
+    }
+    let expected = evaluate_publication_export_admission(receipt.request, receipt.limits)?;
+    if expected != *receipt {
+        return Err(PublicationExportRejection::ReceiptMismatch);
+    }
+    Ok(())
+}
+
+impl Renderer {
+    fn validate_publication_export_receipt(
+        &self,
+        receipt: &PublicationExportAdmissionReceipt,
+    ) -> Result<(), String> {
+        self.validate_publication_export_receipt_with_bond_count(
+            receipt,
+            receipt.request.publication_bond_instance_count,
+        )
+    }
+
+    fn validate_publication_export_receipt_with_bond_count(
+        &self,
+        receipt: &PublicationExportAdmissionReceipt,
+        publication_bond_instance_count: u32,
+    ) -> Result<(), String> {
+        validate_publication_export_receipt_fields(receipt).map_err(|error| error.to_string())?;
+        if receipt.limits != self.publication_export_limits() {
+            return Err(
+                "publication export receipt does not match the active device limits".to_owned(),
+            );
+        }
+        let current_request = self.publication_export_request(
+            receipt.request.width,
+            receipt.request.height,
+            PublicationExportSourceState::default(),
+            publication_bond_instance_count,
+        );
+        if current_request != receipt.request {
+            return Err(
+                "publication export receipt does not match the active renderer scene".to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     /// Create a new Renderer attached to the given window.
     /// Initializes GPU context, camera, pipeline, and an empty instance buffer.
     pub fn new<W>(window: Arc<W>, width: u32, height: u32) -> Self
@@ -462,24 +1353,27 @@ impl Renderer {
 
         // Pipeline
         let (render_pipeline, camera_bind_group_layout) =
-            pipeline::create_render_pipeline(&gpu.device, gpu.surface_format());
+            pipeline::create_render_pipeline(&gpu.device, gpu.surface_format(), 1);
 
         let transparent_pipeline = pipeline::create_transparent_atom_pipeline(
             &gpu.device,
             gpu.surface_format(),
             &camera_bind_group_layout,
+            1,
         );
 
         let line_pipeline = pipeline::create_line_pipeline(
             &gpu.device,
             gpu.surface_format(),
             &camera_bind_group_layout,
+            1,
         );
 
         let bond_pipeline = pipeline::create_bond_pipeline(
             &gpu.device,
             gpu.surface_format(),
             &camera_bind_group_layout,
+            1,
         );
 
         // Camera bind group
@@ -508,20 +1402,21 @@ impl Renderer {
 
         let transparent_instance_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Transparent Instance Buffer"),
-                contents: bytemuck::cast_slice(&dummy_instance),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Transparent Instance Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_instance),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Depth textures (dual-pass architecture)
         let (opaque_depth_texture, opaque_depth_view) =
-            pipeline::create_depth_texture(&gpu.device, gpu.config.width, gpu.config.height);
+            pipeline::create_depth_texture(&gpu.device, gpu.config.width, gpu.config.height, 1);
         let (transparent_depth_texture, transparent_depth_view) =
             pipeline::create_transparent_depth_texture(
                 &gpu.device,
                 gpu.config.width,
                 gpu.config.height,
+                1,
             );
 
         // default dark mode color: #0f172a
@@ -545,11 +1440,11 @@ impl Renderer {
             });
         let measurement_line_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Measurement Line Buffer"),
-                contents: bytemuck::cast_slice(&dummy_line),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Measurement Line Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_line),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
         let dummy_bond = [crate::renderer::instance::BondInstance {
             start: [0.0, 0.0, 0.0],
             radius: 0.0,
@@ -559,11 +1454,11 @@ impl Renderer {
         }];
         let bond_instance_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Bond Instance Buffer"),
-                contents: bytemuck::cast_slice(&dummy_bond),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Bond Instance Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_bond),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
 
         let dummy_hopping = [crate::renderer::instance::BondInstance {
             start: [0.0, 0.0, 0.0],
@@ -574,11 +1469,11 @@ impl Renderer {
         }];
         let hopping_instance_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Hopping Instance Buffer"),
-                contents: bytemuck::cast_slice(&dummy_hopping),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Hopping Instance Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_hopping),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
 
         let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(
             &gpu, 400, 400,
@@ -611,6 +1506,7 @@ impl Renderer {
             line_pipeline,
             cell_line_buffer,
             cell_line_count: 0,
+            cell_line_vertices: Vec::new(),
             measurement_line_buffer,
             measurement_line_count: 0,
             bond_pipeline,
@@ -644,13 +1540,18 @@ impl Renderer {
                 .set_aspect(new_size.width as f32, new_size.height as f32);
 
             // Rebuild both depth textures
-            let (opaque_depth_texture, opaque_depth_view) =
-                pipeline::create_depth_texture(&self.gpu.device, new_size.width, new_size.height);
+            let (opaque_depth_texture, opaque_depth_view) = pipeline::create_depth_texture(
+                &self.gpu.device,
+                new_size.width,
+                new_size.height,
+                1,
+            );
             let (transparent_depth_texture, transparent_depth_view) =
                 pipeline::create_transparent_depth_texture(
                     &self.gpu.device,
                     new_size.width,
                     new_size.height,
+                    1,
                 );
             self.opaque_depth_texture = opaque_depth_texture;
             self.opaque_depth_view = opaque_depth_view;
@@ -789,10 +1690,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn set_phonon_display_scale(
-        &mut self,
-        display_scale: f64,
-    ) -> crate::ipc::IpcResult<()> {
+    pub fn set_phonon_display_scale(&mut self, display_scale: f64) -> crate::ipc::IpcResult<()> {
         if !display_scale.is_finite() {
             return Err(crate::ipc::IpcError::invalid_argument(
                 "phonon display scale must be finite",
@@ -1044,6 +1942,8 @@ impl Renderer {
     /// Upload prepared cell boundaries, bonds, and measurement lines.
     pub fn update_lines(&mut self, scene: &RenderLineScene) {
         self.cell_line_count = scene.cell_lines.len() as u32;
+        self.cell_line_vertices.clear();
+        self.cell_line_vertices.extend_from_slice(&scene.cell_lines);
         if self.cell_line_count > 0 {
             self.cell_line_buffer =
                 self.gpu
@@ -1389,61 +2289,276 @@ impl Renderer {
         Ok(())
     }
 
-    /// Render the current scene to an off-screen texture and return raw RGBA pixel bytes.
-    ///
-    /// # Arguments
-    /// * `width` - Target image width in pixels.
-    /// * `height` - Target image height in pixels.
-    /// * `bg_mode` - Background mode: "transparent", "white", or "default" (current theme).
-    pub fn render_offscreen(
-        &mut self,
-        width: u32,
-        height: u32,
-        bg_mode: &str,
-    ) -> Result<Vec<u8>, String> {
-        let width = width.max(1);
-        let height = height.max(1);
-
-        // Choose background clear color
-        let clear_color = match bg_mode {
-            "transparent" => wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            },
-            "white" => wgpu::Color {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            },
-            "black" => wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            },
-            _ => self.clear_color, // "default" — use current theme color
-        };
-
-        // Temporarily adjust camera aspect ratio for the off-screen dimensions
-        let original_aspect_w = self.gpu.config.width;
-        let original_aspect_h = self.gpu.config.height;
-        self.camera.set_aspect(width as f32, height as f32);
-        self.camera_uniform.update_from_camera(&self.camera);
-        self.gpu.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(&[self.camera_uniform]),
+    /// Render the admitted structure scene through an export-owned configuration.
+    pub(crate) fn render_offscreen(
+        &self,
+        config: &PublicationRenderConfig,
+    ) -> Result<PublicationRenderResult, String> {
+        let publication_bond_instance_count =
+            u32::try_from(config.publication_bond_instances.len())
+                .map_err(|_| "publication bond instance count overflow".to_owned())?;
+        if publication_bond_instance_count
+            != config.admission.request.publication_bond_instance_count
+        {
+            return Err("publication bond scene changed after admission".to_owned());
+        }
+        self.validate_publication_export_receipt(&config.admission)?;
+        if config.width != config.admission.request.width
+            || config.height != config.admission.request.height
+        {
+            return Err("publication render dimensions do not match admission".to_owned());
+        }
+        let full_output_len = usize::try_from(
+            u64::from(config.width)
+                .checked_mul(u64::from(config.height))
+                .and_then(|pixels| pixels.checked_mul(4))
+                .ok_or_else(|| "publication output size overflow".to_owned())?,
+        )
+        .map_err(|_| "publication output exceeds addressable memory".to_owned())?;
+        let mut full_output = Vec::new();
+        full_output
+            .try_reserve_exact(full_output_len)
+            .map_err(|_| "publication output allocation failed".to_owned())?;
+        full_output.resize(full_output_len, 0);
+        let publication_pipelines = PublicationPipelines::new(
+            &self.gpu.device,
+            config.target_format,
+            config.selected_samples,
         );
+        let publication_look_uniform =
+            PublicationLookUniform::from_profile(config.look_profile, config.camera.is_perspective);
+        let publication_look_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Look Uniform Buffer"),
+                    contents: bytemuck::bytes_of(&publication_look_uniform),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let publication_look_bind_group =
+            self.gpu
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Publication Look Bind Group"),
+                    layout: &publication_pipelines.look_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: publication_look_buffer.as_entire_binding(),
+                    }],
+                });
+        let publication_bond_buffer = (!config.publication_bond_instances.is_empty()).then(|| {
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Element Bond Instance Buffer"),
+                    contents: bytemuck::cast_slice(&config.publication_bond_instances),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+        });
+        let publication_bond_buffer = publication_bond_buffer.as_ref();
+        let publication_cell_line_color =
+            publication_srgb_rgba_to_linear(config.cell_line_style.cell_line_color_rgba);
+        let publication_cell_lines: Vec<LineVertex> = self
+            .cell_line_vertices
+            .iter()
+            .map(|line| LineVertex {
+                position: line.position,
+                color: publication_cell_line_color,
+            })
+            .collect();
+        let publication_cell_line_buffer = (!publication_cell_lines.is_empty()).then(|| {
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Cell Line Buffer"),
+                    contents: bytemuck::cast_slice(&publication_cell_lines),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+        });
+        let publication_cell_line_buffer = publication_cell_line_buffer.as_ref();
 
-        // Use the same format as the surface so existing pipelines are compatible
-        let tex_format = self.gpu.surface_format();
+        for tile_row in 0..config.tile_layout[1] {
+            let tile_y = tile_row
+                .checked_mul(config.tile_dimensions[1])
+                .ok_or_else(|| "publication tile y offset overflow".to_owned())?;
+            let tile_height = config
+                .height
+                .checked_sub(tile_y)
+                .ok_or_else(|| "publication tile y offset exceeds output height".to_owned())?
+                .min(config.tile_dimensions[1]);
+            for tile_column in 0..config.tile_layout[0] {
+                let tile_x = tile_column
+                    .checked_mul(config.tile_dimensions[0])
+                    .ok_or_else(|| "publication tile x offset overflow".to_owned())?;
+                let tile_width = config
+                    .width
+                    .checked_sub(tile_x)
+                    .ok_or_else(|| "publication tile x offset exceeds output width".to_owned())?
+                    .min(config.tile_dimensions[0]);
+                let tile_camera = config.camera;
+                let current_tile = PublicationRenderConfig {
+                    width: tile_width,
+                    height: tile_height,
+                    camera: tile_camera,
+                    background: config.background,
+                    alpha_mode: config.alpha_mode,
+                    target_format: config.target_format,
+                    requested_samples: config.requested_samples,
+                    selected_samples: config.selected_samples,
+                    tile_dimensions: [tile_width, tile_height],
+                    tile_layout: [1, 1],
+                    look_profile: config.look_profile,
+                    cell_line_style: config.cell_line_style,
+                    publication_bond_instances: Vec::new(),
+                    readback_layout: offscreen_readback_layout(tile_width, tile_height)
+                        .map_err(|error| error.to_string())?,
+                    admission: config.admission,
+                };
+                let rgba = self
+                    .render_offscreen_tile(
+                        &current_tile,
+                        &publication_pipelines,
+                        &publication_look_bind_group,
+                        publication_bond_buffer,
+                        publication_cell_line_buffer,
+                        publication_bond_instance_count,
+                        tile_x,
+                        tile_y,
+                        config.width,
+                        config.height,
+                    )?
+                    .into_rgba();
+                let tile_row_bytes = usize::try_from(
+                    u64::from(tile_width)
+                        .checked_mul(4)
+                        .ok_or_else(|| "publication tile row overflow".to_owned())?,
+                )
+                .map_err(|_| "publication tile row overflow".to_owned())?;
+                let full_row_bytes = usize::try_from(
+                    u64::from(config.width)
+                        .checked_mul(4)
+                        .ok_or_else(|| "publication output row overflow".to_owned())?,
+                )
+                .map_err(|_| "publication output row overflow".to_owned())?;
+                for row in 0..usize::try_from(tile_height)
+                    .map_err(|_| "tile height overflow".to_owned())?
+                {
+                    let source_start = row
+                        .checked_mul(tile_row_bytes)
+                        .ok_or_else(|| "publication tile source offset overflow".to_owned())?;
+                    let source_end = source_start
+                        .checked_add(tile_row_bytes)
+                        .ok_or_else(|| "publication tile source end overflow".to_owned())?;
+                    let destination_row = usize::try_from(tile_y)
+                        .map_err(|_| "publication tile origin overflow".to_owned())?
+                        .checked_add(row)
+                        .ok_or_else(|| "publication destination row overflow".to_owned())?;
+                    let destination_column = usize::try_from(tile_x)
+                        .map_err(|_| "publication tile origin overflow".to_owned())?
+                        .checked_mul(4)
+                        .ok_or_else(|| "publication destination column overflow".to_owned())?;
+                    let destination_start = destination_row
+                        .checked_mul(full_row_bytes)
+                        .and_then(|offset| offset.checked_add(destination_column))
+                        .ok_or_else(|| "publication destination offset overflow".to_owned())?;
+                    let destination_end = destination_start
+                        .checked_add(tile_row_bytes)
+                        .ok_or_else(|| "publication destination end overflow".to_owned())?;
+                    let source = rgba
+                        .get(source_start..source_end)
+                        .ok_or_else(|| "publication tile source range is invalid".to_owned())?;
+                    let destination = full_output
+                        .get_mut(destination_start..destination_end)
+                        .ok_or_else(|| "publication destination range is invalid".to_owned())?;
+                    destination.copy_from_slice(source);
+                }
+            }
+        }
+        Ok(PublicationRenderResult {
+            rgba: full_output,
+            width: config.width,
+            height: config.height,
+            alpha_mode: config.alpha_mode,
+        })
+    }
 
-        // Create off-screen color texture
+    fn render_offscreen_tile(
+        &self,
+        config: &PublicationRenderConfig,
+        publication_pipelines: &PublicationPipelines,
+        publication_look_bind_group: &wgpu::BindGroup,
+        publication_bond_buffer: Option<&wgpu::Buffer>,
+        publication_cell_line_buffer: Option<&wgpu::Buffer>,
+        publication_bond_instance_count: u32,
+        tile_x: u32,
+        tile_y: u32,
+        full_width: u32,
+        full_height: u32,
+    ) -> Result<PublicationRenderResult, String> {
+        self.validate_publication_export_receipt(&config.admission)?;
+        if config.target_format != self.gpu.surface_format() {
+            return Err("publication render target format changed after configuration".to_owned());
+        }
+        if config.requested_samples != 4
+            || !matches!(config.selected_samples, 1 | 4)
+            || (config.selected_samples == 4 && !self.gpu.render_config.publication_msaa_x4)
+        {
+            return Err(
+                "publication sampling selection is incompatible with active GPU capabilities"
+                    .to_owned(),
+            );
+        }
+        if config.alpha_mode != PublicationAlphaMode::Premultiplied {
+            return Err("publication render alpha policy is unsupported".to_owned());
+        }
+        let width = config.width;
+        let height = config.height;
+        self.gpu
+            .device
+            .push_error_scope(wgpu::ErrorFilter::Internal);
+        self.gpu
+            .device
+            .push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        self.gpu
+            .device
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+
+        let mut export_camera_uniform = CameraUniform::new();
+        export_camera_uniform.update_from_camera_tile(
+            &config.camera,
+            tile_x,
+            tile_y,
+            width,
+            height,
+            full_width,
+            full_height,
+        );
+        let export_camera_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Export Camera Uniform Buffer"),
+                    contents: bytemuck::cast_slice(&[export_camera_uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let export_camera_bind_group =
+            self.gpu
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Publication Export Camera Bind Group"),
+                    layout: &publication_pipelines.camera_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: export_camera_buffer.as_entire_binding(),
+                    }],
+                });
+
+        let tex_format = config.target_format;
+        let needs_transparent = config.admission.request.needs_transparent_depth;
+
+        // The resolve texture is always single-sample and is the only texture copied to host.
         let color_texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Offscreen Color Texture"),
+            label: Some("Publication Resolve Color Texture"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -1457,17 +2572,60 @@ impl Renderer {
             view_formats: &[],
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let multisample_color = (config.selected_samples > 1).then(|| {
+            self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Publication MSAA Color Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: config.selected_samples,
+                dimension: wgpu::TextureDimension::D2,
+                format: tex_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+        });
+        let multisample_color_view = multisample_color
+            .as_ref()
+            .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        let render_color_view = multisample_color_view.as_ref().unwrap_or(&color_view);
+        let depth_replay_color = (needs_transparent && config.selected_samples > 1).then(|| {
+            self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Publication Depth Replay Color Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: config.selected_samples,
+                dimension: wgpu::TextureDimension::D2,
+                format: tex_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+        });
+        let depth_replay_color_view = depth_replay_color
+            .as_ref()
+            .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
 
-        // Create off-screen depth textures (dual-pass)
-        let (offscreen_opaque_depth, offscreen_opaque_depth_view) =
-            pipeline::create_depth_texture(&self.gpu.device, width, height);
-        let (offscreen_transparent_depth, offscreen_transparent_depth_view) =
-            pipeline::create_transparent_depth_texture(&self.gpu.device, width, height);
-
-        // Temporarily rebind volume pipeline depth for offscreen size
-        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
-            vol_pipe.update_depth_view(&self.gpu.device, &offscreen_opaque_depth_view);
-        }
+        let (offscreen_opaque_depth, offscreen_opaque_depth_view) = pipeline::create_depth_texture(
+            &self.gpu.device,
+            width,
+            height,
+            config.selected_samples,
+        );
+        let offscreen_transparent_depth = needs_transparent.then(|| {
+            pipeline::create_transparent_depth_texture(
+                &self.gpu.device,
+                width,
+                height,
+                config.selected_samples,
+            )
+        });
 
         let mut encoder = self
             .gpu
@@ -1481,10 +2639,14 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Offscreen Opaque Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_view,
-                    resolve_target: None,
+                    view: render_color_view,
+                    resolve_target: if config.selected_samples > 1 && !needs_transparent {
+                        Some(&color_view)
+                    } else {
+                        None
+                    },
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color),
+                        load: wgpu::LoadOp::Clear(config.background),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1500,78 +2662,119 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_pipeline(&publication_pipelines.render);
+            pass.set_bind_group(0, &export_camera_bind_group, &[]);
+            pass.set_bind_group(1, publication_look_bind_group, &[]);
             if self.instance_count > 0 {
                 pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
                 pass.draw(0..6, 0..self.instance_count);
             }
 
             if self.show_cell && self.cell_line_count > 0 {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                let publication_cell_line_buffer = publication_cell_line_buffer
+                    .ok_or_else(|| "publication cell line buffer is missing".to_owned())?;
+                pass.set_pipeline(&publication_pipelines.line);
+                pass.set_bind_group(0, &export_camera_bind_group, &[]);
+                pass.set_vertex_buffer(0, publication_cell_line_buffer.slice(..));
                 pass.draw(0..self.cell_line_count, 0..1);
             }
 
-            if self.measurement_line_count > 0 {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.measurement_line_buffer.slice(..));
-                pass.draw(0..self.measurement_line_count, 0..1);
-            }
-
-            if self.show_bonds && self.bond_instance_count > 0 {
-                pass.set_pipeline(&self.bond_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
-                pass.draw(0..72, 0..self.bond_instance_count);
-            }
-
-            if self.show_hoppings && self.hopping_instance_count > 0 {
-                pass.set_pipeline(&self.bond_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.hopping_instance_buffer.slice(..));
-                pass.draw(0..72, 0..self.hopping_instance_count);
+            if self.show_bonds && publication_bond_instance_count > 0 {
+                let publication_bond_buffer = publication_bond_buffer
+                    .ok_or_else(|| "publication bond buffer is missing".to_owned())?;
+                pass.set_pipeline(&publication_pipelines.bond);
+                pass.set_bind_group(0, &export_camera_bind_group, &[]);
+                pass.set_bind_group(1, publication_look_bind_group, &[]);
+                pass.set_vertex_buffer(0, publication_bond_buffer.slice(..));
+                pass.draw(0..72, 0..publication_bond_instance_count);
             }
         }
 
-        // ═══ Offscreen Pass 2: Transparent ═══
-        let needs_transparent = (self.show_volume
-            && (self.volume_render_mode == RendererVolumeMode::Volume
-                || self.volume_render_mode == RendererVolumeMode::Both))
-            || (self.show_isosurface
-                && (self.volume_render_mode == RendererVolumeMode::Isosurface
-                    || self.volume_render_mode == RendererVolumeMode::Both))
-            || self.transparent_instance_count > 0;
-
-        if needs_transparent {
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &offscreen_opaque_depth,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &offscreen_transparent_depth,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
+        // ═══ Offscreen Pass 2: Transparent structure atoms ═══
+        if let Some((offscreen_transparent_depth, offscreen_transparent_depth_view)) =
+            &offscreen_transparent_depth
+        {
+            if config.selected_samples == 1 {
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &offscreen_opaque_depth,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &offscreen_transparent_depth,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            } else {
+                let replay_color_view = depth_replay_color_view.as_ref().ok_or_else(|| {
+                    "publication depth replay color attachment is missing".to_owned()
+                })?;
+                let mut replay = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Publication Opaque Depth Replay Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: replay_color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: offscreen_transparent_depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                replay.set_pipeline(&publication_pipelines.render);
+                replay.set_bind_group(0, &export_camera_bind_group, &[]);
+                replay.set_bind_group(1, publication_look_bind_group, &[]);
+                if self.instance_count > 0 {
+                    replay.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                    replay.draw(0..6, 0..self.instance_count);
+                }
+                if self.show_cell && self.cell_line_count > 0 {
+                    let publication_cell_line_buffer = publication_cell_line_buffer
+                        .ok_or_else(|| "publication cell line buffer is missing".to_owned())?;
+                    replay.set_pipeline(&publication_pipelines.line);
+                    replay.set_bind_group(0, &export_camera_bind_group, &[]);
+                    replay.set_vertex_buffer(0, publication_cell_line_buffer.slice(..));
+                    replay.draw(0..self.cell_line_count, 0..1);
+                }
+                if self.show_bonds && publication_bond_instance_count > 0 {
+                    let publication_bond_buffer = publication_bond_buffer
+                        .ok_or_else(|| "publication bond buffer is missing".to_owned())?;
+                    replay.set_pipeline(&publication_pipelines.bond);
+                    replay.set_bind_group(0, &export_camera_bind_group, &[]);
+                    replay.set_bind_group(1, publication_look_bind_group, &[]);
+                    replay.set_vertex_buffer(0, publication_bond_buffer.slice(..));
+                    replay.draw(0..72, 0..publication_bond_instance_count);
+                }
+            }
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Offscreen Transparent Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &color_view,
-                        resolve_target: None,
+                        view: render_color_view,
+                        resolve_target: if config.selected_samples > 1 {
+                            Some(&color_view)
+                        } else {
+                            None
+                        },
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -1589,48 +2792,19 @@ impl Renderer {
                     occlusion_query_set: None,
                 });
 
-                if self.show_volume
-                    && (self.volume_render_mode == RendererVolumeMode::Volume
-                        || self.volume_render_mode == RendererVolumeMode::Both)
-                {
-                    if let Some(vol_pipe) = &self.volume_raycast_pipeline {
-                        vol_pipe.render(&mut pass, &self.camera_bind_group);
-                    }
-                }
-
-                if self.show_isosurface
-                    && (self.volume_render_mode == RendererVolumeMode::Isosurface
-                        || self.volume_render_mode == RendererVolumeMode::Both)
-                {
-                    if let Some(iso_pipe) = &self.isosurface_pipeline {
-                        iso_pipe.draw(&mut pass, &self.camera_bind_group);
-                    }
-                }
-
                 if self.transparent_instance_count > 0 {
-                    pass.set_pipeline(&self.transparent_pipeline);
-                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_pipeline(&publication_pipelines.transparent);
+                    pass.set_bind_group(0, &export_camera_bind_group, &[]);
+                    pass.set_bind_group(1, publication_look_bind_group, &[]);
                     pass.set_vertex_buffer(0, self.transparent_instance_buffer.slice(..));
                     pass.draw(0..6, 0..self.transparent_instance_count);
                 }
             }
         }
 
-        // Restore volume pipeline depth binding to on-screen size
-        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
-            vol_pipe.update_depth_view(&self.gpu.device, &self.opaque_depth_view);
-        }
-
-        // Copy texture to a CPU-readable buffer
-        let bytes_per_pixel: u32 = 4;
-        let unpadded_bytes_per_row = bytes_per_pixel * width;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
-        let staging_size = (padded_bytes_per_row * height) as u64;
-
         let staging_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Offscreen Staging Buffer"),
-            size: staging_size,
+            size: config.readback_layout.staging_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1646,7 +2820,7 @@ impl Renderer {
                 buffer: &staging_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
+                    bytes_per_row: Some(config.readback_layout.padded_bytes_per_row),
                     rows_per_image: Some(height),
                 },
             },
@@ -1658,6 +2832,7 @@ impl Renderer {
         );
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
+        finish_publication_export_error_scopes(&self.gpu.device)?;
 
         // Map the staging buffer and read the data
         let buffer_slice = staging_buffer.slice(..);
@@ -1671,47 +2846,30 @@ impl Renderer {
             .map_err(|e| format!("Failed to receive map result: {}", e))?
             .map_err(|e| format!("Buffer map failed: {:?}", e))?;
 
-        // Strip row padding and convert BGRA -> RGBA
         let data = buffer_slice.get_mapped_range();
-        let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
-        let is_bgra = matches!(
-            tex_format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        let unpacked = unpack_publication_readback(
+            &data,
+            config.readback_layout,
+            height,
+            config.target_format,
         );
-
-        for row in 0..height {
-            let offset = (row * padded_bytes_per_row) as usize;
-            let row_end = offset + (unpadded_bytes_per_row as usize);
-            let row_data = &data[offset..row_end];
-            if is_bgra {
-                // Swap B and R channels: BGRA -> RGBA
-                for pixel in row_data.chunks_exact(4) {
-                    rgba_data.push(pixel[2]); // R
-                    rgba_data.push(pixel[1]); // G
-                    rgba_data.push(pixel[0]); // B
-                    rgba_data.push(pixel[3]); // A
-                }
-            } else {
-                rgba_data.extend_from_slice(row_data);
-            }
-        }
         drop(data);
         staging_buffer.unmap();
-
-        // Restore camera aspect ratio
-        self.camera
-            .set_aspect(original_aspect_w as f32, original_aspect_h as f32);
-        self.update_camera();
+        let rgba_data = unpacked?;
 
         log::info!(
-            "Offscreen render complete: {}x{}, {} bytes (bg={})",
+            "Offscreen render complete: {}x{}, {} bytes",
             width,
             height,
-            rgba_data.len(),
-            bg_mode
+            rgba_data.len()
         );
 
-        Ok(rgba_data)
+        Ok(PublicationRenderResult {
+            rgba: rgba_data,
+            width,
+            height,
+            alpha_mode: config.alpha_mode,
+        })
     }
 
     /// Clear volumetric pipelines when switching to a non-volumetric file.
@@ -1777,12 +2935,12 @@ impl Renderer {
             };
             let volume_raycast_pipeline =
                 crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
-                &self.gpu.device,
-                self.gpu.surface_format(),
-                &self.camera_bind_group_layout,
-                vol,
-                &self.opaque_depth_view,
-            );
+                    &self.gpu.device,
+                    self.gpu.surface_format(),
+                    &self.camera_bind_group_layout,
+                    vol,
+                    &self.opaque_depth_view,
+                );
             PreparedVolumetric {
                 isosurface_pipeline,
                 volume_raycast_pipeline,
@@ -1810,8 +2968,8 @@ impl Renderer {
                 self.gpu
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Isosurface Compute Encoder"),
-            });
+                        label: Some("Isosurface Compute Encoder"),
+                    });
             iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);
             self.gpu.queue.submit(std::iter::once(encoder.finish()));
         }
@@ -1828,6 +2986,129 @@ impl Renderer {
     pub fn set_isosurface_opacity(&mut self, opacity: f32) {
         if let Some(iso_pipe) = &mut self.isosurface_pipeline {
             iso_pipe.set_opacity(&self.gpu.queue, opacity);
+        }
+    }
+}
+
+#[cfg(test)]
+mod publication_export_tests {
+    use super::*;
+    use crate::renderer::instance::BondInstance;
+
+    fn test_camera(is_perspective: bool) -> Camera {
+        Camera {
+            eye: glam::Vec3::new(0.0, 0.0, 30.0),
+            target: glam::Vec3::ZERO,
+            up: glam::Vec3::Y,
+            fovy_deg: 45.0,
+            aspect: 1.0,
+            znear: 0.1,
+            zfar: 200.0,
+            is_perspective,
+            orthographic_scale: 30.0,
+        }
+    }
+
+    fn assert_inside_framing_margin(camera: &Camera, point: glam::Vec3) {
+        let clip =
+            (camera.build_projection_matrix() * camera.build_view_matrix()) * point.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        let inner = 1.0 - 2.0 * PUBLICATION_FRAMING_MARGIN;
+        assert!(ndc.x.abs() <= inner + 1.0e-5, "x={}", ndc.x);
+        assert!(ndc.y.abs() <= inner + 1.0e-5, "y={}", ndc.y);
+        assert!((0.0..=1.0).contains(&ndc.z), "z={}", ndc.z);
+    }
+
+    #[test]
+    fn current_background_uses_actual_luminance() {
+        let light =
+            cell_line_style_for_background(PublicationBackground::Current, wgpu::Color::WHITE)
+                .unwrap();
+        let dark =
+            cell_line_style_for_background(PublicationBackground::Current, wgpu::Color::BLACK)
+                .unwrap();
+        assert_eq!(light.cell_line_color_rgba, [0.18, 0.22, 0.28, 1.0]);
+        assert_eq!(dark.cell_line_color_rgba, [0.82, 0.86, 0.92, 1.0]);
+        assert!(
+            cell_line_style_for_background(
+                PublicationBackground::Current,
+                wgpu::Color {
+                    r: f64::NAN,
+                    ..wgpu::Color::BLACK
+                },
+            )
+            .is_err()
+        );
+        let converted = publication_srgb_rgba_to_linear([0.0, 0.04045, 1.0, 0.5]);
+        assert_eq!(converted[0], 0.0);
+        assert!((converted[1] - 0.003130805).abs() <= 1.0e-8);
+        assert_eq!(converted[2], 1.0);
+        assert_eq!(converted[3], 0.5);
+    }
+
+    #[test]
+    fn orthographic_framing_includes_atoms_cell_lines_and_bonds() {
+        let atoms = [AtomInstance {
+            position: [0.0, 0.0, 0.0],
+            radius: 1.0,
+            color: [1.0; 4],
+        }];
+        let cell_lines = [LineVertex {
+            position: [10.0, 0.0, 0.0],
+            color: [1.0; 4],
+        }];
+        let bonds = [BondInstance {
+            start: [0.0, -8.0, 0.0],
+            radius: 0.5,
+            end: [0.0, 8.0, 0.0],
+            _pad: 0.0,
+            color: [1.0; 4],
+        }];
+        let camera = fit_visible_structure_to_export(
+            test_camera(false),
+            1000,
+            1000,
+            &atoms,
+            &[],
+            &cell_lines,
+            &bonds,
+        )
+        .unwrap();
+
+        for point in [
+            glam::Vec3::new(-1.0, 0.0, 0.0),
+            glam::Vec3::new(10.0, 0.0, 0.0),
+            glam::Vec3::new(0.0, -8.5, 0.0),
+            glam::Vec3::new(0.0, 8.5, 0.0),
+        ] {
+            assert_inside_framing_margin(&camera, point);
+        }
+    }
+
+    #[test]
+    fn perspective_framing_uses_the_nearest_depth_extent() {
+        let atoms = [
+            AtomInstance {
+                position: [-5.0, -3.0, 8.0],
+                radius: 1.0,
+                color: [1.0; 4],
+            },
+            AtomInstance {
+                position: [5.0, 3.0, -8.0],
+                radius: 1.0,
+                color: [1.0; 4],
+            },
+        ];
+        let camera =
+            fit_visible_structure_to_export(test_camera(true), 1600, 900, &atoms, &[], &[], &[])
+                .unwrap();
+
+        for x in [-6.0, 6.0] {
+            for y in [-4.0, 4.0] {
+                for z in [-9.0, 9.0] {
+                    assert_inside_framing_margin(&camera, glam::Vec3::new(x, y, z));
+                }
+            }
         }
     }
 }

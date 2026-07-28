@@ -1,0 +1,230 @@
+{
+  "schema": "crystalcanvas.export-recipe",
+  "schema_version": 8,
+  "kind": "publication_raster",
+  "application_version": "0.6.2",
+  "generated_at_unix_ms": 1785236791931,
+  "success": true,
+  "source": {
+    "structure_name": "TiO2",
+    "source_version": 1,
+    "intrinsic_atom_count": 6,
+    "structure_hash": "c36bf547318d5deb4379006ed6198ea1616ff8a7c3c832dd465f588ca2da30d8",
+    "structure_hash_algorithm": "sha256-canonical-crystal-state-v1",
+    "source_length_unit": "angstrom",
+    "coordinate_space": "cartesian_right_handed_y_up"
+  },
+  "camera": {
+    "eye": [
+      -2.6595063,
+      8.760534,
+      9.049313
+    ],
+    "target": [
+      2.2999187,
+      2.2999187,
+      1.4796067
+    ],
+    "up": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "projection": "perspective",
+    "fovy_deg": 45.0,
+    "orthographic_scale": 8.339368,
+    "znear": 0.1,
+    "zfar": 200.0,
+    "aspect_policy": "export_dimensions_override_interactive_aspect"
+  },
+  "scene": {
+    "atoms": true,
+    "bonds": true,
+    "unit_cell": true,
+    "measurements": false,
+    "hoppings": false,
+    "isosurface": false,
+    "volume": false,
+    "stable_periodic_image_policy": "current_renderer_visible_images"
+  },
+  "materials": {
+    "material_profile": "studio",
+    "look_profile": {
+      "profile_id": "studio",
+      "profile_version": "v1",
+      "key_direction": [
+        0.42,
+        0.68,
+        0.60100085
+      ],
+      "key_intensity": 0.88,
+      "fill_direction": [
+        -0.64,
+        0.12,
+        0.75894666
+      ],
+      "fill_intensity": 0.3,
+      "rim_direction": [
+        0.16,
+        -0.82,
+        0.5488169
+      ],
+      "rim_intensity": 0.3,
+      "ambient": 0.13,
+      "roughness": 0.38,
+      "specular": 0.28,
+      "opacity": 1.0,
+      "exposure": 0.1,
+      "tone_mapping": "aces_fitted",
+      "input_color_space": "sRGB_straight_alpha",
+      "output_color_space": "sRGB",
+      "bond_color_mode": "uniform",
+      "cell_line_width_pixels": 1.0,
+      "depth_enhancement": "disabled"
+    },
+    "atom_radius_policy": "mapped_covalent_radius_angstrom_scaled",
+    "atom_radius_scale": 1.0,
+    "bond_tolerance": 0.45,
+    "bond_radius": 0.08,
+    "radius_length_unit": "angstrom",
+    "bond_color_rgba": [
+      0.65,
+      0.65,
+      0.65,
+      1.0
+    ],
+    "custom_atom_colors_rgba": {},
+    "color_value_space": "sRGB_straight_alpha"
+  },
+  "rendering": {
+    "lighting_policy": "publication_profile_v1",
+    "ssao": "disabled",
+    "shadows": "disabled",
+    "requested_samples": 4,
+    "selected_samples": 4,
+    "selected_capabilities": [
+      "msaa_x4",
+      "depth32float_msaa_x4",
+      "rgba8_readback"
+    ],
+    "fallback_policy": "fallback_4x_to_1x_on_unsupported_active_format",
+    "applied_fallbacks": [],
+    "adapter_name": "Intel(R) Iris(TM) Plus Graphics 645",
+    "backend": "Metal",
+    "device_type": "IntegratedGpu",
+    "render_target_format": "Bgra8UnormSrgb",
+    "max_texture_dimension_2d": 8192,
+    "max_buffer_size": 268435456,
+    "max_storage_buffer_size": 134217728,
+    "supports_compute_shaders": true,
+    "publication_admission": {
+      "policy_version": 6,
+      "request": {
+        "width": 3840,
+        "height": 2160,
+        "publication_bond_instance_count": 5,
+        "needs_transparent_depth": false,
+        "has_measurement_overlays": false,
+        "has_hopping_overlays": false,
+        "has_isosurface": false,
+        "has_volume": false,
+        "has_phonon_presentation": false,
+        "has_atom_drag": false,
+        "show_bz": false,
+        "has_measurement_state": false,
+        "has_selection_highlights": false,
+        "has_wannier_overlay": false,
+        "has_active_phonon_state": false
+      },
+      "limits": {
+        "max_texture_dimension_2d": 8192,
+        "max_buffer_size": 268435456,
+        "publication_msaa_x4": true
+      },
+      "budgets": {
+        "max_readback_bytes": 201326592,
+        "max_transient_gpu_bytes": 402653184,
+        "max_peak_cpu_bytes": 402653184,
+        "gpu_driver_reserve_bytes": 16777216,
+        "cpu_encoder_reserve_bytes": 16777216,
+        "encoded_overhead_bytes": 1048576,
+        "max_recipe_bytes": 1048576
+      },
+      "render_plan": {
+        "requested_samples": 4,
+        "selected_samples": 4,
+        "tile_dimensions": [
+          3840,
+          2160
+        ],
+        "tile_layout": [
+          1,
+          1
+        ],
+        "tile_overlap_pixels": 0
+      },
+      "estimate": {
+        "staging_bytes": 33177600,
+        "rgba_bytes": 33177600,
+        "tile_rgba_bytes": 33177600,
+        "resolve_color_bytes": 33177600,
+        "msaa_color_bytes": 132710400,
+        "opaque_depth_bytes": 132710400,
+        "transparent_depth_bytes": 0,
+        "depth_replay_color_bytes": 0,
+        "look_uniform_bytes": 256,
+        "publication_bond_bytes": 240,
+        "jpeg_rgb_bytes": 24883200,
+        "max_encoded_bytes": 34226176,
+        "export_camera_uniform_bytes": 256,
+        "gpu_driver_reserve_bytes": 16777216,
+        "cpu_encoder_reserve_bytes": 16777216,
+        "transient_gpu_bytes": 348553968,
+        "readback_peak_cpu_bytes": 99533040,
+        "png_encode_peak_cpu_bytes": 49955056,
+        "jpeg_encode_peak_cpu_bytes": 74838256,
+        "peak_cpu_bytes": 99533040
+      }
+    }
+  },
+  "output": {
+    "width": 3840,
+    "height": 2160,
+    "raster_format": "png",
+    "bit_depth_per_channel": 8,
+    "color_space": "sRGB",
+    "color_profile": {
+      "name": "sRGB IEC61966-2.1",
+      "version": "ICC v4.3",
+      "sha256": "145f198a435bb98094112738b658ecdfda79652575ec5594e730c69d4e86cf77"
+    },
+    "requested_background": "transparent",
+    "effective_background": "transparent",
+    "effective_background_rgba_linear": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "readback_alpha_policy": "premultiplied",
+    "encoded_alpha_policy": "straight",
+    "codec": {
+      "kind": "png",
+      "compression": "balanced",
+      "filter": "adaptive"
+    },
+    "tile_layout": [
+      1,
+      1
+    ],
+    "tile_dimensions": [
+      3840,
+      2160
+    ],
+    "tile_overlap_pixels": 0
+  },
+  "artifact": {
+    "file_name": "rutile-4k-transparent-studio-perspective.png",
+    "sha256": "38bb14a9708eac37e76b0a32df82aca137b6a1416b34d588e4bc5e0b17de9983"
+  }
+}

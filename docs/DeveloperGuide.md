@@ -1,6 +1,6 @@
 # CrystalCanvas Developer Guide
 
-> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
+> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
 
 CrystalCanvas is a visualization-first desktop application. It turns supplied crystal structures and three-dimensional scientific data into interactive real-space or reciprocal-space scenes and reproducible figures. It does not solve electronic-structure, EPC, transport, superconductivity, TCI, or workflow problems.
 
@@ -49,6 +49,9 @@ src-tauri/src/
 ├── undo.rs                         # versioned undo/redo history
 ├── io/                             # public-format import and export
 ├── renderer/                       # wgpu renderer, picking, volume and BZ paths
+├── export_recipe.rs                # versioned JSON sidecar and publication recipe
+├── scene_export.rs                 # publication scene snapshot and GLB admission
+├── blender_export.rs               # one-way glTF 2.0 binary writer
 ├── volumetric.rs, phonon.rs,
 │   wannier.rs, brillouin_zone.rs   # visualization data and presentation logic
 └── ffi/                            # thin Rust/C++ bridge
@@ -153,7 +156,7 @@ Atom movement follows this boundary through one `begin_atom_drag` session, coale
 
 Phonon playback phase is renderer-owned. React sends explicit play/pause, display-scale, and reset operations, but it does not run a per-frame phonon IPC loop or rebuild the complete Cartesian scene for every frame.
 
-The `v0.7.0` development line owns the separate high-fidelity publication-rendering path. It must remain separable from the low-cost interactive viewport.
+The `v0.7.0` publication-rendering path is a separate high-fidelity export renderer with its own MSAA pipelines, tiled composition, fixed look profiles, and export-only camera. It remains separable from the low-cost interactive viewport. Key modules: `renderer/publication_look.rs` (profiles and uniforms), `renderer/renderer.rs` (tiled export loop), `export_recipe.rs` (versioned sidecar), `scene_export.rs` (snapshot admission), and `blender_export.rs` (GLB writer).
 
 ### Prepared atom scenes
 

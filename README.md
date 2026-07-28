@@ -10,9 +10,9 @@ CrystalCanvas is a research-oriented visualization application built with Rust, 
 
 The project does not aim to become a general electronic-structure solver, workflow manager, database browser, or AI research platform. DFT, DFPT, Wannier, EPC, transport, superconductivity, and many-body calculations remain in specialized external codes. CrystalCanvas focuses on the part ordinary two-dimensional plotting tools handle poorly: structure-aware three-dimensional scientific visualization.
 
-> **Latest release**: `v0.6.2`
+> **Latest release**: `v0.7.0`
 >
-> **Current development line**: `v0.7.0` publication-rendering core
+> **Current development line**: `v0.8.0` advanced volumetric and field figures
 >
 > **Primary platform**: macOS Intel and Apple Silicon
 
@@ -20,7 +20,7 @@ The project does not aim to become a general electronic-structure solver, workfl
 
 ## Download
 
-[![Download for macOS](https://img.shields.io/badge/Download_v0.6.2-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
+[![Download for macOS](https://img.shields.io/badge/Download_v0.7.0-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
 
 > [!WARNING]
 > The application is not signed with a paid Apple Developer certificate. If macOS blocks the first launch, move `CrystalCanvas.app` to `/Applications`, right-click it, choose **Open**, and confirm once more.
@@ -91,7 +91,7 @@ Quantitative scalar colors must remain interpretable. Lighting and ambient occlu
 
 ## Roadmap
 
-`v0.6.2` is released. Its workbench hardening, renderer-owned interaction updates, lifecycle gates, and retained performance evidence are recorded in the [release notes](CHANGELOG.md#062---2026-07-26).
+`v0.7.0` is released. Its bounded publication renderer, fixed appearance profiles, versioned sidecars, and one-way Blender export are recorded in the [release notes](CHANGELOG.md#070---2026-07-28).
 
 | Version | Theme | Scope |
 |---|---|---|

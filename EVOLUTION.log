@@ -18,3 +18,11 @@
 - **Unrun checks**: full `cargo test`, C++ `ctest`, native Intel desktop smoke, Apple Silicon / Metal execution, and Ubuntu / Vulkan execution.
 - **Risk and impact**: the release can contain regressions that only the unrun physical or platform-specific checks would detect. Performance evidence remains limited to the authorized synthetic software workload and cannot support physical or scientific conclusions.
 - **Authorization boundary**: this exception authorizes the `v0.6.2` release and public tracking of its release/architecture evidence. It does not convert unrun checks to PASS or waive physics safety for future calculations.
+
+## 2026-07-28 — DELIVERY-2 Blender scientific display scale
+
+- **Authorized by**: user
+- **Scope**: One-way CrystalCanvas → Blender GLB publication scenes use `1 exported coordinate unit = 1 Å`.
+- **Evidence condition**: glTF 2.0 defines linear distances in metres, while crystal structures represented in strict SI scale are about `1e-10` units and are impractical for Blender viewport, clipping, and editing workflows.
+- **Risk and impact**: Generic glTF consumers can interpret the coordinates as metres. The artifact is a Blender-compatible scientific display scene, not a metre-scale general-purpose glTF asset.
+- **Authorization boundary**: sidecar and GLB extras must declare `coordinate_length_unit = angstrom`, `meters_per_exported_unit = 1e-10`, and `scale_policy = scientific_visualization`. This does not permit reverse import, change intrinsic scientific coordinates, or claim metre-scale glTF conformance.

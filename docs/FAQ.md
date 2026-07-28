@@ -1,12 +1,12 @@
 # CrystalCanvas FAQ and Troubleshooting
 
-> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
+> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
 
 ---
 
 ## Which platforms are supported?
 
-macOS Intel/Metal is the baseline development target. The `v0.6.2` release provides both Intel and Apple Silicon artifacts. Ubuntu/Vulkan is a secondary build and selected rendering-verification target; `v0.6.2` does not publish a Linux package. Windows support is deferred until the maintainer workflow requires it.
+macOS Intel/Metal is the baseline development target. The `v0.7.0` release provides both Intel and Apple Silicon artifacts. Ubuntu/Vulkan is a secondary build and selected rendering-verification target; `v0.7.0` does not publish a Linux package. Windows support is deferred until the maintainer workflow requires it.
 
 Do not treat a successful launch on a non-baseline platform as proof that every GPU path has been validated. Report the operating system, GPU, driver, backend, and an error log when opening an issue.
 

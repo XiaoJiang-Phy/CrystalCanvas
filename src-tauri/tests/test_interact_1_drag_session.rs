@@ -438,12 +438,16 @@ fn online_preview_uses_session_buffers_while_offscreen_keeps_canonical_ownership
     let online = source_between(
         renderer,
         "// ═══ Normal crystal rendering path ═══════════════════════════════",
-        "\n    /// Render the current scene to an off-screen texture",
+        "\n    /// Render the admitted structure scene through an export-owned configuration.",
     );
     let offscreen = source_between(
         renderer,
-        "pub fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "fn render_offscreen(",
+        "\n    /// Clear volumetric pipelines",
+    );
+    assert!(
+        !renderer.contains("pub fn render_offscreen("),
+        "offscreen rendering must not be exposed as a public renderer mutation surface"
     );
 
     for token in [

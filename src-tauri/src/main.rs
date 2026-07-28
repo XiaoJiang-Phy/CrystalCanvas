@@ -805,6 +805,7 @@ fn main() {
             commands::set_phonon_playing,
             commands::update_lattice_params,
             commands::export_image,
+            commands::export_blender_scene,
             commands::shift_termination,
             commands::add_measurement,
             commands::clear_measurements,

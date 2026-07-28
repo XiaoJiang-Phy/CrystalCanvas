@@ -2,6 +2,8 @@ use tauri::{Emitter, State};
 
 use super::{BaseCrystalState, VolumetricInfo};
 use crate::ipc::{ExportFileFormat, ExportImageBackground, IpcEnumInput, IpcError, IpcResult};
+use crate::renderer::publication_look::{PublicationLookProfile, PublicationLookProfileId};
+use crate::renderer::renderer::{PublicationBackground, PublicationRenderConfig};
 
 /// Load a CIF file into the state.
 #[tauri::command]
@@ -160,9 +162,22 @@ pub fn export_image(
     width: u32,
     height: u32,
     bg_mode: IpcEnumInput<ExportImageBackground>,
+    publication_profile: Option<IpcEnumInput<PublicationLookProfileId>>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
     let bg_mode = bg_mode.parse("bgMode")?;
+    let profile_id = publication_profile
+        .map(|profile| profile.parse("publicationProfile"))
+        .transpose()?
+        .unwrap_or(PublicationLookProfileId::ScientificGloss);
+    let primary_path = std::path::Path::new(&path);
+    let raster_format = crate::export_recipe::validate_publication_raster_targets(primary_path)
+        .map_err(IpcError::invalid_argument)?;
+    if matches!(bg_mode, ExportImageBackground::Transparent) && raster_format == "jpeg" {
+        log::info!("Transparent JPEG request will be composited onto white");
+    }
     log::info!(
         "export_image: {}x{}, bg={}, path={}",
         width,
@@ -171,52 +186,118 @@ pub fn export_image(
         path
     );
 
-    let mut renderer = renderer_state
+    let crystal = crystal_state
+        .lock()
+        .map_err(|e| IpcError::lock(format!("Failed to lock crystal state: {}", e)))?;
+    let settings = settings_state
+        .lock()
+        .map_err(|e| IpcError::lock(format!("Failed to lock settings: {}", e)))?;
+    let renderer = renderer_state
         .lock()
         .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
 
-    let rgba_data = renderer
-        .render_offscreen(width, height, bg_mode.as_str())
+    let look_profile = PublicationLookProfile::for_id(profile_id).map_err(IpcError::render)?;
+    let (recipe, publication_bond_instances) =
+        crate::export_recipe::PublicationRasterRecipe::from_current_scene(
+            &crystal,
+            &settings,
+            &renderer,
+            look_profile,
+            width,
+            height,
+            bg_mode.as_str(),
+            raster_format,
+        )
+        .map_err(IpcError::invalid_argument)?;
+    let publication_background = match recipe.output.effective_background.as_str() {
+        "transparent" => PublicationBackground::Transparent,
+        "white" => PublicationBackground::White,
+        "black" => PublicationBackground::Black,
+        "default" => PublicationBackground::Current,
+        _ => {
+            return Err(IpcError::render(
+                "publication recipe selected an unsupported effective background",
+            ));
+        }
+    };
+    drop(settings);
+    drop(crystal);
+
+    let publication_config: PublicationRenderConfig = renderer
+        .publication_render_config_with_profile(
+            &recipe.rendering.publication_admission,
+            publication_background,
+            look_profile,
+            publication_bond_instances,
+        )
         .map_err(IpcError::render)?;
-
-    // Determine output format from file extension
-    let path_lower = path.to_lowercase();
-    if path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg") {
-        // JPEG does not support transparency — composite onto white if transparent
-        let rgb_data: Vec<u8> = if matches!(bg_mode, ExportImageBackground::Transparent) {
-            rgba_data
-                .chunks_exact(4)
-                .flat_map(|px| {
-                    let a = px[3] as f32 / 255.0;
-                    [
-                        (px[0] as f32 * a + 255.0 * (1.0 - a)) as u8,
-                        (px[1] as f32 * a + 255.0 * (1.0 - a)) as u8,
-                        (px[2] as f32 * a + 255.0 * (1.0 - a)) as u8,
-                    ]
-                })
-                .collect()
-        } else {
-            rgba_data
-                .chunks_exact(4)
-                .flat_map(|px| [px[0], px[1], px[2]])
-                .collect()
-        };
-
-        let img: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> =
-            image::ImageBuffer::from_raw(width, height, rgb_data)
-                .ok_or_else(|| IpcError::render("Failed to create JPEG image buffer"))?;
-        img.save(&path)
-            .map_err(|e| IpcError::io(format!("Failed to save JPEG: {}", e)))?;
-    } else {
-        // Default: PNG (supports transparency)
-        let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
-            image::ImageBuffer::from_raw(width, height, rgba_data)
-                .ok_or_else(|| IpcError::render("Failed to create PNG image buffer"))?;
-        img.save(&path)
-            .map_err(|e| IpcError::io(format!("Failed to save PNG: {}", e)))?;
+    let publication_result = renderer
+        .render_offscreen(&publication_config)
+        .map_err(IpcError::render)?;
+    if publication_result.dimensions() != (width, height)
+        || !publication_result.is_premultiplied_alpha()
+    {
+        return Err(IpcError::render(
+            "publication render result does not match the requested output contract",
+        ));
     }
+    let rgba_data = publication_result.into_rgba();
 
-    log::info!("Image exported successfully to {}", path);
+    drop(renderer);
+
+    let recipe_path =
+        crate::export_recipe::write_publication_raster_pair(primary_path, rgba_data, recipe)
+            .map_err(IpcError::io)?;
+
+    log::info!(
+        "Image and export recipe written successfully to {} and {}",
+        path,
+        recipe_path.display()
+    );
+    Ok(())
+}
+
+/// Export the admitted structure scene as a one-way Blender-compatible GLB.
+#[tauri::command]
+pub fn export_blender_scene(
+    path: String,
+    publication_profile: IpcEnumInput<PublicationLookProfileId>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    let profile_id = publication_profile.parse("publicationProfile")?;
+    let primary_path = std::path::Path::new(&path);
+    crate::export_recipe::validate_publication_glb_targets(primary_path)
+        .map_err(IpcError::invalid_argument)?;
+    let crystal = crystal_state
+        .lock()
+        .map_err(|error| IpcError::lock(format!("Failed to lock crystal state: {error}")))?;
+    let settings = settings_state
+        .lock()
+        .map_err(|error| IpcError::lock(format!("Failed to lock settings: {error}")))?;
+    let renderer = renderer_state
+        .lock()
+        .map_err(|error| IpcError::lock(format!("Failed to lock renderer: {error}")))?;
+    let look_profile = PublicationLookProfile::for_id(profile_id).map_err(IpcError::render)?;
+    let scene = crate::scene_export::build_publication_scene_snapshot(
+        &crystal,
+        &settings,
+        &renderer,
+        look_profile,
+    )
+    .map_err(|error| IpcError::render(error.message))?;
+    let recipe = crate::export_recipe::PublicationGlbRecipe::from_scene(&crystal, &scene)
+        .map_err(IpcError::invalid_argument)?;
+    drop(renderer);
+    drop(settings);
+    drop(crystal);
+    let artifact = crate::blender_export::build_blender_glb(&scene, &recipe.export_id)
+        .map_err(|error| IpcError::render(error.message))?;
+    let mut recipe = recipe;
+    recipe.semantic_inventory = artifact.semantic_inventory;
+    crate::export_recipe::write_publication_glb_pair(primary_path, &artifact.bytes, recipe)
+        .map_err(IpcError::io)?;
     Ok(())
 }
 
