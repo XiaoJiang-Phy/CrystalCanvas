@@ -1,6 +1,6 @@
 # CrystalCanvas IPC Contract Reference
 
-> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
+> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
 
 This document describes the reviewed Rust/TypeScript IPC boundary. The machine-checked sources of truth are [ipc/inventory.json](../ipc/inventory.json), [src/ipc/commands.generated.ts](../src/ipc/commands.generated.ts), and [src/ipc/contracts.ts](../src/ipc/contracts.ts). After you change a command, event, or wire type, run `npm run ipc:inventory` and `npm run check:ipc`.
 
@@ -33,7 +33,7 @@ The following names are registered in the current inventory. Exact argument and 
 
 | Domain | Commands |
 |---|---|
-| State, settings, and file output | `get_crystal_state`, `get_settings`, `update_settings`, `export_file`, `write_text_file`, `export_image` |
+| State, settings, and file output | `get_crystal_state`, `get_settings`, `update_settings`, `export_file`, `write_text_file`, `export_image`, `export_blender_scene` |
 | Camera and viewport | `update_viewport_size`, `set_camera_projection`, `rotate_camera`, `zoom_camera`, `pan_camera`, `reset_camera`, `set_camera_view_axis`, `pick_atom`, `set_render_flags` |
 | Structural editing | `load_cif_file`, `add_atom`, `delete_atoms`, `translate_atoms_screen`, `substitute_atoms`, `update_lattice_params`, `update_selection`, `restore_unitcell`, `undo`, `redo` |
 | Geometry | `preview_supercell`, `apply_supercell`, `preview_slab`, `apply_slab`, `shift_termination`, `apply_niggli_reduce`, `apply_cell_standardize` |
@@ -59,7 +59,8 @@ The argument column below is the frontend TypeScript wire shape. `—` means no 
 | `update_settings` | `{ newSettings }` | `null` | validates the complete settings DTO before renderer update |
 | `export_file` | `{ format, path }` | `null` | `POSCAR`, `VASP`, `LAMMPS`, or `QE` |
 | `write_text_file` | `{ path, content }` | `null` | used for reviewed text exports such as generated k paths |
-| `export_image` | `{ path, width, height, bgMode }` | `null` | background: `transparent`, `white`, `black`, or `default` |
+| `export_image` | `{ path, width, height, bgMode, publicationProfile? }` | `null` | profile: `ScientificGloss` (default), `Studio`, or `Unlit`; background: `transparent`, `white`, `black`, or `default`; supports 4K/8K tiled rendering with capability-checked MSAA; produces a sibling `.crystalcanvas.json` sidecar |
+| `export_blender_scene` | `{ path, publicationProfile? }` | `null` | one-way glTF 2.0 binary export; atoms, bonds, unit-cell edges, element PBR materials, and current camera; produces a sibling `.crystalcanvas.json` sidecar |
 
 ### Camera and viewport
 

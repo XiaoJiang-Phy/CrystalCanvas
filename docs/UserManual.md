@@ -1,6 +1,6 @@
 # CrystalCanvas User Manual
 
-> Baseline: `v0.6.2` | Development line: `v0.7.0` | Updated: 2026-07-26
+> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
 
 CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes. It does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
 
@@ -8,7 +8,7 @@ CrystalCanvas is a desktop application for structure-aware three-dimensional sci
 
 ## Installation
 
-Download the `v0.6.2` macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/tag/v0.6.2). Release artifacts are available for Intel and Apple Silicon.
+Download the `v0.7.0` macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/tag/v0.7.0). Release artifacts are available for Intel and Apple Silicon.
 
 The application does not have a paid Apple Developer signature. Complete these steps for the first launch:
 
@@ -127,6 +127,8 @@ The Assistant is an optional legacy experimental surface. It is closed by defaul
 | Data | Supported input | Supported output |
 |---|---|---|
 | Crystal structure | CIF, PDB, XYZ, POSCAR/CONTCAR, supported Quantum ESPRESSO input | POSCAR/VASP, LAMMPS data, Quantum ESPRESSO input |
+| Publication figure | — | PNG (4K/8K, transparent/white/black), JPEG |
+| Blender scene | — | GLB (one-way, atoms/bonds/unit cell/camera) |
 | Scalar field | CHGCAR/LOCPOT, Gaussian Cube, XSF DATAGRID | — |
 | Phonon animation | supported phonon inputs and AXSF | — |
 | Wannier network | `wannier90_hr.dat` | — |
@@ -135,8 +137,34 @@ For a private or self-developed data source, do not assume a custom import forma
 
 ---
 
-## Figure export
+## Publication figure export
 
-Use the native export command to write the current rendered scene. The current release captures the interactive scene. It does not guarantee reproducible high-fidelity profiles, advanced lighting, or tiled 4K/8K output. Those capabilities remain planned publication-rendering work.
+Use the export dialog to render a publication-quality crystal-structure figure. The export path is separate from the interactive viewport and does not change the workbench camera, selection, or undo state.
+
+### Raster export (PNG / JPEG)
+
+Select a publication profile, output dimensions, and background:
+
+- **Scientific Gloss**: controlled highlights, `By Elements` bond coloring, white or transparent background.
+- **Studio**: balanced key/fill/rim lighting with stronger spatial separation.
+- **Unlit**: exact declared element colors without light, highlight, or tone modulation.
+
+Supported backgrounds are `transparent`, `white`, `black`, and `default` (current viewport background). The renderer automatically fits the complete visible structure (atoms, bonds, and unit-cell edges) to the output aspect with an 8% margin.
+
+Capability-checked 4× MSAA is applied when the GPU supports it. A single-sample deterministic fallback is used otherwise. For resolutions above the GPU texture limit, the renderer automatically tiles the output (e.g. 7680×4320 on an 8192-limit GPU). Each tile uses the same frozen full-frame camera; no per-tile refit occurs.
+
+Every raster export produces a sibling `.crystalcanvas.json` sidecar that records the complete recipe: profile, camera, dimensions, sampling, background, materials, tile layout, resource estimates, and an SHA-256 hash of the image file.
+
+### Blender GLB export
+
+Export the current structure as a one-way glTF 2.0 binary (`.glb`) for Blender or other 3D tools. The GLB contains:
+
+- intrinsic and periodic-image atoms as shared UV-sphere meshes;
+- bonds as shared cylinder meshes;
+- unit-cell edges as thin cylinders;
+- element-specific PBR materials (non-metallic, profile roughness, linear sRGB colors);
+- the current camera (perspective or orthographic).
+
+The GLB does not contain CrystalCanvas lighting, measurements, labels, volumetric data, or phonon animation. Import into Blender is one-way; CrystalCanvas does not read GLB files back. Add lighting (HDRI or area lights) and enable Shade Smooth in Blender for the best rendering results.
 
 For troubleshooting, see [FAQ.md](FAQ.md). For a description of the product direction, see [ROADMAP.md](../ROADMAP.md).
