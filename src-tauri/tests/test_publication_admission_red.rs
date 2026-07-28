@@ -15,6 +15,7 @@ fn test_limits() -> PublicationExportLimits {
     PublicationExportLimits {
         max_texture_dimension_2d: TEST_MAX_TEXTURE_DIMENSION,
         max_buffer_size: TEST_MAX_BUFFER_SIZE,
+        publication_msaa_x4: true,
     }
 }
 
@@ -56,9 +57,16 @@ fn rejects_zero_and_arithmetic_disaster_dimensions_without_a_gpu() {
         PublicationExportRejection::ZeroDimensions,
     );
 
-    assert_rejected(
+    let tiled = evaluate_publication_export_admission(
         structure_only_request(TEST_MAX_TEXTURE_DIMENSION + 1, 1),
-        PublicationExportRejection::TextureDimensionLimit,
+        test_limits(),
+    )
+    .expect("a bounded multi-tile export must not be rejected only for exceeding one texture");
+    let tiled_value = serde_json::to_value(tiled).unwrap();
+    assert_eq!(tiled_value["render_plan"]["tile_layout"], serde_json::json!([2, 1]));
+    assert_eq!(
+        tiled_value["render_plan"]["tile_dimensions"],
+        serde_json::json!([TEST_MAX_TEXTURE_DIMENSION, 1])
     );
 
     let overflow = structure_only_request(u32::MAX, 1);
@@ -68,6 +76,7 @@ fn rejects_zero_and_arithmetic_disaster_dimensions_without_a_gpu() {
             PublicationExportLimits {
                 max_texture_dimension_2d: u32::MAX,
                 max_buffer_size: u64::MAX,
+                publication_msaa_x4: true,
             },
         ),
         Err(PublicationExportRejection::RowLayoutLimit)
@@ -83,6 +92,7 @@ fn rejects_resource_meltdowns_before_offscreen_allocation() {
             PublicationExportLimits {
                 max_texture_dimension_2d: TEST_MAX_TEXTURE_DIMENSION,
                 max_buffer_size: 1,
+                publication_msaa_x4: true,
             },
         ),
         Err(PublicationExportRejection::DeviceBufferLimit),
@@ -163,4 +173,39 @@ fn admits_the_smallest_structure_only_control_case() {
     assert!(
         evaluate_publication_export_admission(structure_only_request(1, 1), test_limits()).is_ok()
     );
+}
+
+#[test]
+fn capability_selected_fallback_and_peak_resources_are_receipt_bound() {
+    let msaa = evaluate_publication_export_admission(
+        structure_only_request(1024, 1024),
+        test_limits(),
+    )
+    .unwrap();
+    let msaa_value = serde_json::to_value(msaa).unwrap();
+    assert_eq!(msaa_value["render_plan"]["requested_samples"], 4);
+    assert_eq!(msaa_value["render_plan"]["selected_samples"], 4);
+    assert_eq!(msaa_value["render_plan"]["tile_overlap_pixels"], 0);
+    assert!(msaa_value["estimate"]["msaa_color_bytes"].as_u64().unwrap() > 0);
+    assert!(
+        msaa_value["estimate"]["opaque_depth_bytes"].as_u64().unwrap()
+            >= msaa_value["estimate"]["msaa_color_bytes"].as_u64().unwrap()
+    );
+    assert!(
+        msaa_value["estimate"]["peak_cpu_bytes"].as_u64().unwrap()
+            >= msaa_value["estimate"]["rgba_bytes"].as_u64().unwrap()
+    );
+
+    let fallback = evaluate_publication_export_admission(
+        structure_only_request(1024, 1024),
+        PublicationExportLimits {
+            publication_msaa_x4: false,
+            ..test_limits()
+        },
+    )
+    .unwrap();
+    let fallback_value = serde_json::to_value(fallback).unwrap();
+    assert_eq!(fallback_value["render_plan"]["requested_samples"], 4);
+    assert_eq!(fallback_value["render_plan"]["selected_samples"], 1);
+    assert_eq!(fallback_value["estimate"]["msaa_color_bytes"], 0);
 }

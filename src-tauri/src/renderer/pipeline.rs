@@ -7,6 +7,8 @@ use wgpu;
 use super::camera::CameraUniform;
 use super::instance::{AtomInstance, BondInstance, LineVertex};
 
+const INTERACTIVE_SAMPLE_COUNT: u32 = 1;
+
 /// Create the main render pipeline for Impostor Sphere rendering.
 ///
 /// Pipeline layout:
@@ -17,6 +19,7 @@ use super::instance::{AtomInstance, BondInstance, LineVertex};
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
+    sample_count: u32,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
     // Load shader from embedded WGSL source
     let shader_source = include_str!("../../shaders/impostor_sphere.wgsl");
@@ -87,7 +90,7 @@ pub fn create_render_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: sample_count,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
@@ -103,6 +106,7 @@ pub fn create_transparent_atom_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     let shader_source = include_str!("../../shaders/impostor_sphere.wgsl");
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -152,7 +156,7 @@ pub fn create_transparent_atom_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: sample_count,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
@@ -166,6 +170,7 @@ pub fn create_line_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     let shader_source = include_str!("shaders/line.wgsl");
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -215,7 +220,7 @@ pub fn create_line_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: sample_count,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
@@ -229,6 +234,7 @@ pub fn create_bond_pipeline(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     let shader_source = include_str!("../../shaders/bond_cylinder.wgsl");
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -278,7 +284,7 @@ pub fn create_bond_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: sample_count,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
@@ -292,6 +298,7 @@ pub fn create_depth_texture(
     device: &wgpu::Device,
     width: u32,
     height: u32,
+    sample_count: u32,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Depth Texture"),
@@ -301,7 +308,7 @@ pub fn create_depth_texture(
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
-        sample_count: 1,
+        sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
@@ -366,7 +373,7 @@ pub fn create_isosurface_render_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: INTERACTIVE_SAMPLE_COUNT,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
@@ -381,6 +388,7 @@ pub fn create_transparent_depth_texture(
     device: &wgpu::Device,
     width: u32,
     height: u32,
+    sample_count: u32,
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Transparent Pass Depth Texture"),
@@ -390,7 +398,7 @@ pub fn create_transparent_depth_texture(
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
-        sample_count: 1,
+        sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
@@ -467,7 +475,7 @@ pub fn create_volume_raycast_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: 1,
+            count: INTERACTIVE_SAMPLE_COUNT,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },

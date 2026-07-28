@@ -50,9 +50,9 @@ test('EXPORT-1A snapshots state in global lock order and writes the pair after u
     assert.ok(renderer_lock < renderer_drop && renderer_drop < pair_write);
 });
 
-test('EXPORT-1A declares the v6 recipe envelope, admission receipt, and paired artifact hash', () => {
+test('RENDER-2 declares the v7 recipe envelope, admission receipt, and paired artifact hash', () => {
     assert.match(recipe, /"crystalcanvas\.export-recipe"/);
-    assert.match(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*6/);
+    assert.match(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*7/);
     assert.match(recipe, /PublicationRaster/);
     assert.match(recipe, /BlenderStructureScene/);
     assert.match(recipe, /sha256/);

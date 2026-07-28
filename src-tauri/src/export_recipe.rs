@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const EXPORT_RECIPE_SCHEMA: &str = "crystalcanvas.export-recipe";
-pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 6;
+pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 7;
 
 const MAX_RECIPE_STRUCTURE_NAME_BYTES: usize = 4 * 1024;
 const MAX_RECIPE_CUSTOM_ATOM_COLORS: usize = 118;
@@ -146,6 +146,8 @@ pub struct RecipeOutput {
     pub encoded_alpha_policy: String,
     pub codec: RecipeCodec,
     pub tile_layout: [u32; 2],
+    pub tile_dimensions: [u32; 2],
+    pub tile_overlap_pixels: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -210,6 +212,7 @@ impl PublicationRasterRecipe {
         let camera = &renderer.camera;
         let config = &renderer.gpu.render_config;
         let render_target_format = renderer.gpu.surface_format();
+        let render_plan = admission.render_plan;
         if !render_target_format.is_srgb() {
             return Err(format!(
                 "publication raster requires an sRGB render target, got {render_target_format:?}"
@@ -287,14 +290,15 @@ impl PublicationRasterRecipe {
                 lighting_policy: "legacy_fixed_shader".to_owned(),
                 ssao: "disabled".to_owned(),
                 shadows: "disabled".to_owned(),
-                requested_samples: 1,
-                selected_samples: 1,
-                selected_capabilities: vec![
-                    "single_sample_color".to_owned(),
-                    "rgba8_readback".to_owned(),
-                ],
-                fallback_policy: "reject_on_render_or_encode_failure".to_owned(),
-                applied_fallbacks: Vec::new(),
+                requested_samples: render_plan.requested_samples,
+                selected_samples: render_plan.selected_samples,
+                selected_capabilities: if render_plan.selected_samples == 4 {
+                    vec!["msaa_x4".to_owned(), "depth32float_msaa_x4".to_owned(), "rgba8_readback".to_owned()]
+                } else {
+                    vec!["single_sample_color".to_owned(), "rgba8_readback".to_owned()]
+                },
+                fallback_policy: "fallback_4x_to_1x_on_unsupported_active_format".to_owned(),
+                applied_fallbacks: if render_plan.selected_samples == 1 { vec!["msaa_x4_unavailable".to_owned()] } else { Vec::new() },
                 adapter_name: config.device_name.clone(),
                 backend: config.backend_name.clone(),
                 device_type: config.device_type.clone(),
@@ -318,7 +322,9 @@ impl PublicationRasterRecipe {
                 readback_alpha_policy: "premultiplied".to_owned(),
                 encoded_alpha_policy: encoded_alpha_policy.to_owned(),
                 codec,
-                tile_layout: [1, 1],
+                tile_layout: render_plan.tile_layout,
+                tile_dimensions: render_plan.tile_dimensions,
+                tile_overlap_pixels: render_plan.tile_overlap_pixels,
             },
             artifact: None,
         };
@@ -512,20 +518,43 @@ impl PublicationRasterRecipe {
         validate_background_contract(&self.output)?;
         validate_alpha_contract(&self.output)?;
         validate_codec_contract(&self.output)?;
-        if self.output.tile_layout != [1, 1] {
-            return Err("EXPORT-1A supports only a single output tile".to_owned());
+        if self.output.tile_layout[0] == 0
+            || self.output.tile_layout[1] == 0
+            || self.output.tile_dimensions[0] == 0
+            || self.output.tile_dimensions[1] == 0
+            || self.output.tile_overlap_pixels != 0
+            || self.output.tile_dimensions[0] > self.output.width
+            || self.output.tile_dimensions[1] > self.output.height
+            || self.output.tile_layout[0] != self.output.width.div_ceil(self.output.tile_dimensions[0])
+            || self.output.tile_layout[1] != self.output.height.div_ceil(self.output.tile_dimensions[1])
+        {
+            return Err("publication tile metadata is invalid".to_owned());
+        }
+
+        let plan = self.rendering.publication_admission.render_plan;
+        if self.output.tile_layout != plan.tile_layout
+            || self.output.tile_dimensions != plan.tile_dimensions
+            || self.output.tile_overlap_pixels != plan.tile_overlap_pixels
+            || self.rendering.requested_samples != plan.requested_samples
+            || self.rendering.selected_samples != plan.selected_samples
+        {
+            return Err("recipe rendering metadata does not match its admission plan".to_owned());
         }
 
         if self.rendering.lighting_policy != "legacy_fixed_shader"
             || self.rendering.ssao != "disabled"
             || self.rendering.shadows != "disabled"
-            || self.rendering.requested_samples != 1
-            || self.rendering.selected_samples != 1
-            || self.rendering.selected_capabilities.len() != 2
-            || self.rendering.selected_capabilities[0] != "single_sample_color"
-            || self.rendering.selected_capabilities[1] != "rgba8_readback"
-            || self.rendering.fallback_policy != "reject_on_render_or_encode_failure"
-            || !self.rendering.applied_fallbacks.is_empty()
+            || self.rendering.requested_samples != 4
+            || (self.rendering.selected_samples != 4 && self.rendering.selected_samples != 1)
+            || self.rendering.fallback_policy != "fallback_4x_to_1x_on_unsupported_active_format"
+            || (self.rendering.selected_samples == 4
+                && (self.rendering.selected_capabilities
+                    != ["msaa_x4", "depth32float_msaa_x4", "rgba8_readback"]
+                    || !self.rendering.applied_fallbacks.is_empty()))
+            || (self.rendering.selected_samples == 1
+                && (self.rendering.selected_capabilities
+                    != ["single_sample_color", "rgba8_readback"]
+                    || self.rendering.applied_fallbacks != ["msaa_x4_unavailable"]))
         {
             return Err("rendering policy is unsupported".to_owned());
         }
@@ -1366,6 +1395,8 @@ mod tests {
                 filter: PNG_FILTER.to_owned(),
             },
             tile_layout: [1, 1],
+            tile_dimensions: [1, 1],
+            tile_overlap_pixels: 0,
         }
     }
 

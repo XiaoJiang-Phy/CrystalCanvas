@@ -35,6 +35,7 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
         PublicationExportLimits {
             max_texture_dimension_2d: 8192,
             max_buffer_size: 256 * 1024 * 1024,
+            publication_msaa_x4: true,
         },
     )
     .unwrap();
@@ -94,13 +95,14 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
             lighting_policy: "legacy_fixed_shader".to_owned(),
             ssao: "disabled".to_owned(),
             shadows: "disabled".to_owned(),
-            requested_samples: 1,
-            selected_samples: 1,
+            requested_samples: 4,
+            selected_samples: 4,
             selected_capabilities: vec![
-                "single_sample_color".to_owned(),
+                "msaa_x4".to_owned(),
+                "depth32float_msaa_x4".to_owned(),
                 "rgba8_readback".to_owned(),
             ],
-            fallback_policy: "reject_on_render_or_encode_failure".to_owned(),
+            fallback_policy: "fallback_4x_to_1x_on_unsupported_active_format".to_owned(),
             applied_fallbacks: Vec::new(),
             adapter_name: "test adapter".to_owned(),
             backend: "test backend".to_owned(),
@@ -128,7 +130,9 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
                 compression: "balanced".to_owned(),
                 filter: "adaptive".to_owned(),
             },
-            tile_layout: [1, 1],
+            tile_layout: [width.div_ceil(8192), height.div_ceil(8192)],
+            tile_dimensions: [width.min(8192), height.min(8192)],
+            tile_overlap_pixels: 0,
         },
         artifact: Some(RecipeArtifact {
             file_name: "figure.png".to_owned(),
@@ -201,6 +205,38 @@ fn validation_rejects_zero_dimensions_and_inconsistent_alpha_contracts() {
             .validate()
             .unwrap_err()
             .contains("alpha policy")
+    );
+}
+
+#[test]
+fn validation_rejects_tampered_v7_plan_capability_and_fallback_metadata() {
+    let recipe = valid_recipe_for(8193, 1);
+    assert_eq!(recipe.output.tile_layout, [2, 1]);
+    assert_eq!(recipe.output.tile_dimensions, [8192, 1]);
+
+    let mut overlap = recipe.clone();
+    overlap.output.tile_overlap_pixels = 1;
+    assert!(overlap.validate().unwrap_err().contains("tile metadata"));
+
+    let mut capabilities = recipe.clone();
+    capabilities.rendering.selected_capabilities.clear();
+    assert!(capabilities.validate().unwrap_err().contains("rendering policy"));
+
+    let mut false_fallback = recipe.clone();
+    false_fallback
+        .rendering
+        .applied_fallbacks
+        .push("msaa_x4_unavailable".to_owned());
+    assert!(false_fallback.validate().unwrap_err().contains("rendering policy"));
+
+    let mut detached_plan = recipe;
+    detached_plan.output.tile_dimensions = [4096, 1];
+    detached_plan.output.tile_layout = [3, 1];
+    assert!(
+        detached_plan
+            .validate()
+            .unwrap_err()
+            .contains("admission plan")
     );
 }
 

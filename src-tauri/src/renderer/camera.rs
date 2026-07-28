@@ -7,6 +7,7 @@ use glam::{Mat4, Vec3};
 
 /// Orbital camera that looks at a target point from a given position.
 /// Provides a perspective projection matrix for the GPU.
+#[derive(Clone, Copy)]
 pub struct Camera {
     /// Camera position in world space
     pub eye: Vec3,
@@ -202,6 +203,31 @@ impl CameraUniform {
         let proj = camera.build_projection_matrix();
         let view_proj = proj * view;
         self.view_proj = view_proj.to_cols_array_2d();
+        self.view = view.to_cols_array_2d();
+        self.proj = proj.to_cols_array_2d();
+    }
+
+    /// Apply a raster tile crop after either perspective or orthographic projection.
+    pub fn update_from_camera_tile(
+        &mut self,
+        camera: &Camera,
+        tile_x: u32,
+        tile_y: u32,
+        tile_width: u32,
+        tile_height: u32,
+        full_width: u32,
+        full_height: u32,
+    ) {
+        let view = camera.build_view_matrix();
+        let projection = camera.build_projection_matrix();
+        let scale_x = full_width as f32 / tile_width as f32;
+        let scale_y = full_height as f32 / tile_height as f32;
+        let center_x = (2.0 * (tile_x as f32 + tile_width as f32 * 0.5) / full_width as f32) - 1.0;
+        let center_y = 1.0 - (2.0 * (tile_y as f32 + tile_height as f32 * 0.5) / full_height as f32);
+        let tile_projection = Mat4::from_scale(Vec3::new(scale_x, scale_y, 1.0))
+            * Mat4::from_translation(Vec3::new(-center_x, -center_y, 0.0));
+        let proj = tile_projection * projection;
+        self.view_proj = (proj * view).to_cols_array_2d();
         self.view = view.to_cols_array_2d();
         self.proj = proj.to_cols_array_2d();
     }

@@ -4,6 +4,10 @@
 
 use wgpu;
 
+const PUBLICATION_SAMPLE_FALLBACK: [u32; 2] = [4, 1];
+pub const PUBLICATION_MSAA_FEATURE: wgpu::TextureFormatFeatureFlags =
+    wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4;
+
 /// Runtime limits negotiated for the active device at initialization.
 /// These are the limits the renderer may actually use, not adapter maxima.
 #[derive(Debug, Clone)]
@@ -26,11 +30,17 @@ pub struct RenderConfig {
     pub max_compute_workgroup_size: [u32; 3],
     /// Maximum size of a storage buffer binding
     pub max_storage_buffer_size: u64,
+    /// Whether the active publication color/depth format pair supports 4x MSAA.
+    pub publication_msaa_x4: bool,
 }
 
 impl RenderConfig {
     /// Capture adapter identity and the negotiated device limits.
-    pub fn from_adapter_and_device(adapter: &wgpu::Adapter, device: &wgpu::Device) -> Self {
+    pub fn from_adapter_and_device(
+        adapter: &wgpu::Adapter,
+        device: &wgpu::Device,
+        publication_msaa_x4: bool,
+    ) -> Self {
         let info = adapter.get_info();
         let limits = device.limits();
 
@@ -50,6 +60,7 @@ impl RenderConfig {
                 limits.max_compute_workgroup_size_z,
             ],
             max_storage_buffer_size: limits.max_storage_buffer_binding_size as u64,
+            publication_msaa_x4,
         };
 
         log::info!("=== GPU Device Baseline ===");
@@ -71,8 +82,19 @@ impl RenderConfig {
             "  Storage Buf:{} MB",
             config.max_storage_buffer_size / (1024 * 1024)
         );
+        log::info!("  Publication MSAA x4: {}", config.publication_msaa_x4);
         log::info!("===========================");
 
         config
+    }
+
+    pub fn publication_sampling(&self) -> (u32, u32) {
+        let requested_samples = PUBLICATION_SAMPLE_FALLBACK[0];
+        let selected_samples = if self.publication_msaa_x4 {
+            PUBLICATION_SAMPLE_FALLBACK[0]
+        } else {
+            PUBLICATION_SAMPLE_FALLBACK[1]
+        };
+        (requested_samples, selected_samples)
     }
 }

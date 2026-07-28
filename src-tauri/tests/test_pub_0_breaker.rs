@@ -115,16 +115,16 @@ fn rejects_extreme_dimensions_before_gpu_or_cpu_resource_meltdown() {
         "readback layout must reject arithmetic and address-space overflow"
     );
     assert!(
-        gate.contains("request.width > limits.max_texture_dimension_2d")
+        gate.contains("publication_render_plan(request, limits)")
             && gate.contains("estimate.staging_bytes > limits.max_buffer_size")
             && gate.contains("budgets.max_readback_bytes"),
-        "the gate must enforce device texture, staging-buffer, and CPU-image budgets"
+        "the gate must derive a bounded tile plan, then enforce device staging-buffer and CPU-image budgets"
     );
     assert!(
         recipe_builder.contains("evaluate_publication_export_admission(")
-            && config.contains("offscreen_readback_layout(width, height)")
+            && config.contains("let plan = admission.render_plan")
             && config.contains("self.validate_publication_export_receipt(admission)?"),
-        "the export path must gate dimensions before resource allocation"
+        "the export path must consume the receipt-bound render plan before resource allocation"
     );
 }
 
@@ -262,7 +262,7 @@ fn publication_admission_must_be_executable_without_a_window_or_gpu() {
 }
 
 #[test]
-fn publication_export_keeps_single_sample_until_sample_1a() {
+fn publication_export_uses_render_2_sampling_instead_of_the_retired_single_sample_baseline() {
     let renderer = include_str!("../src/renderer/renderer.rs");
     let config = source_between(
         renderer,
@@ -276,15 +276,17 @@ fn publication_export_keeps_single_sample_until_sample_1a() {
     );
 
     assert!(
-        config.contains("sample_count: 1") && offscreen.contains("config.sample_count != 1"),
-        "EXPORT-1B must retain and enforce a declared single-sample baseline"
+        config.contains("requested_samples")
+            && config.contains("selected_samples")
+            && !config.contains("sample_count: 1"),
+        "RENDER-2 must select publication sample count from the captured GPU capabilities; it must not retain a hard-coded single-sample baseline"
     );
-    for unsupported_contract in ["msaa", "MSAA", "resolve_target: Some"] {
-        assert!(
-            !offscreen.contains(unsupported_contract),
-            "SAMPLE-1A behavior leaked into EXPORT-1B (`{unsupported_contract}`)"
-        );
-    }
+    assert!(
+        !offscreen.contains("config.sample_count != 1")
+            && offscreen.contains("Publication Resolve Color Texture")
+            && offscreen.contains("resolve_target: if config.selected_samples > 1"),
+        "RENDER-2 must permit the selected MSAA count and resolve each multisample tile to its single-sample readback target"
+    );
 }
 
 #[test]
