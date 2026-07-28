@@ -52,6 +52,7 @@ export type VolumeColormap = 'viridis' | 'grayscale' | 'inferno' | 'plasma' | 'c
 export type LlmProvider = 'openai' | 'deepseek' | 'claude' | 'gemini' | 'ollama';
 export type ExportFileFormat = 'POSCAR' | 'VASP' | 'LAMMPS' | 'QE';
 export type ExportImageBackground = 'transparent' | 'white' | 'black' | 'default';
+export type PublicationLookProfileId = 'scientific_gloss' | 'studio' | 'unlit';
 
 export type IpcErrorCode = 'invalid_argument' | 'io_error' | 'lock_poisoned'
     | 'not_in_tauri' | 'state_busy' | 'parse_error' | 'render_error' | 'internal_error';
@@ -101,7 +102,7 @@ export interface IpcCommandContract {
     compute_brillouin_zone: { args: undefined; result: BzInfo };
     delete_atoms: { args: { indices: number[] }; result: null };
     export_file: { args: { format: ExportFileFormat; path: string }; result: null };
-    export_image: { args: { path: string; width: number; height: number; bgMode: ExportImageBackground }; result: null };
+    export_image: { args: { path: string; width: number; height: number; bgMode: ExportImageBackground; publicationProfile?: PublicationLookProfileId | null }; result: null };
     generate_kpath_text: { args: { npoints: number }; result: KPathText };
     get_bond_analysis: { args: { thresholdFactor?: number | null }; result: BondAnalysisResult };
     get_bz_label_positions: { args: { width: number; height: number }; result: ScreenLabel[] };

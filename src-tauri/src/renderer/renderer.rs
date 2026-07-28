@@ -14,6 +14,7 @@ use super::instance::{
     RenderLineScene,
 };
 use super::pipeline;
+use super::publication_look::{PublicationLookProfile, PublicationLookUniform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererVolumeMode {
@@ -335,11 +336,12 @@ const MAX_PUBLICATION_READBACK_BYTES: u64 = 192 * 1024 * 1024;
 const MAX_PUBLICATION_TOTAL_GPU_BYTES: u64 = 384 * 1024 * 1024;
 const MAX_PUBLICATION_PEAK_CPU_BYTES: u64 = 384 * 1024 * 1024;
 const PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES: u64 = 256;
+const PUBLICATION_LOOK_UNIFORM_BYTES: u64 = 256;
 const PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
-pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 4;
+pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OffscreenReadbackLayout {
@@ -376,6 +378,8 @@ pub(crate) struct PublicationRenderConfig {
     selected_samples: u32,
     tile_dimensions: [u32; 2],
     tile_layout: [u32; 2],
+    look_profile: PublicationLookProfile,
+    publication_bond_instances: Vec<crate::renderer::instance::BondInstance>,
     readback_layout: OffscreenReadbackLayout,
     admission: PublicationExportAdmissionReceipt,
 }
@@ -388,40 +392,19 @@ struct PublicationPipelines {
     line: wgpu::RenderPipeline,
     bond: wgpu::RenderPipeline,
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    look_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl PublicationPipelines {
-    fn new(
-        device: &wgpu::Device,
-        target_format: wgpu::TextureFormat,
-        sample_count: u32,
-    ) -> Self {
-        let (render, camera_bind_group_layout) =
-            pipeline::create_render_pipeline(device, target_format, sample_count);
-        let transparent = pipeline::create_transparent_atom_pipeline(
-            device,
-            target_format,
-            &camera_bind_group_layout,
-            sample_count,
-        );
-        let line = pipeline::create_line_pipeline(
-            device,
-            target_format,
-            &camera_bind_group_layout,
-            sample_count,
-        );
-        let bond = pipeline::create_bond_pipeline(
-            device,
-            target_format,
-            &camera_bind_group_layout,
-            sample_count,
-        );
+    fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat, sample_count: u32) -> Self {
+        let pipelines = pipeline::create_publication_pipelines(device, target_format, sample_count);
         Self {
-            render,
-            transparent,
-            line,
-            bond,
-            camera_bind_group_layout,
+            render: pipelines.render,
+            transparent: pipelines.transparent,
+            line: pipelines.line,
+            bond: pipelines.bond,
+            camera_bind_group_layout: pipelines.camera_bind_group_layout,
+            look_bind_group_layout: pipelines.look_bind_group_layout,
         }
     }
 }
@@ -452,6 +435,7 @@ impl PublicationRenderResult {
 pub struct PublicationExportRequest {
     pub width: u32,
     pub height: u32,
+    pub publication_bond_instance_count: u32,
     pub needs_transparent_depth: bool,
     pub has_measurement_overlays: bool,
     pub has_hopping_overlays: bool,
@@ -500,6 +484,8 @@ pub struct PublicationExportResourceEstimate {
     pub opaque_depth_bytes: u64,
     pub transparent_depth_bytes: u64,
     pub depth_replay_color_bytes: u64,
+    pub look_uniform_bytes: u64,
+    pub publication_bond_bytes: u64,
     pub jpeg_rgb_bytes: u64,
     pub max_encoded_bytes: u64,
     pub export_camera_uniform_bytes: u64,
@@ -686,8 +672,8 @@ fn publication_export_resource_estimate(
 ) -> Result<PublicationExportResourceEstimate, PublicationExportRejection> {
     let layout = offscreen_readback_layout(plan.tile_dimensions[0], plan.tile_dimensions[1])?;
     let full_layout = offscreen_readback_layout(request.width, request.height)?;
-    let rgba_bytes =
-        u64::try_from(full_layout.rgba_len).map_err(|_| PublicationExportRejection::CpuByteOverflow)?;
+    let rgba_bytes = u64::try_from(full_layout.rgba_len)
+        .map_err(|_| PublicationExportRejection::CpuByteOverflow)?;
     let tile_rgba_bytes =
         u64::try_from(layout.rgba_len).map_err(|_| PublicationExportRejection::CpuByteOverflow)?;
     let msaa_color_bytes = if plan.selected_samples > 1 {
@@ -708,6 +694,9 @@ fn publication_export_resource_estimate(
     let depth_replay_color_bytes = (request.needs_transparent_depth && plan.selected_samples > 1)
         .then_some(msaa_color_bytes)
         .unwrap_or(0);
+    let publication_bond_bytes = u64::from(request.publication_bond_instance_count)
+        .checked_mul(std::mem::size_of::<crate::renderer::instance::BondInstance>() as u64)
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
     let budgets = publication_export_budgets();
     let max_encoded_bytes = rgba_bytes
         .checked_add(budgets.encoded_overhead_bytes)
@@ -719,21 +708,26 @@ fn publication_export_resource_estimate(
         .and_then(|value| value.checked_add(depth_replay_color_bytes))
         .and_then(|value| value.checked_add(layout.staging_size))
         .and_then(|value| value.checked_add(PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES))
+        .and_then(|value| value.checked_add(PUBLICATION_LOOK_UNIFORM_BYTES))
+        .and_then(|value| value.checked_add(publication_bond_bytes))
         .and_then(|value| value.checked_add(budgets.gpu_driver_reserve_bytes))
         .ok_or(PublicationExportRejection::TransientGpuBudget)?;
     let readback_peak_cpu_bytes = rgba_bytes
         .checked_add(tile_rgba_bytes)
         .and_then(|value| value.checked_add(layout.staging_size))
+        .and_then(|value| value.checked_add(publication_bond_bytes))
         .ok_or(PublicationExportRejection::PeakCpuBudget)?;
     let jpeg_rgb_bytes = rgba_bytes
         .checked_div(4)
         .and_then(|pixels| pixels.checked_mul(3))
         .ok_or(PublicationExportRejection::PeakCpuBudget)?;
     let png_encode_peak_cpu_bytes = rgba_bytes
-        .checked_add(budgets.cpu_encoder_reserve_bytes)
+        .checked_add(publication_bond_bytes)
+        .and_then(|value| value.checked_add(budgets.cpu_encoder_reserve_bytes))
         .ok_or(PublicationExportRejection::PeakCpuBudget)?;
     let jpeg_encode_peak_cpu_bytes = rgba_bytes
         .checked_add(jpeg_rgb_bytes)
+        .and_then(|value| value.checked_add(publication_bond_bytes))
         .and_then(|value| value.checked_add(budgets.cpu_encoder_reserve_bytes))
         .ok_or(PublicationExportRejection::PeakCpuBudget)?;
     let peak_cpu_bytes = readback_peak_cpu_bytes
@@ -749,6 +743,8 @@ fn publication_export_resource_estimate(
         opaque_depth_bytes,
         transparent_depth_bytes,
         depth_replay_color_bytes,
+        look_uniform_bytes: PUBLICATION_LOOK_UNIFORM_BYTES,
+        publication_bond_bytes,
         jpeg_rgb_bytes,
         max_encoded_bytes,
         export_camera_uniform_bytes: PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES,
@@ -943,10 +939,12 @@ impl Renderer {
         width: u32,
         height: u32,
         source_state: PublicationExportSourceState,
+        publication_bond_instance_count: u32,
     ) -> PublicationExportRequest {
         PublicationExportRequest {
             width,
             height,
+            publication_bond_instance_count,
             needs_transparent_depth: self.transparent_instance_count > 0,
             has_measurement_overlays: self.measurement_line_count > 0,
             has_hopping_overlays: self.hopping_instance_count > 0,
@@ -971,12 +969,16 @@ impl Renderer {
         }
     }
 
-    pub(crate) fn publication_render_config(
+    pub(crate) fn publication_render_config_with_profile(
         &self,
         admission: &PublicationExportAdmissionReceipt,
         background: PublicationBackground,
+        look_profile: PublicationLookProfile,
+        publication_bond_instances: Vec<crate::renderer::instance::BondInstance>,
     ) -> Result<PublicationRenderConfig, String> {
-        self.validate_publication_export_receipt(admission)?;
+        let publication_bond_instance_count = u32::try_from(publication_bond_instances.len())
+            .map_err(|_| "publication bond instance count overflow".to_owned())?;
+        self.validate_publication_export_receipt(admission, publication_bond_instance_count)?;
         let width = admission.request.width;
         let height = admission.request.height;
         let target_format = self.gpu.surface_format();
@@ -1006,6 +1008,7 @@ impl Renderer {
         camera.set_aspect(width as f32, height as f32);
 
         let plan = admission.render_plan;
+        look_profile.validate_fixed()?;
         Ok(PublicationRenderConfig {
             width,
             height,
@@ -1017,11 +1020,13 @@ impl Renderer {
             selected_samples: plan.selected_samples,
             tile_dimensions: plan.tile_dimensions,
             tile_layout: plan.tile_layout,
+            look_profile,
+            publication_bond_instances,
             readback_layout: offscreen_readback_layout(
                 plan.tile_dimensions[0],
                 plan.tile_dimensions[1],
             )
-                .map_err(|error| error.to_string())?,
+            .map_err(|error| error.to_string())?,
             admission: *admission,
         })
     }
@@ -1071,7 +1076,9 @@ pub fn evaluate_publication_export_admission(
     let budgets = publication_export_budgets();
     let render_plan = publication_render_plan(request, limits)?;
     let estimate = publication_export_resource_estimate(request, render_plan)?;
-    if estimate.staging_bytes > limits.max_buffer_size {
+    if estimate.staging_bytes > limits.max_buffer_size
+        || estimate.publication_bond_bytes > limits.max_buffer_size
+    {
         return Err(PublicationExportRejection::DeviceBufferLimit);
     }
     if estimate.rgba_bytes > budgets.max_readback_bytes {
@@ -1111,6 +1118,7 @@ impl Renderer {
     fn validate_publication_export_receipt(
         &self,
         receipt: &PublicationExportAdmissionReceipt,
+        publication_bond_instance_count: u32,
     ) -> Result<(), String> {
         validate_publication_export_receipt_fields(receipt).map_err(|error| error.to_string())?;
         if receipt.limits != self.publication_export_limits() {
@@ -1122,6 +1130,7 @@ impl Renderer {
             receipt.request.width,
             receipt.request.height,
             PublicationExportSourceState::default(),
+            publication_bond_instance_count,
         );
         if current_request != receipt.request {
             return Err(
@@ -1343,8 +1352,12 @@ impl Renderer {
                 .set_aspect(new_size.width as f32, new_size.height as f32);
 
             // Rebuild both depth textures
-            let (opaque_depth_texture, opaque_depth_view) =
-                pipeline::create_depth_texture(&self.gpu.device, new_size.width, new_size.height, 1);
+            let (opaque_depth_texture, opaque_depth_view) = pipeline::create_depth_texture(
+                &self.gpu.device,
+                new_size.width,
+                new_size.height,
+                1,
+            );
             let (transparent_depth_texture, transparent_depth_view) =
                 pipeline::create_transparent_depth_texture(
                     &self.gpu.device,
@@ -2091,17 +2104,25 @@ impl Renderer {
         &self,
         config: &PublicationRenderConfig,
     ) -> Result<PublicationRenderResult, String> {
-        self.validate_publication_export_receipt(&config.admission)?;
+        let publication_bond_instance_count =
+            u32::try_from(config.publication_bond_instances.len())
+                .map_err(|_| "publication bond instance count overflow".to_owned())?;
+        self.validate_publication_export_receipt(
+            &config.admission,
+            publication_bond_instance_count,
+        )?;
         if config.width != config.admission.request.width
             || config.height != config.admission.request.height
         {
             return Err("publication render dimensions do not match admission".to_owned());
         }
-        let full_output_len = usize::try_from(u64::from(config.width)
-            .checked_mul(u64::from(config.height))
-            .and_then(|pixels| pixels.checked_mul(4))
-            .ok_or_else(|| "publication output size overflow".to_owned())?)
-            .map_err(|_| "publication output exceeds addressable memory".to_owned())?;
+        let full_output_len = usize::try_from(
+            u64::from(config.width)
+                .checked_mul(u64::from(config.height))
+                .and_then(|pixels| pixels.checked_mul(4))
+                .ok_or_else(|| "publication output size overflow".to_owned())?,
+        )
+        .map_err(|_| "publication output exceeds addressable memory".to_owned())?;
         let mut full_output = Vec::new();
         full_output
             .try_reserve_exact(full_output_len)
@@ -2112,6 +2133,37 @@ impl Renderer {
             config.target_format,
             config.selected_samples,
         );
+        let publication_look_uniform =
+            PublicationLookUniform::from_profile(config.look_profile, config.camera.is_perspective);
+        let publication_look_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Look Uniform Buffer"),
+                    contents: bytemuck::bytes_of(&publication_look_uniform),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let publication_look_bind_group =
+            self.gpu
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Publication Look Bind Group"),
+                    layout: &publication_pipelines.look_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: publication_look_buffer.as_entire_binding(),
+                    }],
+                });
+        let publication_bond_buffer = (!config.publication_bond_instances.is_empty()).then(|| {
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Element Bond Instance Buffer"),
+                    contents: bytemuck::cast_slice(&config.publication_bond_instances),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+        });
+        let publication_bond_buffer = publication_bond_buffer.as_ref();
 
         for tile_row in 0..config.tile_layout[1] {
             let tile_y = tile_row
@@ -2143,31 +2195,40 @@ impl Renderer {
                     selected_samples: config.selected_samples,
                     tile_dimensions: [tile_width, tile_height],
                     tile_layout: [1, 1],
+                    look_profile: config.look_profile,
+                    publication_bond_instances: Vec::new(),
                     readback_layout: offscreen_readback_layout(tile_width, tile_height)
                         .map_err(|error| error.to_string())?,
                     admission: config.admission,
                 };
-                let rgba = self.render_offscreen_tile(
-                    &current_tile,
-                    &publication_pipelines,
-                    tile_x,
-                    tile_y,
-                    config.width,
-                    config.height,
-                )?.into_rgba();
+                let rgba = self
+                    .render_offscreen_tile(
+                        &current_tile,
+                        &publication_pipelines,
+                        &publication_look_bind_group,
+                        publication_bond_buffer,
+                        publication_bond_instance_count,
+                        tile_x,
+                        tile_y,
+                        config.width,
+                        config.height,
+                    )?
+                    .into_rgba();
                 let tile_row_bytes = usize::try_from(
                     u64::from(tile_width)
                         .checked_mul(4)
                         .ok_or_else(|| "publication tile row overflow".to_owned())?,
                 )
-                    .map_err(|_| "publication tile row overflow".to_owned())?;
+                .map_err(|_| "publication tile row overflow".to_owned())?;
                 let full_row_bytes = usize::try_from(
                     u64::from(config.width)
                         .checked_mul(4)
                         .ok_or_else(|| "publication output row overflow".to_owned())?,
                 )
-                    .map_err(|_| "publication output row overflow".to_owned())?;
-                for row in 0..usize::try_from(tile_height).map_err(|_| "tile height overflow".to_owned())? {
+                .map_err(|_| "publication output row overflow".to_owned())?;
+                for row in 0..usize::try_from(tile_height)
+                    .map_err(|_| "tile height overflow".to_owned())?
+                {
                     let source_start = row
                         .checked_mul(tile_row_bytes)
                         .ok_or_else(|| "publication tile source offset overflow".to_owned())?;
@@ -2211,12 +2272,18 @@ impl Renderer {
         &self,
         config: &PublicationRenderConfig,
         publication_pipelines: &PublicationPipelines,
+        publication_look_bind_group: &wgpu::BindGroup,
+        publication_bond_buffer: Option<&wgpu::Buffer>,
+        publication_bond_instance_count: u32,
         tile_x: u32,
         tile_y: u32,
         full_width: u32,
         full_height: u32,
     ) -> Result<PublicationRenderResult, String> {
-        self.validate_publication_export_receipt(&config.admission)?;
+        self.validate_publication_export_receipt(
+            &config.admission,
+            config.admission.request.publication_bond_instance_count,
+        )?;
         if config.target_format != self.gpu.surface_format() {
             return Err("publication render target format changed after configuration".to_owned());
         }
@@ -2224,7 +2291,10 @@ impl Renderer {
             || !matches!(config.selected_samples, 1 | 4)
             || (config.selected_samples == 4 && !self.gpu.render_config.publication_msaa_x4)
         {
-            return Err("publication sampling selection is incompatible with active GPU capabilities".to_owned());
+            return Err(
+                "publication sampling selection is incompatible with active GPU capabilities"
+                    .to_owned(),
+            );
         }
         if config.alpha_mode != PublicationAlphaMode::Premultiplied {
             return Err("publication render alpha policy is unsupported".to_owned());
@@ -2293,7 +2363,11 @@ impl Renderer {
         let multisample_color = (config.selected_samples > 1).then(|| {
             self.gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Publication MSAA Color Texture"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: config.selected_samples,
                 dimension: wgpu::TextureDimension::D2,
@@ -2309,7 +2383,11 @@ impl Renderer {
         let depth_replay_color = (needs_transparent && config.selected_samples > 1).then(|| {
             self.gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Publication Depth Replay Color Texture"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: config.selected_samples,
                 dimension: wgpu::TextureDimension::D2,
@@ -2322,10 +2400,20 @@ impl Renderer {
             .as_ref()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
 
-        let (offscreen_opaque_depth, offscreen_opaque_depth_view) =
-            pipeline::create_depth_texture(&self.gpu.device, width, height, config.selected_samples);
-        let offscreen_transparent_depth = needs_transparent
-            .then(|| pipeline::create_transparent_depth_texture(&self.gpu.device, width, height, config.selected_samples));
+        let (offscreen_opaque_depth, offscreen_opaque_depth_view) = pipeline::create_depth_texture(
+            &self.gpu.device,
+            width,
+            height,
+            config.selected_samples,
+        );
+        let offscreen_transparent_depth = needs_transparent.then(|| {
+            pipeline::create_transparent_depth_texture(
+                &self.gpu.device,
+                width,
+                height,
+                config.selected_samples,
+            )
+        });
 
         let mut encoder = self
             .gpu
@@ -2364,6 +2452,7 @@ impl Renderer {
 
             pass.set_pipeline(&publication_pipelines.render);
             pass.set_bind_group(0, &export_camera_bind_group, &[]);
+            pass.set_bind_group(1, publication_look_bind_group, &[]);
             if self.instance_count > 0 {
                 pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
                 pass.draw(0..6, 0..self.instance_count);
@@ -2376,11 +2465,14 @@ impl Renderer {
                 pass.draw(0..self.cell_line_count, 0..1);
             }
 
-            if self.show_bonds && self.bond_instance_count > 0 {
+            if self.show_bonds && publication_bond_instance_count > 0 {
+                let publication_bond_buffer = publication_bond_buffer
+                    .ok_or_else(|| "publication bond buffer is missing".to_owned())?;
                 pass.set_pipeline(&publication_pipelines.bond);
                 pass.set_bind_group(0, &export_camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
-                pass.draw(0..72, 0..self.bond_instance_count);
+                pass.set_bind_group(1, publication_look_bind_group, &[]);
+                pass.set_vertex_buffer(0, publication_bond_buffer.slice(..));
+                pass.draw(0..72, 0..publication_bond_instance_count);
             }
         }
 
@@ -2409,9 +2501,9 @@ impl Renderer {
                     },
                 );
             } else {
-                let replay_color_view = depth_replay_color_view
-                    .as_ref()
-                    .ok_or_else(|| "publication depth replay color attachment is missing".to_owned())?;
+                let replay_color_view = depth_replay_color_view.as_ref().ok_or_else(|| {
+                    "publication depth replay color attachment is missing".to_owned()
+                })?;
                 let mut replay = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Publication Opaque Depth Replay Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2435,6 +2527,7 @@ impl Renderer {
                 });
                 replay.set_pipeline(&publication_pipelines.render);
                 replay.set_bind_group(0, &export_camera_bind_group, &[]);
+                replay.set_bind_group(1, publication_look_bind_group, &[]);
                 if self.instance_count > 0 {
                     replay.set_vertex_buffer(0, self.instance_buffer.slice(..));
                     replay.draw(0..6, 0..self.instance_count);
@@ -2445,11 +2538,14 @@ impl Renderer {
                     replay.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
                     replay.draw(0..self.cell_line_count, 0..1);
                 }
-                if self.show_bonds && self.bond_instance_count > 0 {
+                if self.show_bonds && publication_bond_instance_count > 0 {
+                    let publication_bond_buffer = publication_bond_buffer
+                        .ok_or_else(|| "publication bond buffer is missing".to_owned())?;
                     replay.set_pipeline(&publication_pipelines.bond);
                     replay.set_bind_group(0, &export_camera_bind_group, &[]);
-                    replay.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
-                    replay.draw(0..72, 0..self.bond_instance_count);
+                    replay.set_bind_group(1, publication_look_bind_group, &[]);
+                    replay.set_vertex_buffer(0, publication_bond_buffer.slice(..));
+                    replay.draw(0..72, 0..publication_bond_instance_count);
                 }
             }
 
@@ -2457,12 +2553,12 @@ impl Renderer {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Offscreen Transparent Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: render_color_view,
-                    resolve_target: if config.selected_samples > 1 {
-                        Some(&color_view)
-                    } else {
-                        None
-                    },
+                        view: render_color_view,
+                        resolve_target: if config.selected_samples > 1 {
+                            Some(&color_view)
+                        } else {
+                            None
+                        },
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: wgpu::StoreOp::Store,
@@ -2483,6 +2579,7 @@ impl Renderer {
                 if self.transparent_instance_count > 0 {
                     pass.set_pipeline(&publication_pipelines.transparent);
                     pass.set_bind_group(0, &export_camera_bind_group, &[]);
+                    pass.set_bind_group(1, publication_look_bind_group, &[]);
                     pass.set_vertex_buffer(0, self.transparent_instance_buffer.slice(..));
                     pass.draw(0..6, 0..self.transparent_instance_count);
                 }

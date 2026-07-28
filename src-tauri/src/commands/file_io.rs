@@ -2,6 +2,7 @@ use tauri::{Emitter, State};
 
 use super::{BaseCrystalState, VolumetricInfo};
 use crate::ipc::{ExportFileFormat, ExportImageBackground, IpcEnumInput, IpcError, IpcResult};
+use crate::renderer::publication_look::{PublicationLookProfile, PublicationLookProfileId};
 use crate::renderer::renderer::{PublicationBackground, PublicationRenderConfig};
 
 /// Load a CIF file into the state.
@@ -161,11 +162,16 @@ pub fn export_image(
     width: u32,
     height: u32,
     bg_mode: IpcEnumInput<ExportImageBackground>,
+    publication_profile: Option<IpcEnumInput<PublicationLookProfileId>>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
     let bg_mode = bg_mode.parse("bgMode")?;
+    let profile_id = publication_profile
+        .map(|profile| profile.parse("publicationProfile"))
+        .transpose()?
+        .unwrap_or(PublicationLookProfileId::ScientificGloss);
     let publication_background = match bg_mode {
         ExportImageBackground::Transparent => PublicationBackground::Transparent,
         ExportImageBackground::White => PublicationBackground::White,
@@ -196,23 +202,42 @@ pub fn export_image(
         .lock()
         .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
 
+    let look_profile = PublicationLookProfile::for_id(profile_id).map_err(IpcError::render)?;
     let recipe = crate::export_recipe::PublicationRasterRecipe::from_current_scene(
         &crystal,
         &settings,
         &renderer,
+        look_profile,
         width,
         height,
         bg_mode.as_str(),
         raster_format,
     )
     .map_err(IpcError::invalid_argument)?;
+    let publication_bond_instances = if renderer.show_bonds {
+        crate::renderer::instance::build_publication_bond_instances_with_count(
+            &crystal,
+            &settings,
+            look_profile.bond_color_mode,
+            recipe
+                .rendering
+                .publication_admission
+                .request
+                .publication_bond_instance_count,
+        )
+        .map_err(|error| IpcError::render(error.message))?
+    } else {
+        Vec::new()
+    };
     drop(settings);
     drop(crystal);
 
     let publication_config: PublicationRenderConfig = renderer
-        .publication_render_config(
+        .publication_render_config_with_profile(
             &recipe.rendering.publication_admission,
             publication_background,
+            look_profile,
+            publication_bond_instances,
         )
         .map_err(IpcError::render)?;
     let publication_result = renderer

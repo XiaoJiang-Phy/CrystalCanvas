@@ -6,8 +6,18 @@ use wgpu;
 
 use super::camera::CameraUniform;
 use super::instance::{AtomInstance, BondInstance, LineVertex};
+use super::publication_look::PublicationLookUniform;
 
 const INTERACTIVE_SAMPLE_COUNT: u32 = 1;
+
+pub struct PublicationPipelineSet {
+    pub render: wgpu::RenderPipeline,
+    pub transparent: wgpu::RenderPipeline,
+    pub line: wgpu::RenderPipeline,
+    pub bond: wgpu::RenderPipeline,
+    pub camera_bind_group_layout: wgpu::BindGroupLayout,
+    pub look_bind_group_layout: wgpu::BindGroupLayout,
+}
 
 /// Create the main render pipeline for Impostor Sphere rendering.
 ///
@@ -293,6 +303,210 @@ pub fn create_bond_pipeline(
     })
 }
 
+pub fn create_publication_pipelines(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> PublicationPipelineSet {
+    let camera_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Publication Camera Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<CameraUniform>() as u64
+                    ),
+                },
+                count: None,
+            }],
+        });
+    let look_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Publication Look Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                        PublicationLookUniform,
+                    >() as u64),
+                },
+                count: None,
+            }],
+        });
+
+    let render = create_publication_atom_pipeline(
+        device,
+        surface_format,
+        &camera_bind_group_layout,
+        &look_bind_group_layout,
+        sample_count,
+        true,
+        "Publication Impostor Sphere Pipeline",
+    );
+    let transparent = create_publication_atom_pipeline(
+        device,
+        surface_format,
+        &camera_bind_group_layout,
+        &look_bind_group_layout,
+        sample_count,
+        false,
+        "Publication Transparent Impostor Sphere Pipeline",
+    );
+    let bond = create_publication_bond_pipeline(
+        device,
+        surface_format,
+        &camera_bind_group_layout,
+        &look_bind_group_layout,
+        sample_count,
+    );
+    let line = create_line_pipeline(
+        device,
+        surface_format,
+        &camera_bind_group_layout,
+        sample_count,
+    );
+
+    PublicationPipelineSet {
+        render,
+        transparent,
+        line,
+        bond,
+        camera_bind_group_layout,
+        look_bind_group_layout,
+    }
+}
+
+fn create_publication_atom_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+    look_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
+    depth_write_enabled: bool,
+    label: &'static str,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Publication Impostor Sphere Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/impostor_sphere.wgsl").into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &[camera_bind_group_layout, look_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[AtomInstance::buffer_layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_publication"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+fn create_publication_bond_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+    look_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Publication Bond Cylinder Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/bond_cylinder.wgsl").into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Publication Bond Pipeline Layout"),
+        bind_group_layouts: &[camera_bind_group_layout, look_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Publication Bond Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[BondInstance::buffer_layout()],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_publication"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
 /// Create a depth texture and its view for the depth buffer.
 pub fn create_depth_texture(
     device: &wgpu::Device,
@@ -311,7 +525,9 @@ pub fn create_depth_texture(
         sample_count,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

@@ -11,6 +11,17 @@ struct CameraUniforms {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniforms;
 
+struct PublicationLookUniform {
+    key_direction: vec4<f32>,
+    fill_direction: vec4<f32>,
+    rim_direction: vec4<f32>,
+    material: vec4<f32>,
+    exposure_tone_unlit_projection: vec4<f32>,
+};
+
+@group(1) @binding(0)
+var<uniform> look: PublicationLookUniform;
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_view: vec3<f32>,
@@ -90,4 +101,53 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let brightness = ambient + diffuse + specular;
     
     return vec4<f32>(in.color.rgb * brightness, in.color.a);
+}
+
+fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
+    let low = value / 12.92;
+    let high = pow((value + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(low, high, value > vec3<f32>(0.04045));
+}
+
+fn tone_map_publication(color: vec3<f32>) -> vec3<f32> {
+    if look.exposure_tone_unlit_projection.y < 0.5 {
+        return color;
+    }
+    let exposed = color * exp2(look.exposure_tone_unlit_projection.x);
+    return clamp(
+        (exposed * (2.51 * exposed + vec3<f32>(0.03)))
+            / (exposed * (2.43 * exposed + vec3<f32>(0.59)) + vec3<f32>(0.14)),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+}
+
+fn shade_publication(base_color: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    let linear_base = srgb_to_linear(base_color);
+    if look.exposure_tone_unlit_projection.z > 0.5 {
+        return linear_base;
+    }
+    let key_direction = normalize(look.key_direction.xyz);
+    let fill_direction = normalize(look.fill_direction.xyz);
+    let rim_direction = normalize(look.rim_direction.xyz);
+    let view_direction = vec3<f32>(0.0, 0.0, 1.0);
+    let key = max(dot(normal, key_direction), 0.0) * look.key_direction.w;
+    let fill = max(dot(normal, fill_direction), 0.0) * look.fill_direction.w;
+    let rim = pow(1.0 - max(dot(normal, view_direction), 0.0), 2.0)
+        * max(dot(normal, rim_direction), 0.0)
+        * look.rim_direction.w;
+    let half_direction = normalize(key_direction + view_direction);
+    let exponent = mix(96.0, 8.0, look.material.y);
+    let highlight = pow(max(dot(normal, half_direction), 0.0), exponent) * look.material.z;
+    return tone_map_publication(
+        linear_base * (look.material.x + key + fill + rim) + vec3<f32>(highlight),
+    );
+}
+
+@fragment
+fn fs_publication(in: VertexOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(
+        shade_publication(in.color.rgb, normalize(in.normal_view)),
+        in.color.a * look.material.w,
+    );
 }

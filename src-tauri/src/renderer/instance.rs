@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use super::publication_look::PublicationBondColorMode;
 use crate::ipc::{IpcError, IpcResult};
 use crate::utils::colors::get_jmol_color;
 use bytemuck::{Pod, Zeroable};
@@ -150,7 +151,10 @@ pub fn validate_phonon_display_envelope(
         })?;
         for axis in 0..3 {
             let offset = scale_bound * f64::from(displacement[axis]);
-            for coordinate in [f64::from(instance.position[axis]) + offset, f64::from(instance.position[axis]) - offset] {
+            for coordinate in [
+                f64::from(instance.position[axis]) + offset,
+                f64::from(instance.position[axis]) - offset,
+            ] {
                 if !coordinate.is_finite() || !(coordinate as f32).is_finite() {
                     return Err(IpcError::invalid_argument(
                         "phonon display coordinate exceeds renderer precision",
@@ -182,9 +186,7 @@ pub struct PreparedAtomScene {
     pub(crate) pick_data: Arc<Vec<crate::renderer::ray_picking::PickAtom>>,
 }
 
-pub fn prepare_atom_scene(
-    instances: Vec<RenderAtomInstance>,
-) -> IpcResult<PreparedAtomScene> {
+pub fn prepare_atom_scene(instances: Vec<RenderAtomInstance>) -> IpcResult<PreparedAtomScene> {
     let transparent_count = instances
         .iter()
         .filter(|instance| instance.atom.color[3] < 0.999)
@@ -292,9 +294,9 @@ pub struct LineVertex {
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 pub struct BondInstance {
     pub start: [f32; 3],
-    pub radius: f32,      // radius of the bond cylinder
+    pub radius: f32, // radius of the bond cylinder
     pub end: [f32; 3],
-    pub _pad: f32,        // align to 16 bytes (vec4)
+    pub _pad: f32, // align to 16 bytes (vec4)
     pub color: [f32; 4],
 }
 
@@ -356,6 +358,14 @@ impl LineVertex {
 /// Now delegates to the central Jmol table in utils::colors.
 pub fn element_color(symbol: &str) -> [f32; 4] {
     get_jmol_color(symbol)
+}
+
+fn effective_element_color(settings: &crate::settings::AppSettings, symbol: &str) -> [f32; 4] {
+    settings
+        .custom_atom_colors
+        .get(symbol)
+        .copied()
+        .unwrap_or_else(|| element_color(symbol))
 }
 
 /// Empirical covalent radii in Å (Cordero et al., Dalton Trans., 2008).
@@ -500,10 +510,7 @@ pub fn build_instance_data(
         .try_reserve_exact(n)
         .map_err(|_| IpcError::render("unable to allocate intrinsic atom scene"))?;
     for i in 0..n {
-        let mut color = element_color(&element_symbols[i]);
-        if let Some(custom_color) = settings.custom_atom_colors.get(&element_symbols[i]) {
-            color = *custom_color;
-        }
+        let color = effective_element_color(settings, &element_symbols[i]);
 
         let occ = occupancies.get(i).copied().unwrap_or(1.0).clamp(0.0, 1.0);
         let alpha = occ.powf(0.6) as f32;
@@ -909,12 +916,12 @@ pub fn build_bond_instances(
                     end: p2.into(),
                     _pad: 0.0,
                     color: if selected_atoms.contains(&i) || selected_atoms.contains(&j) {
-                            [
-                                settings.bond_color[0] * 0.5,
-                                settings.bond_color[1] * 0.9 + 0.3,
-                                settings.bond_color[2] * 0.9 + 0.5,
-                                1.0,
-                            ]
+                        [
+                            settings.bond_color[0] * 0.5,
+                            settings.bond_color[1] * 0.9 + 0.3,
+                            settings.bond_color[2] * 0.9 + 0.5,
+                            1.0,
+                        ]
                     } else {
                         settings.bond_color
                     },
@@ -923,6 +930,287 @@ pub fn build_bond_instances(
         }
     }
 
+    Ok(instances)
+}
+
+pub struct PublicationBondSplit {
+    instances: [BondInstance; 2],
+    count: usize,
+}
+
+impl PublicationBondSplit {
+    fn as_slice(&self) -> &[BondInstance] {
+        &self.instances[..self.count]
+    }
+}
+
+/// Split one publication bond without changing its physical endpoints.
+pub fn split_publication_bond(
+    start: [f32; 3],
+    end: [f32; 3],
+    radius: f32,
+    uniform_color: [f32; 4],
+    start_color: [f32; 4],
+    end_color: [f32; 4],
+    mode: PublicationBondColorMode,
+) -> IpcResult<PublicationBondSplit> {
+    if !start
+        .iter()
+        .chain(end.iter())
+        .all(|value| value.is_finite())
+        || !radius.is_finite()
+        || radius <= 0.0
+        || !uniform_color
+            .iter()
+            .chain(start_color.iter())
+            .chain(end_color.iter())
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+    {
+        return Err(IpcError::render(
+            "publication bond contains an invalid value",
+        ));
+    }
+    let midpoint64 = [
+        (f64::from(start[0]) + f64::from(end[0])) * 0.5,
+        (f64::from(start[1]) + f64::from(end[1])) * 0.5,
+        (f64::from(start[2]) + f64::from(end[2])) * 0.5,
+    ];
+    let midpoint = [
+        midpoint64[0] as f32,
+        midpoint64[1] as f32,
+        midpoint64[2] as f32,
+    ];
+    let delta = [
+        f64::from(end[0]) - f64::from(start[0]),
+        f64::from(end[1]) - f64::from(start[1]),
+        f64::from(end[2]) - f64::from(start[2]),
+    ];
+    let length_squared = delta.iter().map(|value| value * value).sum::<f64>();
+    if !midpoint.iter().all(|value| value.is_finite())
+        || !length_squared.is_finite()
+        || length_squared <= 1.0e-10
+    {
+        return Err(IpcError::render("publication bond is degenerate"));
+    }
+
+    let uniform = BondInstance {
+        start,
+        radius,
+        end,
+        _pad: 0.0,
+        color: uniform_color,
+    };
+    if mode == PublicationBondColorMode::Uniform {
+        return Ok(PublicationBondSplit {
+            instances: [uniform, uniform],
+            count: 1,
+        });
+    }
+    Ok(PublicationBondSplit {
+        instances: [
+            BondInstance {
+                start,
+                radius,
+                end: midpoint,
+                _pad: 0.0,
+                color: start_color,
+            },
+            BondInstance {
+                start: midpoint,
+                radius,
+                end,
+                _pad: 0.0,
+                color: end_color,
+            },
+        ],
+        count: 2,
+    })
+}
+
+fn validate_publication_bond_scene(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+) -> IpcResult<()> {
+    let atom_count = cs.cart_positions.len();
+    if cs.atomic_numbers.len() != atom_count || cs.elements.len() != atom_count {
+        return Err(IpcError::render(
+            "publication bond scene has inconsistent atom arrays",
+        ));
+    }
+    if !cs
+        .cart_positions
+        .iter()
+        .flatten()
+        .all(|coordinate| coordinate.is_finite())
+        || !settings.bond_tolerance.is_finite()
+        || settings.bond_tolerance < 0.0
+        || !settings.bond_radius.is_finite()
+        || settings.bond_radius <= 0.0
+        || !settings
+            .bond_color
+            .iter()
+            .all(|color| color.is_finite() && (0.0..=1.0).contains(color))
+    {
+        return Err(IpcError::render(
+            "publication bond scene contains an invalid value",
+        ));
+    }
+    Ok(())
+}
+
+fn is_renderable_publication_bond_pair(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    i: usize,
+    j: usize,
+) -> IpcResult<bool> {
+    let start = glam::Vec3::from(cs.cart_positions[i]);
+    let end = glam::Vec3::from(cs.cart_positions[j]);
+    let distance_squared = (start - end).length_squared();
+    let max_length = covalent_radius(cs.atomic_numbers[i])
+        + covalent_radius(cs.atomic_numbers[j])
+        + settings.bond_tolerance;
+    let max_length_squared = max_length * max_length;
+    if !distance_squared.is_finite() || !max_length.is_finite() || !max_length_squared.is_finite() {
+        return Err(IpcError::render("publication bond distance is invalid"));
+    }
+    Ok(distance_squared > 0.25
+        && distance_squared < max_length_squared
+        && !(is_metal(cs.atomic_numbers[i]) && cs.atomic_numbers[i] == cs.atomic_numbers[j]))
+}
+
+fn validate_publication_bond_opacity(
+    settings: &crate::settings::AppSettings,
+    start_element: &str,
+    end_element: &str,
+    mode: PublicationBondColorMode,
+) -> IpcResult<()> {
+    let is_opaque = match mode {
+        PublicationBondColorMode::Uniform => settings.bond_color[3] == 1.0,
+        PublicationBondColorMode::ByElements => {
+            effective_element_color(settings, start_element)[3] == 1.0
+                && effective_element_color(settings, end_element)[3] == 1.0
+        }
+    };
+    if !is_opaque {
+        return Err(IpcError::render(
+            "publication export does not support transparent bonds",
+        ));
+    }
+    Ok(())
+}
+
+pub fn publication_bond_instance_count(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    mode: PublicationBondColorMode,
+) -> IpcResult<u32> {
+    validate_publication_bond_scene(cs, settings)?;
+    let mut count = 0usize;
+    for i in 0..cs.cart_positions.len() {
+        for j in (i + 1)..cs.cart_positions.len() {
+            if is_renderable_publication_bond_pair(cs, settings, i, j)? {
+                validate_publication_bond_opacity(
+                    settings,
+                    &cs.elements[i],
+                    &cs.elements[j],
+                    mode,
+                )?;
+                count = count
+                    .checked_add(if mode == PublicationBondColorMode::ByElements {
+                        2
+                    } else {
+                        1
+                    })
+                    .ok_or_else(|| IpcError::render("publication bond count overflow"))?;
+            }
+        }
+    }
+    u32::try_from(count).map_err(|_| IpcError::render("publication bond count exceeds GPU range"))
+}
+
+fn append_publication_bond(
+    instances: &mut Vec<BondInstance>,
+    start: [f32; 3],
+    end: [f32; 3],
+    radius: f32,
+    uniform_color: [f32; 4],
+    start_color: [f32; 4],
+    end_color: [f32; 4],
+    mode: PublicationBondColorMode,
+    expected_count: usize,
+) -> IpcResult<()> {
+    let split = split_publication_bond(
+        start,
+        end,
+        radius,
+        uniform_color,
+        start_color,
+        end_color,
+        mode,
+    )?;
+    let required_len = instances
+        .len()
+        .checked_add(split.count)
+        .ok_or_else(|| IpcError::render("publication bond count overflow"))?;
+    if required_len > expected_count {
+        return Err(IpcError::render(
+            "publication bond scene changed after admission",
+        ));
+    }
+    instances.extend_from_slice(split.as_slice());
+    Ok(())
+}
+
+pub fn build_publication_bond_instances(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    mode: PublicationBondColorMode,
+) -> IpcResult<Vec<BondInstance>> {
+    let expected_count = publication_bond_instance_count(cs, settings, mode)?;
+    build_publication_bond_instances_with_count(cs, settings, mode, expected_count)
+}
+
+pub fn build_publication_bond_instances_with_count(
+    cs: &crate::crystal_state::CrystalState,
+    settings: &crate::settings::AppSettings,
+    mode: PublicationBondColorMode,
+    expected_count: u32,
+) -> IpcResult<Vec<BondInstance>> {
+    validate_publication_bond_scene(cs, settings)?;
+    let n = cs.cart_positions.len();
+    let mut instances = Vec::new();
+    instances
+        .try_reserve_exact(expected_count as usize)
+        .map_err(|_| IpcError::render("unable to allocate publication bond scene"))?;
+    let expected_count = expected_count as usize;
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if !is_renderable_publication_bond_pair(cs, settings, i, j)? {
+                continue;
+            }
+            validate_publication_bond_opacity(settings, &cs.elements[i], &cs.elements[j], mode)?;
+            let start = glam::Vec3::from(cs.cart_positions[i]);
+            let end = glam::Vec3::from(cs.cart_positions[j]);
+            append_publication_bond(
+                &mut instances,
+                start.into(),
+                end.into(),
+                settings.bond_radius,
+                settings.bond_color,
+                effective_element_color(settings, &cs.elements[i]),
+                effective_element_color(settings, &cs.elements[j]),
+                mode,
+                expected_count,
+            )?;
+        }
+    }
+    if instances.len() != expected_count {
+        return Err(IpcError::render(
+            "publication bond scene changed after admission",
+        ));
+    }
     Ok(instances)
 }
 

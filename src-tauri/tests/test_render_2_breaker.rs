@@ -164,8 +164,8 @@ fn recipe_validation_rejects_malformed_render_2_sampling_and_tile_metadata() {
         );
     }
     assert!(
-        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 7"),
-        "RENDER-2 changes reproducibility semantics and therefore requires exactly one schema bump from v6 to v7"
+        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 8"),
+        "LOOK-2 extends the RENDER-2 recipe with its serialized appearance contract, so the combined baseline is schema v8"
     );
 }
 

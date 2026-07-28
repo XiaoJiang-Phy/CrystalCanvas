@@ -71,7 +71,7 @@ fn rejects_zero_dimensions_before_offscreen_resource_allocation() {
         .find("PublicationRasterRecipe::from_current_scene")
         .expect("export must build a publication recipe");
     let config_position = export_image
-        .find(".publication_render_config(")
+        .find(".publication_render_config_with_profile(")
         .expect("export must derive its render config from the validated receipt");
     let render_position = export_image
         .find(".render_offscreen(&publication_config)")
@@ -98,7 +98,7 @@ fn rejects_extreme_dimensions_before_gpu_or_cpu_resource_meltdown() {
     );
     let config = source_between(
         renderer,
-        "pub(crate) fn publication_render_config(",
+        "pub(crate) fn publication_render_config_with_profile(",
         "\n}\n\n#[must_use]",
     );
     let recipe_builder = source_between(
@@ -266,7 +266,7 @@ fn publication_export_uses_render_2_sampling_instead_of_the_retired_single_sampl
     let renderer = include_str!("../src/renderer/renderer.rs");
     let config = source_between(
         renderer,
-        "pub(crate) fn publication_render_config(",
+        "pub(crate) fn publication_render_config_with_profile(",
         "\n}\n\n#[must_use]",
     );
     let offscreen = source_between(
@@ -290,23 +290,22 @@ fn publication_export_uses_render_2_sampling_instead_of_the_retired_single_sampl
 }
 
 #[test]
-fn baseline_export_has_no_versioned_recipe_or_explicit_camera_material_contract() {
+fn publication_export_records_the_versioned_camera_material_and_profile_contract() {
     let file_io = include_str!("../src/commands/file_io.rs");
+    let recipe = include_str!("../src/export_recipe.rs");
     let export_image = command_body(file_io, "export_image");
 
-    for missing_contract in [
-        "crystalcanvas.export-recipe",
-        "schema_version",
-        "sidecar",
-        "camera",
-        "projection",
-        "material",
-        "light",
-        "profile",
+    for required_contract in [
+        "PublicationRasterRecipe::from_current_scene",
+        "write_publication_raster_pair",
+        "PublicationLookProfile",
+        "RecipeCamera",
+        "RecipeMaterials",
+        "PublicationLookRecipe",
     ] {
         assert!(
-            !export_image.contains(missing_contract),
-            "the current image IPC does not record `{missing_contract}` for reproducible publication export"
+            export_image.contains(required_contract) || recipe.contains(required_contract),
+            "publication export must retain the reproducible `{required_contract}` contract"
         );
     }
 }
@@ -334,9 +333,10 @@ fn publication_alpha_and_channel_order_are_declared_at_the_new_boundaries() {
 }
 
 #[test]
-fn baseline_native_quality_is_not_separable_from_pixel_dimensions() {
+fn publication_quality_contract_is_not_limited_to_pixel_dimensions() {
     let file_io = include_str!("../src/commands/file_io.rs");
     let renderer = include_str!("../src/renderer/renderer.rs");
+    let recipe = include_str!("../src/export_recipe.rs");
     let export_image = command_body(file_io, "export_image");
     let offscreen = source_between(
         renderer,
@@ -345,18 +345,12 @@ fn baseline_native_quality_is_not_separable_from_pixel_dimensions() {
     );
 
     assert!(export_image.contains("width") && export_image.contains("height"));
-    for missing_quality_contract in [
-        "perceptual_metric",
-        "image_comparison_metric",
-        "approved_tolerance",
-        "publication_profile",
-        "scientific_gloss",
-        "bond_color_mode",
-    ] {
+    for required_quality_contract in ["look_profile", "bond_color_mode"] {
         assert!(
-            !offscreen.contains(missing_quality_contract)
-                && !export_image.contains(missing_quality_contract),
-            "current export cannot distinguish `{missing_quality_contract}` quality acceptance from dimensions alone"
+            offscreen.contains(required_quality_contract)
+                || export_image.contains(required_quality_contract)
+                || recipe.contains(required_quality_contract),
+            "publication export must retain `{required_quality_contract}` independently of image dimensions"
         );
     }
 }

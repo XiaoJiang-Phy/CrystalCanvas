@@ -4,8 +4,8 @@
 //! GPU device.  It is RED until that seam is exported to integration tests.
 
 use crystal_canvas::renderer::renderer::{
-    PublicationExportLimits, PublicationExportRejection, PublicationExportRequest,
-    evaluate_publication_export_admission,
+    evaluate_publication_export_admission, PublicationExportLimits, PublicationExportRejection,
+    PublicationExportRequest,
 };
 
 const TEST_MAX_TEXTURE_DIMENSION: u32 = 8_192;
@@ -23,6 +23,7 @@ fn structure_only_request(width: u32, height: u32) -> PublicationExportRequest {
     PublicationExportRequest {
         width,
         height,
+        publication_bond_instance_count: 0,
         needs_transparent_depth: false,
         has_measurement_overlays: false,
         has_hopping_overlays: false,
@@ -63,7 +64,10 @@ fn rejects_zero_and_arithmetic_disaster_dimensions_without_a_gpu() {
     )
     .expect("a bounded multi-tile export must not be rejected only for exceeding one texture");
     let tiled_value = serde_json::to_value(tiled).unwrap();
-    assert_eq!(tiled_value["render_plan"]["tile_layout"], serde_json::json!([2, 1]));
+    assert_eq!(
+        tiled_value["render_plan"]["tile_layout"],
+        serde_json::json!([2, 1])
+    );
     assert_eq!(
         tiled_value["render_plan"]["tile_dimensions"],
         serde_json::json!([TEST_MAX_TEXTURE_DIMENSION, 1])
@@ -103,6 +107,51 @@ fn rejects_resource_meltdowns_before_offscreen_allocation() {
     assert_rejected(
         oversized_transparent_export,
         PublicationExportRejection::TransientGpuBudget,
+    );
+}
+
+#[test]
+fn rejects_endpoint_split_bond_buffer_meltdowns_before_gpu_allocation() {
+    let bond_instance_bytes =
+        std::mem::size_of::<crystal_canvas::renderer::instance::BondInstance>() as u64;
+    assert!(
+        bond_instance_bytes > 0,
+        "the admission test requires a concrete bond-instance layout"
+    );
+    let admitted_count: u32 = 16;
+    let max_buffer_size = bond_instance_bytes * u64::from(admitted_count);
+    let mut request = structure_only_request(1, 1);
+    request.publication_bond_instance_count = admitted_count + 1;
+    assert_eq!(
+        evaluate_publication_export_admission(
+            request,
+            PublicationExportLimits {
+                max_buffer_size,
+                ..test_limits()
+            },
+        ),
+        Err(PublicationExportRejection::DeviceBufferLimit),
+        "endpoint-split bond bytes must be rejected by admission before a GPU buffer is created"
+    );
+
+    let mut admitted = structure_only_request(1, 1);
+    admitted.publication_bond_instance_count = admitted_count;
+    let receipt = evaluate_publication_export_admission(
+        admitted,
+        PublicationExportLimits {
+            max_buffer_size,
+            ..test_limits()
+        },
+    )
+    .expect("a bond buffer exactly at the device limit must remain admissible");
+    let receipt = serde_json::to_value(receipt).unwrap();
+    assert_eq!(
+        receipt["request"]["publication_bond_instance_count"],
+        serde_json::json!(admitted_count)
+    );
+    assert_eq!(
+        receipt["estimate"]["publication_bond_bytes"],
+        serde_json::json!(max_buffer_size)
     );
 }
 
@@ -177,18 +226,18 @@ fn admits_the_smallest_structure_only_control_case() {
 
 #[test]
 fn capability_selected_fallback_and_peak_resources_are_receipt_bound() {
-    let msaa = evaluate_publication_export_admission(
-        structure_only_request(1024, 1024),
-        test_limits(),
-    )
-    .unwrap();
+    let msaa =
+        evaluate_publication_export_admission(structure_only_request(1024, 1024), test_limits())
+            .unwrap();
     let msaa_value = serde_json::to_value(msaa).unwrap();
     assert_eq!(msaa_value["render_plan"]["requested_samples"], 4);
     assert_eq!(msaa_value["render_plan"]["selected_samples"], 4);
     assert_eq!(msaa_value["render_plan"]["tile_overlap_pixels"], 0);
     assert!(msaa_value["estimate"]["msaa_color_bytes"].as_u64().unwrap() > 0);
     assert!(
-        msaa_value["estimate"]["opaque_depth_bytes"].as_u64().unwrap()
+        msaa_value["estimate"]["opaque_depth_bytes"]
+            .as_u64()
+            .unwrap()
             >= msaa_value["estimate"]["msaa_color_bytes"].as_u64().unwrap()
     );
     assert!(

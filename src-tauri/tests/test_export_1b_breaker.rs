@@ -120,7 +120,7 @@ fn export_camera_and_background_are_snapshot_owned_not_interactive_renderer_muta
     );
 
     assert!(
-        renderer.contains("fn publication_render_config(")
+        renderer.contains("fn publication_render_config_with_profile(")
             && renderer.contains("PublicationBackground"),
         "all four backgrounds and the export camera snapshot must be resolved before target allocation"
     );

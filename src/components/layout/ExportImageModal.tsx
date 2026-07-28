@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Image as ImageIcon, X } from 'lucide-react';
-import { IpcException, type ExportImageBackground, type IpcError } from '../../ipc/contracts';
+import { IpcException, type ExportImageBackground, type IpcError, type PublicationLookProfileId } from '../../ipc/contracts';
 import { safeDialogSave, safeInvoke } from '../../utils/tauri-mock';
 
 interface ExportImageModalProps {
@@ -26,6 +26,12 @@ const BG_OPTIONS: { label: string; value: ExportImageBackground; preview: string
     { label: 'Current', value: 'default', preview: 'bg-[var(--cc-canvas)]' },
 ];
 
+const LOOK_OPTIONS: { label: string; value: PublicationLookProfileId }[] = [
+    { label: 'Scientific Gloss', value: 'scientific_gloss' },
+    { label: 'Studio', value: 'studio' },
+    { label: 'Unlit', value: 'unlit' },
+];
+
 export const ExportImageModal: React.FC<ExportImageModalProps> = ({
     isOpen,
     onClose,
@@ -39,6 +45,7 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
     const busyRef = useRef(false);
     const [scale, setScale] = useState(2);
     const [bgMode, setBgMode] = useState<ExportImageBackground>('transparent');
+    const [publicationProfile, setPublicationProfile] = useState<PublicationLookProfileId>('scientific_gloss');
     const [format, setFormat] = useState<'png' | 'jpeg'>('png');
     const [customWidth, setCustomWidth] = useState<number | null>(null);
     const [customHeight, setCustomHeight] = useState<number | null>(null);
@@ -124,6 +131,7 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                 width: outputW,
                 height: outputH,
                 bgMode,
+                publicationProfile,
             });
             onClose();
         } catch (cause) {
@@ -200,6 +208,15 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                             <button type="button" onClick={() => setFormat('jpeg')} disabled={isExporting} aria-pressed={format === 'jpeg'} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-3 py-1.5 text-xs transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:opacity-60 aria-pressed:border-[var(--cc-accent)]">JPEG (smaller)</button>
                         </div>
                         {format === 'jpeg' && bgMode === 'transparent' && <p role="status" className="text-[11px] text-[var(--cc-muted)]">JPEG composites transparent pixels onto white.</p>}
+                    </section>
+
+                    <section aria-labelledby="export-look" className="space-y-3">
+                        <h3 id="export-look" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Publication look</h3>
+                        <div className="grid grid-cols-3 gap-2">
+                            {LOOK_OPTIONS.map((option) => (
+                                <button key={option.value} type="button" onClick={() => setPublicationProfile(option.value)} disabled={isExporting} aria-pressed={publicationProfile === option.value} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-[11px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:opacity-60 aria-pressed:border-[var(--cc-accent)]">{option.label}</button>
+                            ))}
+                        </div>
                     </section>
 
                     {!hasValidOutputSize && <div role="alert" className="rounded border border-[var(--cc-danger)] bg-[var(--cc-panel)] px-2 py-1.5 text-xs">Output dimensions must be between 1 and 16384 px.</div>}

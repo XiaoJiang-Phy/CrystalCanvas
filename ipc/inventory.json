@@ -123,6 +123,7 @@
       "bgMode",
       "height",
       "path",
+      "publicationProfile",
       "width"
     ],
     "generate_kpath_text": [
@@ -521,6 +522,12 @@
           "optional": false,
           "rust_type": "String",
           "type": "string"
+        },
+        {
+          "name": "publicationProfile",
+          "optional": true,
+          "rust_type": "Option<IpcEnumInput<PublicationLookProfileId>>",
+          "type": "PublicationLookProfileId|null"
         },
         {
           "name": "width",
@@ -1648,6 +1655,7 @@
         "bgMode",
         "height",
         "path",
+        "publicationProfile",
         "width"
       ],
       "response_type": null

@@ -1,11 +1,14 @@
 use crystal_canvas::export_recipe::{
-    EXPORT_RECIPE_SCHEMA, EXPORT_RECIPE_SCHEMA_VERSION, ExportRecipeKind, PublicationRasterRecipe,
-    RecipeArtifact, RecipeCamera, RecipeCodec, RecipeColorProfile, RecipeMaterials, RecipeOutput,
-    RecipeRendering, RecipeScene, RecipeSource, parse_publication_recipe, publication_sidecar_path,
-    write_publication_raster_pair,
+    parse_publication_recipe, publication_sidecar_path, write_publication_raster_pair,
+    ExportRecipeKind, PublicationLookRecipe, PublicationRasterRecipe, RecipeArtifact, RecipeCamera,
+    RecipeCodec, RecipeColorProfile, RecipeMaterials, RecipeOutput, RecipeRendering, RecipeScene,
+    RecipeSource, EXPORT_RECIPE_SCHEMA, EXPORT_RECIPE_SCHEMA_VERSION,
+};
+use crystal_canvas::renderer::publication_look::{
+    PublicationLookProfile, PublicationLookProfileId,
 };
 use crystal_canvas::renderer::renderer::{
-    PublicationExportLimits, PublicationExportRequest, evaluate_publication_export_admission,
+    evaluate_publication_export_admission, PublicationExportLimits, PublicationExportRequest,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -15,10 +18,14 @@ fn valid_recipe() -> PublicationRasterRecipe {
 }
 
 fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
+    let look_profile = PublicationLookRecipe::from_profile(
+        PublicationLookProfile::for_id(PublicationLookProfileId::ScientificGloss).unwrap(),
+    );
     let publication_admission = evaluate_publication_export_admission(
         PublicationExportRequest {
             width,
             height,
+            publication_bond_instance_count: 0,
             needs_transparent_depth: false,
             has_measurement_overlays: false,
             has_hopping_overlays: false,
@@ -78,7 +85,8 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
             stable_periodic_image_policy: "current_renderer_visible_images".to_owned(),
         },
         materials: RecipeMaterials {
-            material_profile: "legacy_interactive".to_owned(),
+            material_profile: look_profile.profile_id.clone(),
+            look_profile,
             atom_radius_policy: "mapped_covalent_radius_angstrom_scaled".to_owned(),
             atom_radius_scale: 1.0,
             bond_tolerance: 0.45,
@@ -89,10 +97,10 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
                 ("Cl".to_owned(), [0.0, 1.0, 0.0, 1.0]),
                 ("Na".to_owned(), [0.0, 0.0, 1.0, 1.0]),
             ]),
-            color_value_space: "legacy_renderer_input".to_owned(),
+            color_value_space: "sRGB_straight_alpha".to_owned(),
         },
         rendering: RecipeRendering {
-            lighting_policy: "legacy_fixed_shader".to_owned(),
+            lighting_policy: "publication_profile_v1".to_owned(),
             ssao: "disabled".to_owned(),
             shadows: "disabled".to_owned(),
             requested_samples: 4,
@@ -158,11 +166,9 @@ fn validation_rejects_unknown_versions_non_finite_values_and_missing_units() {
     let mut unknown_version = valid_recipe();
     unknown_version.schema_version += 1;
     let bytes = serde_json::to_vec(&unknown_version).unwrap();
-    assert!(
-        parse_publication_recipe(&bytes)
-            .unwrap_err()
-            .contains("unsupported export recipe schema version")
-    );
+    assert!(parse_publication_recipe(&bytes)
+        .unwrap_err()
+        .contains("unsupported export recipe schema version"));
 
     let mut non_finite = valid_recipe();
     non_finite.camera.eye[0] = f32::NAN;
@@ -170,20 +176,40 @@ fn validation_rejects_unknown_versions_non_finite_values_and_missing_units() {
 
     let mut missing_source_unit = valid_recipe();
     missing_source_unit.source.source_length_unit.clear();
-    assert!(
-        missing_source_unit
-            .validate()
-            .unwrap_err()
-            .contains("source units")
-    );
+    assert!(missing_source_unit
+        .validate()
+        .unwrap_err()
+        .contains("source units"));
 
     let mut missing_radius_unit = valid_recipe();
     missing_radius_unit.materials.radius_length_unit.clear();
+    assert!(missing_radius_unit
+        .validate()
+        .unwrap_err()
+        .contains("radius length unit"));
+}
+
+#[test]
+fn validation_rejects_forged_fixed_profile_snapshots() {
+    let mut forged_roughness = valid_recipe();
+    forged_roughness.materials.look_profile.roughness = 0.73;
     assert!(
-        missing_radius_unit
-            .validate()
-            .unwrap_err()
-            .contains("radius length unit")
+        forged_roughness.validate().is_err(),
+        "a bounded but non-preset roughness must not masquerade as Scientific Gloss"
+    );
+
+    let mut forged_bond_mode = valid_recipe();
+    forged_bond_mode.materials.look_profile.bond_color_mode = "uniform".to_owned();
+    assert!(
+        forged_bond_mode.validate().is_err(),
+        "a fixed profile id must determine its bond-color policy"
+    );
+
+    let mut forged_direction = valid_recipe();
+    forged_direction.materials.look_profile.key_direction = [0.0, 1.0, 0.0];
+    assert!(
+        forged_direction.validate().is_err(),
+        "a normalized but substituted light direction must not be accepted as a fixed profile"
     );
 }
 
@@ -191,25 +217,21 @@ fn validation_rejects_unknown_versions_non_finite_values_and_missing_units() {
 fn validation_rejects_zero_dimensions_and_inconsistent_alpha_contracts() {
     let mut zero_width = valid_recipe();
     zero_width.output.width = 0;
-    assert!(
-        zero_width
-            .validate()
-            .unwrap_err()
-            .contains("dimensions must be non-zero")
-    );
+    assert!(zero_width
+        .validate()
+        .unwrap_err()
+        .contains("dimensions must be non-zero"));
 
     let mut invalid_alpha = valid_recipe();
     invalid_alpha.output.encoded_alpha_policy = "premultiplied".to_owned();
-    assert!(
-        invalid_alpha
-            .validate()
-            .unwrap_err()
-            .contains("alpha policy")
-    );
+    assert!(invalid_alpha
+        .validate()
+        .unwrap_err()
+        .contains("alpha policy"));
 }
 
 #[test]
-fn validation_rejects_tampered_v7_plan_capability_and_fallback_metadata() {
+fn validation_rejects_tampered_v8_plan_capability_and_fallback_metadata() {
     let recipe = valid_recipe_for(8193, 1);
     assert_eq!(recipe.output.tile_layout, [2, 1]);
     assert_eq!(recipe.output.tile_dimensions, [8192, 1]);
@@ -220,34 +242,40 @@ fn validation_rejects_tampered_v7_plan_capability_and_fallback_metadata() {
 
     let mut capabilities = recipe.clone();
     capabilities.rendering.selected_capabilities.clear();
-    assert!(capabilities.validate().unwrap_err().contains("rendering policy"));
+    assert!(capabilities
+        .validate()
+        .unwrap_err()
+        .contains("rendering policy"));
 
     let mut false_fallback = recipe.clone();
     false_fallback
         .rendering
         .applied_fallbacks
         .push("msaa_x4_unavailable".to_owned());
-    assert!(false_fallback.validate().unwrap_err().contains("rendering policy"));
+    assert!(false_fallback
+        .validate()
+        .unwrap_err()
+        .contains("rendering policy"));
 
     let mut detached_plan = recipe;
     detached_plan.output.tile_dimensions = [4096, 1];
     detached_plan.output.tile_layout = [3, 1];
-    assert!(
-        detached_plan
-            .validate()
-            .unwrap_err()
-            .contains("admission plan")
-    );
+    assert!(detached_plan
+        .validate()
+        .unwrap_err()
+        .contains("admission plan"));
 }
 
 #[test]
-fn admission_receipt_serializes_the_complete_v4_policy_and_rejects_tampering() {
+fn admission_receipt_serializes_the_complete_v6_policy_and_rejects_tampering() {
     let recipe = valid_recipe();
     let value = serde_json::to_value(&recipe).unwrap();
     let admission = &value["rendering"]["publication_admission"];
 
-    assert_eq!(admission["policy_version"], 4);
+    assert_eq!(admission["policy_version"], 6);
     assert_eq!(admission["request"]["width"], 1);
+    assert_eq!(admission["request"]["publication_bond_instance_count"], 0);
+    assert_eq!(admission["estimate"]["publication_bond_bytes"], 0);
     assert_eq!(admission["request"]["has_measurement_state"], false);
     assert_eq!(
         admission["budgets"]["cpu_encoder_reserve_bytes"],
@@ -382,12 +410,10 @@ fn existing_primary_or_sidecar_is_never_silently_overwritten() {
         write_publication_raster_pair(&primary_path, vec![0, 0, 0, 0], valid_recipe()).unwrap_err();
     assert!(error.contains("already exists"));
     assert_eq!(std::fs::read(&primary_path).unwrap(), b"existing image");
-    assert!(
-        !primary_directory
-            .path()
-            .join("figure.crystalcanvas.json")
-            .exists()
-    );
+    assert!(!primary_directory
+        .path()
+        .join("figure.crystalcanvas.json")
+        .exists());
 
     let sidecar_directory = tempfile::tempdir().unwrap();
     let image_path = sidecar_directory.path().join("figure.png");

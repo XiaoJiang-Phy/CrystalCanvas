@@ -1,9 +1,11 @@
 //! Versioned publication-export recipes and paired artifact writes.
 
 use crate::crystal_state::CrystalState;
+use crate::renderer::publication_look::{PublicationLookProfile, PublicationLookProfileId};
 use crate::renderer::renderer::{
-    MAX_PUBLICATION_RECIPE_BYTES, PublicationExportAdmissionReceipt, PublicationExportSourceState,
-    Renderer, evaluate_publication_export_admission, validate_publication_export_receipt_fields,
+    evaluate_publication_export_admission, validate_publication_export_receipt_fields,
+    PublicationExportAdmissionReceipt, PublicationExportSourceState, Renderer,
+    MAX_PUBLICATION_RECIPE_BYTES,
 };
 use crate::settings::AppSettings;
 use image::codecs::jpeg::JpegEncoder;
@@ -15,11 +17,11 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 pub const EXPORT_RECIPE_SCHEMA: &str = "crystalcanvas.export-recipe";
-pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 7;
+pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 8;
 
 const MAX_RECIPE_STRUCTURE_NAME_BYTES: usize = 4 * 1024;
 const MAX_RECIPE_CUSTOM_ATOM_COLORS: usize = 118;
@@ -100,6 +102,7 @@ pub struct RecipeScene {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct RecipeMaterials {
     pub material_profile: String,
+    pub look_profile: PublicationLookRecipe,
     pub atom_radius_policy: String,
     pub atom_radius_scale: f32,
     pub bond_tolerance: f32,
@@ -108,6 +111,122 @@ pub struct RecipeMaterials {
     pub bond_color_rgba: [f32; 4],
     pub custom_atom_colors_rgba: BTreeMap<String, [f32; 4]>,
     pub color_value_space: String,
+}
+
+/// Complete fixed publication profile snapshot.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct PublicationLookRecipe {
+    pub profile_id: String,
+    pub profile_version: String,
+    pub key_direction: [f32; 3],
+    pub key_intensity: f32,
+    pub fill_direction: [f32; 3],
+    pub fill_intensity: f32,
+    pub rim_direction: [f32; 3],
+    pub rim_intensity: f32,
+    pub ambient: f32,
+    pub roughness: f32,
+    pub specular: f32,
+    pub opacity: f32,
+    pub exposure: f32,
+    pub tone_mapping: String,
+    pub input_color_space: String,
+    pub output_color_space: String,
+    pub bond_color_mode: String,
+    pub cell_line_width_pixels: f32,
+    pub depth_enhancement: String,
+}
+
+impl PublicationLookRecipe {
+    pub fn from_profile(profile: PublicationLookProfile) -> Self {
+        Self {
+            profile_id: profile.id.as_str().to_owned(),
+            profile_version: profile.version.to_owned(),
+            key_direction: profile.key_direction,
+            key_intensity: profile.key_intensity,
+            fill_direction: profile.fill_direction,
+            fill_intensity: profile.fill_intensity,
+            rim_direction: profile.rim_direction,
+            rim_intensity: profile.rim_intensity,
+            ambient: profile.ambient,
+            roughness: profile.roughness,
+            specular: profile.specular,
+            opacity: profile.opacity,
+            exposure: profile.exposure,
+            tone_mapping: profile.tone_mapping.as_str().to_owned(),
+            input_color_space: "sRGB_straight_alpha".to_owned(),
+            output_color_space: "sRGB".to_owned(),
+            bond_color_mode: profile.bond_color_mode.as_str().to_owned(),
+            cell_line_width_pixels: profile.cell_line_width_pixels,
+            depth_enhancement: profile.depth_enhancement.as_str().to_owned(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !matches!(
+            self.profile_id.as_str(),
+            "scientific_gloss" | "studio" | "unlit"
+        ) || self.profile_version != "v1"
+            || self.input_color_space != "sRGB_straight_alpha"
+            || self.output_color_space != "sRGB"
+            || !matches!(self.tone_mapping.as_str(), "disabled" | "aces_fitted")
+            || !matches!(self.bond_color_mode.as_str(), "uniform" | "by_elements")
+            || self.depth_enhancement != "disabled"
+        {
+            return Err("publication look profile metadata is unsupported".to_owned());
+        }
+        let scalars = [
+            self.key_intensity,
+            self.fill_intensity,
+            self.rim_intensity,
+            self.ambient,
+            self.roughness,
+            self.specular,
+            self.opacity,
+            self.exposure,
+            self.cell_line_width_pixels,
+        ];
+        if !scalars.iter().all(|value| value.is_finite())
+            || !self
+                .key_direction
+                .iter()
+                .chain(self.fill_direction.iter())
+                .chain(self.rim_direction.iter())
+                .all(|value| value.is_finite())
+            || !normalized_direction(self.key_direction)
+            || !normalized_direction(self.fill_direction)
+            || !normalized_direction(self.rim_direction)
+            || !(0.0..=4.0).contains(&self.key_intensity)
+            || !(0.0..=4.0).contains(&self.fill_intensity)
+            || !(0.0..=4.0).contains(&self.rim_intensity)
+            || !(0.0..=1.0).contains(&self.ambient)
+            || !(0.04..=1.0).contains(&self.roughness)
+            || !(0.0..=1.0).contains(&self.specular)
+            || !(0.0..=1.0).contains(&self.opacity)
+            || !(-4.0..=4.0).contains(&self.exposure)
+            || self.cell_line_width_pixels != 1.0
+        {
+            return Err("publication look profile is outside fixed bounds".to_owned());
+        }
+        if self.profile_id == "unlit"
+            && (self.key_intensity != 0.0
+                || self.fill_intensity != 0.0
+                || self.rim_intensity != 0.0
+                || self.ambient != 0.0
+                || self.specular != 0.0
+                || self.exposure != 0.0
+                || self.tone_mapping != "disabled")
+        {
+            return Err("Unlit publication look must bypass visual modulation".to_owned());
+        }
+        Ok(())
+    }
+}
+
+fn normalized_direction(direction: [f32; 3]) -> bool {
+    let squared_length =
+        direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2];
+    squared_length.is_finite() && (0.999..=1.001).contains(&squared_length)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -191,11 +310,23 @@ impl PublicationRasterRecipe {
         source: &CrystalState,
         settings: &AppSettings,
         renderer: &Renderer,
+        look_profile: PublicationLookProfile,
         width: u32,
         height: u32,
         requested_background: &str,
         raster_format: &str,
     ) -> Result<Self, String> {
+        look_profile.validate_fixed()?;
+        let publication_bond_instance_count = if renderer.show_bonds {
+            crate::renderer::instance::publication_bond_instance_count(
+                source,
+                settings,
+                look_profile.bond_color_mode,
+            )
+            .map_err(|error| error.message)?
+        } else {
+            0
+        };
         let request = renderer.publication_export_request(
             width,
             height,
@@ -205,6 +336,7 @@ impl PublicationRasterRecipe {
                 has_wannier_overlay: source.wannier_overlay.is_some(),
                 has_active_phonon_state: source.active_phonon_mode.is_some(),
             },
+            publication_bond_instance_count,
         );
         let admission =
             evaluate_publication_export_admission(request, renderer.publication_export_limits())
@@ -213,6 +345,7 @@ impl PublicationRasterRecipe {
         let config = &renderer.gpu.render_config;
         let render_target_format = renderer.gpu.surface_format();
         let render_plan = admission.render_plan;
+        let look_recipe = PublicationLookRecipe::from_profile(look_profile);
         if !render_target_format.is_srgb() {
             return Err(format!(
                 "publication raster requires an sRGB render target, got {render_target_format:?}"
@@ -276,7 +409,8 @@ impl PublicationRasterRecipe {
                 stable_periodic_image_policy: "current_renderer_visible_images".to_owned(),
             },
             materials: RecipeMaterials {
-                material_profile: "legacy_interactive".to_owned(),
+                material_profile: look_recipe.profile_id.clone(),
+                look_profile: look_recipe,
                 atom_radius_policy: "mapped_covalent_radius_angstrom_scaled".to_owned(),
                 atom_radius_scale: settings.atom_scale,
                 bond_tolerance: settings.bond_tolerance,
@@ -284,21 +418,32 @@ impl PublicationRasterRecipe {
                 radius_length_unit: "angstrom".to_owned(),
                 bond_color_rgba: settings.bond_color,
                 custom_atom_colors_rgba,
-                color_value_space: "legacy_renderer_input".to_owned(),
+                color_value_space: "sRGB_straight_alpha".to_owned(),
             },
             rendering: RecipeRendering {
-                lighting_policy: "legacy_fixed_shader".to_owned(),
+                lighting_policy: "publication_profile_v1".to_owned(),
                 ssao: "disabled".to_owned(),
                 shadows: "disabled".to_owned(),
                 requested_samples: render_plan.requested_samples,
                 selected_samples: render_plan.selected_samples,
                 selected_capabilities: if render_plan.selected_samples == 4 {
-                    vec!["msaa_x4".to_owned(), "depth32float_msaa_x4".to_owned(), "rgba8_readback".to_owned()]
+                    vec![
+                        "msaa_x4".to_owned(),
+                        "depth32float_msaa_x4".to_owned(),
+                        "rgba8_readback".to_owned(),
+                    ]
                 } else {
-                    vec!["single_sample_color".to_owned(), "rgba8_readback".to_owned()]
+                    vec![
+                        "single_sample_color".to_owned(),
+                        "rgba8_readback".to_owned(),
+                    ]
                 },
                 fallback_policy: "fallback_4x_to_1x_on_unsupported_active_format".to_owned(),
-                applied_fallbacks: if render_plan.selected_samples == 1 { vec!["msaa_x4_unavailable".to_owned()] } else { Vec::new() },
+                applied_fallbacks: if render_plan.selected_samples == 1 {
+                    vec!["msaa_x4_unavailable".to_owned()]
+                } else {
+                    Vec::new()
+                },
                 adapter_name: config.device_name.clone(),
                 backend: config.backend_name.clone(),
                 device_type: config.device_type.clone(),
@@ -470,11 +615,25 @@ impl PublicationRasterRecipe {
         if self.materials.radius_length_unit != "angstrom" {
             return Err("material radius length unit is not declared".to_owned());
         }
-        if self.materials.material_profile != "legacy_interactive"
-            || self.materials.atom_radius_policy != "mapped_covalent_radius_angstrom_scaled"
-            || self.materials.color_value_space != "legacy_renderer_input"
-        {
+        if self.materials.atom_radius_policy != "mapped_covalent_radius_angstrom_scaled" {
             return Err("material policy is unsupported".to_owned());
+        }
+        self.materials.look_profile.validate()?;
+        let fixed_profile_id = match self.materials.look_profile.profile_id.as_str() {
+            "scientific_gloss" => PublicationLookProfileId::ScientificGloss,
+            "studio" => PublicationLookProfileId::Studio,
+            "unlit" => PublicationLookProfileId::Unlit,
+            _ => return Err("publication look profile metadata is unsupported".to_owned()),
+        };
+        let fixed_look =
+            PublicationLookRecipe::from_profile(PublicationLookProfile::for_id(fixed_profile_id)?);
+        if self.materials.look_profile != fixed_look {
+            return Err("publication look does not match its fixed profile snapshot".to_owned());
+        }
+        if self.materials.material_profile != self.materials.look_profile.profile_id
+            || self.materials.color_value_space != "sRGB_straight_alpha"
+        {
+            return Err("publication material profile is inconsistent".to_owned());
         }
 
         if self.output.width == 0 || self.output.height == 0 {
@@ -525,8 +684,10 @@ impl PublicationRasterRecipe {
             || self.output.tile_overlap_pixels != 0
             || self.output.tile_dimensions[0] > self.output.width
             || self.output.tile_dimensions[1] > self.output.height
-            || self.output.tile_layout[0] != self.output.width.div_ceil(self.output.tile_dimensions[0])
-            || self.output.tile_layout[1] != self.output.height.div_ceil(self.output.tile_dimensions[1])
+            || self.output.tile_layout[0]
+                != self.output.width.div_ceil(self.output.tile_dimensions[0])
+            || self.output.tile_layout[1]
+                != self.output.height.div_ceil(self.output.tile_dimensions[1])
         {
             return Err("publication tile metadata is invalid".to_owned());
         }
@@ -541,7 +702,7 @@ impl PublicationRasterRecipe {
             return Err("recipe rendering metadata does not match its admission plan".to_owned());
         }
 
-        if self.rendering.lighting_policy != "legacy_fixed_shader"
+        if self.rendering.lighting_policy != "publication_profile_v1"
             || self.rendering.ssao != "disabled"
             || self.rendering.shadows != "disabled"
             || self.rendering.requested_samples != 4
