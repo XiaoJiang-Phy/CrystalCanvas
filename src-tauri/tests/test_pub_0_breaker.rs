@@ -67,15 +67,17 @@ fn rejects_zero_dimensions_before_offscreen_resource_allocation() {
         recipe_builder.contains("evaluate_publication_export_admission("),
         "recipe construction must enter the gate before creating an export request"
     );
+    let recipe_position = export_image
+        .find("PublicationRasterRecipe::from_current_scene")
+        .expect("export must build a publication recipe");
+    let config_position = export_image
+        .find(".publication_render_config(")
+        .expect("export must derive its render config from the validated receipt");
+    let render_position = export_image
+        .find(".render_offscreen(&publication_config)")
+        .expect("export must render only through the validated publication config");
     assert!(
-        export_image
-            .find("PublicationRasterRecipe::from_current_scene")
-            .expect("export must build a publication recipe")
-            < export_image
-                .find(
-                    ".render_offscreen(&recipe.rendering.publication_admission, bg_mode.as_str())"
-                )
-                .expect("export must render only after recipe validation"),
+        recipe_position < config_position && config_position < render_position,
         "zero-size requests must fail before offscreen rendering starts"
     );
 }
@@ -87,17 +89,17 @@ fn rejects_extreme_dimensions_before_gpu_or_cpu_resource_meltdown() {
     let layout = source_between(
         renderer,
         "fn offscreen_readback_layout(",
-        "\nfn drag_instances(",
+        "\nfn publication_export_resource_estimate(",
     );
     let gate = source_between(
         renderer,
         "pub fn evaluate_publication_export_admission(",
         "\npub(crate) fn validate_publication_export_receipt_fields",
     );
-    let offscreen = source_between(
+    let config = source_between(
         renderer,
-        "pub(crate) fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "pub(crate) fn publication_render_config(",
+        "\n}\n\n#[must_use]",
     );
     let recipe_builder = source_between(
         recipe,
@@ -120,12 +122,8 @@ fn rejects_extreme_dimensions_before_gpu_or_cpu_resource_meltdown() {
     );
     assert!(
         recipe_builder.contains("evaluate_publication_export_admission(")
-            && offscreen
-                .find("offscreen_readback_layout(width, height).map_err")
-                .expect("offscreen renderer must compute a checked layout")
-                < offscreen
-                    .find("// Choose background clear color")
-                    .expect("offscreen renderer must allocate only after layout validation"),
+            && config.contains("offscreen_readback_layout(width, height)")
+            && config.contains("self.validate_publication_export_receipt(admission)?"),
         "the export path must gate dimensions before resource allocation"
     );
 }
@@ -136,7 +134,7 @@ fn rejects_a_render_path_that_can_return_after_mutating_the_interactive_camera()
     let offscreen = source_between(
         renderer,
         "pub(crate) fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "\n    /// Clear volumetric pipelines",
     );
     if let Some(camera_mutation) = offscreen.find("self.camera.set_aspect") {
         let restore = offscreen[camera_mutation..]
@@ -233,7 +231,7 @@ fn rejects_a_readback_only_budget_for_a_full_resolution_export() {
     let offscreen = source_between(
         renderer,
         "pub(crate) fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "\n    /// Clear volumetric pipelines",
     );
 
     assert!(
@@ -264,25 +262,27 @@ fn publication_admission_must_be_executable_without_a_window_or_gpu() {
 }
 
 #[test]
-fn baseline_offscreen_export_is_single_sample_without_a_capability_checked_fallback() {
+fn publication_export_keeps_single_sample_until_sample_1a() {
     let renderer = include_str!("../src/renderer/renderer.rs");
+    let config = source_between(
+        renderer,
+        "pub(crate) fn publication_render_config(",
+        "\n}\n\n#[must_use]",
+    );
     let offscreen = source_between(
         renderer,
         "pub(crate) fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "\n    /// Clear volumetric pipelines",
     );
 
     assert!(
-        offscreen.contains("sample_count: 1"),
-        "the existing offscreen color target is the single-sample baseline"
+        config.contains("sample_count: 1") && offscreen.contains("config.sample_count != 1"),
+        "EXPORT-1B must retain and enforce a declared single-sample baseline"
     );
-    for unsupported_contract in ["RenderConfig", "fallback", "msaa", "MSAA", "sample_count:"] {
-        if unsupported_contract == "sample_count:" {
-            continue;
-        }
+    for unsupported_contract in ["msaa", "MSAA", "resolve_target: Some"] {
         assert!(
             !offscreen.contains(unsupported_contract),
-            "the current offscreen path has no publication sampling capability contract (`{unsupported_contract}`)"
+            "SAMPLE-1A behavior leaked into EXPORT-1B (`{unsupported_contract}`)"
         );
     }
 }
@@ -310,25 +310,25 @@ fn baseline_export_has_no_versioned_recipe_or_explicit_camera_material_contract(
 }
 
 #[test]
-fn baseline_alpha_comparison_semantics_are_undefined() {
+fn publication_alpha_and_channel_order_are_declared_at_the_new_boundaries() {
     let file_io = include_str!("../src/commands/file_io.rs");
     let renderer = include_str!("../src/renderer/renderer.rs");
+    let recipe = include_str!("../src/export_recipe.rs");
     let export_image = command_body(file_io, "export_image");
-    let offscreen = source_between(
+    let unpack = source_between(
         renderer,
-        "pub(crate) fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "fn unpack_publication_readback(",
+        "\nfn drag_instances(",
     );
 
     assert!(export_image.contains("ExportImageBackground::Transparent"));
-    assert!(offscreen.contains("BGRA -> RGBA"));
-    for unspecified_semantic in ["premultiplied", "straight alpha", "alpha_mode"] {
-        assert!(
-            !export_image.contains(unspecified_semantic)
-                && !offscreen.contains(unspecified_semantic),
-            "current export has no declared `{unspecified_semantic}` comparison semantics"
-        );
-    }
+    assert!(unpack.contains("BGRA -> RGBA"));
+    assert!(
+        renderer.contains("PublicationAlphaMode::Premultiplied")
+            && recipe.contains("readback_alpha_policy: \"premultiplied\"")
+            && recipe.contains("unpremultiply_rgba(&mut rgba)"),
+        "publication readback, recipe metadata, and PNG encoding must agree on premultiplied-to-straight alpha conversion"
+    );
 }
 
 #[test]
@@ -339,7 +339,7 @@ fn baseline_native_quality_is_not_separable_from_pixel_dimensions() {
     let offscreen = source_between(
         renderer,
         "pub(crate) fn render_offscreen(",
-        "\n    pub fn prepare_volumetric",
+        "\n    /// Clear volumetric pipelines",
     );
 
     assert!(export_image.contains("width") && export_image.contains("height"));

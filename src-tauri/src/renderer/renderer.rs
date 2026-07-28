@@ -10,8 +10,8 @@ use wgpu::util::DeviceExt;
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
 use super::instance::{
-    AtomInstance, PreparedAtomScene, RenderLineScene, apply_phonon_frame,
-    validate_phonon_display_envelope,
+    apply_phonon_frame, validate_phonon_display_envelope, AtomInstance, PreparedAtomScene,
+    RenderLineScene,
 };
 use super::pipeline;
 
@@ -341,11 +341,62 @@ const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
 pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 4;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OffscreenReadbackLayout {
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
     staging_size: u64,
     rgba_len: usize,
+}
+
+/// Background policy is resolved at the command boundary before GPU allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PublicationBackground {
+    Transparent,
+    White,
+    Black,
+    Current,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PublicationAlphaMode {
+    Premultiplied,
+}
+
+/// Immutable export-only state. It holds no physical scene data and never
+/// aliases mutable interactive camera or presentation state.
+pub(crate) struct PublicationRenderConfig {
+    width: u32,
+    height: u32,
+    camera: Camera,
+    background: wgpu::Color,
+    alpha_mode: PublicationAlphaMode,
+    target_format: wgpu::TextureFormat,
+    sample_count: u32,
+    readback_layout: OffscreenReadbackLayout,
+    admission: PublicationExportAdmissionReceipt,
+}
+
+/// Readback pixels with the semantics required by the publication encoder.
+pub(crate) struct PublicationRenderResult {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    alpha_mode: PublicationAlphaMode,
+}
+
+impl PublicationRenderResult {
+    pub(crate) fn into_rgba(self) -> Vec<u8> {
+        self.rgba
+    }
+
+    pub(crate) fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    pub(crate) fn is_premultiplied_alpha(&self) -> bool {
+        self.alpha_mode == PublicationAlphaMode::Premultiplied
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -614,6 +665,60 @@ fn finish_publication_export_error_scopes(device: &wgpu::Device) -> Result<(), S
     Ok(())
 }
 
+fn unpack_publication_readback(
+    data: &[u8],
+    layout: OffscreenReadbackLayout,
+    height: u32,
+    target_format: wgpu::TextureFormat,
+) -> Result<Vec<u8>, String> {
+    let expected_staging_bytes = usize::try_from(layout.staging_size)
+        .map_err(|_| "offscreen staging buffer exceeds addressable memory".to_owned())?;
+    if data.len() != expected_staging_bytes {
+        return Err("offscreen readback size does not match its declared layout".to_owned());
+    }
+
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(layout.rgba_len)
+        .map_err(|_| "unable to allocate offscreen RGBA output".to_owned())?;
+    let is_bgra = matches!(
+        target_format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+
+    for row in 0..height {
+        let offset = usize::try_from(
+            u64::from(row)
+                .checked_mul(u64::from(layout.padded_bytes_per_row))
+                .ok_or_else(|| "offscreen row offset overflow".to_owned())?,
+        )
+        .map_err(|_| "offscreen row offset exceeds addressable memory".to_owned())?;
+        let row_end = offset
+            .checked_add(
+                usize::try_from(layout.unpadded_bytes_per_row)
+                    .map_err(|_| "offscreen row length exceeds addressable memory".to_owned())?,
+            )
+            .ok_or_else(|| "offscreen row end overflow".to_owned())?;
+        let row_data = data
+            .get(offset..row_end)
+            .ok_or_else(|| "offscreen row exceeds mapped staging data".to_owned())?;
+        if is_bgra {
+            // BGRA -> RGBA. The copy layout is already top-to-bottom.
+            for pixel in row_data.chunks_exact(4) {
+                rgba.push(pixel[2]);
+                rgba.push(pixel[1]);
+                rgba.push(pixel[0]);
+                rgba.push(pixel[3]);
+            }
+        } else {
+            rgba.extend_from_slice(row_data);
+        }
+    }
+    if rgba.len() != layout.rgba_len {
+        return Err("offscreen readback produced an unexpected RGBA length".to_owned());
+    }
+    Ok(rgba)
+}
+
 fn drag_instances(
     atoms: &[AtomInstance],
     source_atom_indices: &[usize],
@@ -749,6 +854,54 @@ impl Renderer {
             max_texture_dimension_2d: limits.max_texture_dimension_2d,
             max_buffer_size: limits.max_buffer_size,
         }
+    }
+
+    pub(crate) fn publication_render_config(
+        &self,
+        admission: &PublicationExportAdmissionReceipt,
+        background: PublicationBackground,
+    ) -> Result<PublicationRenderConfig, String> {
+        self.validate_publication_export_receipt(admission)?;
+        let width = admission.request.width;
+        let height = admission.request.height;
+        let target_format = self.gpu.surface_format();
+        if !target_format.is_srgb() {
+            return Err(format!(
+                "publication render requires an sRGB target format, got {target_format:?}"
+            ));
+        }
+
+        let background = match background {
+            PublicationBackground::Transparent => wgpu::Color::TRANSPARENT,
+            PublicationBackground::White => wgpu::Color::WHITE,
+            PublicationBackground::Black => wgpu::Color::BLACK,
+            PublicationBackground::Current => self.clear_color,
+        };
+        let mut camera = Camera {
+            eye: self.camera.eye,
+            target: self.camera.target,
+            up: self.camera.up,
+            fovy_deg: self.camera.fovy_deg,
+            aspect: self.camera.aspect,
+            znear: self.camera.znear,
+            zfar: self.camera.zfar,
+            is_perspective: self.camera.is_perspective,
+            orthographic_scale: self.camera.orthographic_scale,
+        };
+        camera.set_aspect(width as f32, height as f32);
+
+        Ok(PublicationRenderConfig {
+            width,
+            height,
+            camera,
+            background,
+            alpha_mode: PublicationAlphaMode::Premultiplied,
+            target_format,
+            sample_count: 1,
+            readback_layout: offscreen_readback_layout(width, height)
+                .map_err(|error| error.to_string())?,
+            admission: *admission,
+        })
     }
 }
 
@@ -1814,22 +1967,28 @@ impl Renderer {
         Ok(())
     }
 
-    /// Render the current scene to an off-screen texture and return raw RGBA pixel bytes.
-    ///
-    /// # Arguments
-    /// * `width` - Target image width in pixels.
-    /// * `height` - Target image height in pixels.
-    /// * `bg_mode` - Background mode: "transparent", "white", or "default" (current theme).
+    /// Render the admitted structure scene through an export-owned configuration.
     pub(crate) fn render_offscreen(
         &self,
-        receipt: &PublicationExportAdmissionReceipt,
-        bg_mode: &str,
-    ) -> Result<Vec<u8>, String> {
-        self.validate_publication_export_receipt(receipt)?;
-        let width = receipt.request.width;
-        let height = receipt.request.height;
-        let readback_layout =
-            offscreen_readback_layout(width, height).map_err(|error| error.to_string())?;
+        config: &PublicationRenderConfig,
+    ) -> Result<PublicationRenderResult, String> {
+        self.validate_publication_export_receipt(&config.admission)?;
+        if config.width != config.admission.request.width
+            || config.height != config.admission.request.height
+        {
+            return Err("publication render dimensions do not match admission".to_owned());
+        }
+        if config.target_format != self.gpu.surface_format() {
+            return Err("publication render target format changed after configuration".to_owned());
+        }
+        if config.sample_count != 1 {
+            return Err("EXPORT-1B supports only single-sample publication targets".to_owned());
+        }
+        if config.alpha_mode != PublicationAlphaMode::Premultiplied {
+            return Err("publication render alpha policy is unsupported".to_owned());
+        }
+        let width = config.width;
+        let height = config.height;
         self.gpu
             .device
             .push_error_scope(wgpu::ErrorFilter::Internal);
@@ -1840,43 +1999,8 @@ impl Renderer {
             .device
             .push_error_scope(wgpu::ErrorFilter::Validation);
 
-        // Choose background clear color
-        let clear_color = match bg_mode {
-            "transparent" => wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            },
-            "white" => wgpu::Color {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            },
-            "black" => wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            },
-            _ => self.clear_color, // "default" — use current theme color
-        };
-
-        let mut export_camera = Camera {
-            eye: self.camera.eye,
-            target: self.camera.target,
-            up: self.camera.up,
-            fovy_deg: self.camera.fovy_deg,
-            aspect: self.camera.aspect,
-            znear: self.camera.znear,
-            zfar: self.camera.zfar,
-            is_perspective: self.camera.is_perspective,
-            orthographic_scale: self.camera.orthographic_scale,
-        };
-        export_camera.set_aspect(width as f32, height as f32);
         let mut export_camera_uniform = CameraUniform::new();
-        export_camera_uniform.update_from_camera(&export_camera);
+        export_camera_uniform.update_from_camera(&config.camera);
         let export_camera_buffer =
             self.gpu
                 .device
@@ -1897,8 +2021,7 @@ impl Renderer {
                     }],
                 });
 
-        // Use the same format as the surface so existing pipelines are compatible
-        let tex_format = self.gpu.surface_format();
+        let tex_format = config.target_format;
 
         // Create off-screen color texture
         let color_texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -1917,7 +2040,7 @@ impl Renderer {
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let needs_transparent = self.transparent_instance_count > 0;
+        let needs_transparent = config.admission.request.needs_transparent_depth;
 
         let (offscreen_opaque_depth, offscreen_opaque_depth_view) =
             pipeline::create_depth_texture(&self.gpu.device, width, height);
@@ -1939,7 +2062,7 @@ impl Renderer {
                     view: &color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color),
+                        load: wgpu::LoadOp::Clear(config.background),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1969,25 +2092,11 @@ impl Renderer {
                 pass.draw(0..self.cell_line_count, 0..1);
             }
 
-            if self.measurement_line_count > 0 {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &export_camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.measurement_line_buffer.slice(..));
-                pass.draw(0..self.measurement_line_count, 0..1);
-            }
-
             if self.show_bonds && self.bond_instance_count > 0 {
                 pass.set_pipeline(&self.bond_pipeline);
                 pass.set_bind_group(0, &export_camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
                 pass.draw(0..72, 0..self.bond_instance_count);
-            }
-
-            if self.show_hoppings && self.hopping_instance_count > 0 {
-                pass.set_pipeline(&self.bond_pipeline);
-                pass.set_bind_group(0, &export_camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.hopping_instance_buffer.slice(..));
-                pass.draw(0..72, 0..self.hopping_instance_count);
             }
         }
 
@@ -2049,7 +2158,7 @@ impl Renderer {
 
         let staging_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Offscreen Staging Buffer"),
-            size: readback_layout.staging_size,
+            size: config.readback_layout.staging_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -2065,7 +2174,7 @@ impl Renderer {
                 buffer: &staging_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(readback_layout.padded_bytes_per_row),
+                    bytes_per_row: Some(config.readback_layout.padded_bytes_per_row),
                     rows_per_image: Some(height),
                 },
             },
@@ -2091,49 +2200,30 @@ impl Renderer {
             .map_err(|e| format!("Failed to receive map result: {}", e))?
             .map_err(|e| format!("Buffer map failed: {:?}", e))?;
 
-        // Strip row padding and convert BGRA -> RGBA
         let data = buffer_slice.get_mapped_range();
-        let mut rgba_data = Vec::new();
-        rgba_data
-            .try_reserve_exact(readback_layout.rgba_len)
-            .map_err(|_| "unable to allocate offscreen RGBA output".to_owned())?;
-        let is_bgra = matches!(
-            tex_format,
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        let unpacked = unpack_publication_readback(
+            &data,
+            config.readback_layout,
+            height,
+            config.target_format,
         );
-
-        for row in 0..height {
-            let offset =
-                usize::try_from(u64::from(row) * u64::from(readback_layout.padded_bytes_per_row))
-                    .map_err(|_| "offscreen row offset exceeds addressable memory".to_owned())?;
-            let row_end = offset
-                + usize::try_from(readback_layout.unpadded_bytes_per_row)
-                    .map_err(|_| "offscreen row length exceeds addressable memory".to_owned())?;
-            let row_data = &data[offset..row_end];
-            if is_bgra {
-                // Swap B and R channels: BGRA -> RGBA
-                for pixel in row_data.chunks_exact(4) {
-                    rgba_data.push(pixel[2]); // R
-                    rgba_data.push(pixel[1]); // G
-                    rgba_data.push(pixel[0]); // B
-                    rgba_data.push(pixel[3]); // A
-                }
-            } else {
-                rgba_data.extend_from_slice(row_data);
-            }
-        }
         drop(data);
         staging_buffer.unmap();
+        let rgba_data = unpacked?;
 
         log::info!(
-            "Offscreen render complete: {}x{}, {} bytes (bg={})",
+            "Offscreen render complete: {}x{}, {} bytes",
             width,
             height,
-            rgba_data.len(),
-            bg_mode
+            rgba_data.len()
         );
 
-        Ok(rgba_data)
+        Ok(PublicationRenderResult {
+            rgba: rgba_data,
+            width,
+            height,
+            alpha_mode: config.alpha_mode,
+        })
     }
 
     /// Clear volumetric pipelines when switching to a non-volumetric file.

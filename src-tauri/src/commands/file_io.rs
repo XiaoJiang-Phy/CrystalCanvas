@@ -2,6 +2,7 @@ use tauri::{Emitter, State};
 
 use super::{BaseCrystalState, VolumetricInfo};
 use crate::ipc::{ExportFileFormat, ExportImageBackground, IpcEnumInput, IpcError, IpcResult};
+use crate::renderer::renderer::{PublicationBackground, PublicationRenderConfig};
 
 /// Load a CIF file into the state.
 #[tauri::command]
@@ -165,6 +166,12 @@ pub fn export_image(
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
     let bg_mode = bg_mode.parse("bgMode")?;
+    let publication_background = match bg_mode {
+        ExportImageBackground::Transparent => PublicationBackground::Transparent,
+        ExportImageBackground::White => PublicationBackground::White,
+        ExportImageBackground::Black => PublicationBackground::Black,
+        ExportImageBackground::Default => PublicationBackground::Current,
+    };
     let primary_path = std::path::Path::new(&path);
     let raster_format = crate::export_recipe::validate_publication_raster_targets(primary_path)
         .map_err(IpcError::invalid_argument)?;
@@ -202,9 +209,23 @@ pub fn export_image(
     drop(settings);
     drop(crystal);
 
-    let rgba_data = renderer
-        .render_offscreen(&recipe.rendering.publication_admission, bg_mode.as_str())
+    let publication_config: PublicationRenderConfig = renderer
+        .publication_render_config(
+            &recipe.rendering.publication_admission,
+            publication_background,
+        )
         .map_err(IpcError::render)?;
+    let publication_result = renderer
+        .render_offscreen(&publication_config)
+        .map_err(IpcError::render)?;
+    if publication_result.dimensions() != (width, height)
+        || !publication_result.is_premultiplied_alpha()
+    {
+        return Err(IpcError::render(
+            "publication render result does not match the requested output contract",
+        ));
+    }
+    let rgba_data = publication_result.into_rgba();
 
     drop(renderer);
 
