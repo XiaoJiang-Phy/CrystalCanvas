@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-28
+
+### Added
+
+- Publication-only Scientific Gloss, Studio, and Unlit rendering profiles with capability-checked 4× MSAA and deterministic 1× fallback.
+- Bounded tiled 4K/8K raster export with explicit background, alpha, sRGB, camera, resource-admission, and versioned JSON sidecar contracts.
+- One-way Blender GLB export for atoms, bonds, unit-cell edges, stable periodic instances, materials, and the current camera.
+
+### Changed
+
+- Publication cameras now fit the complete renderer-native structure once for the final output aspect while leaving the interactive camera unchanged.
+- Unit-cell contrast is selected from the effective export background and recorded in schema-v9 recipes.
+
+### Validation
+
+- Added adversarial admission, recipe, rendering, look, GLB parsing, release-closure, and macOS Intel/Metal validation gates.
+
 ## [0.6.2] - 2026-07-26
 
 ### Changed

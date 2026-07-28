@@ -10,11 +10,14 @@ use wgpu::util::DeviceExt;
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
 use super::instance::{
-    apply_phonon_frame, validate_phonon_display_envelope, AtomInstance, PreparedAtomScene,
-    RenderLineScene,
+    AtomInstance, LineVertex, PreparedAtomScene, RenderLineScene, apply_phonon_frame,
+    validate_phonon_display_envelope,
 };
 use super::pipeline;
-use super::publication_look::{PublicationLookProfile, PublicationLookUniform};
+use super::publication_look::{
+    PublicationCellLineBackground, PublicationCellLineStyle, PublicationLookProfile,
+    PublicationLookUniform,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererVolumeMode {
@@ -296,6 +299,7 @@ pub struct Renderer {
     line_pipeline: wgpu::RenderPipeline,
     cell_line_buffer: wgpu::Buffer,
     cell_line_count: u32,
+    cell_line_vertices: Vec<LineVertex>,
 
     // Measurement lines
     measurement_line_buffer: wgpu::Buffer,
@@ -341,7 +345,8 @@ const PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
 pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
-pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 6;
+pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 7;
+const PUBLICATION_FRAMING_MARGIN: f32 = 0.08;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OffscreenReadbackLayout {
@@ -358,6 +363,146 @@ pub(crate) enum PublicationBackground {
     White,
     Black,
     Current,
+}
+
+pub(crate) fn cell_line_style_for_background(
+    background: PublicationBackground,
+    current_background: wgpu::Color,
+) -> Result<PublicationCellLineStyle, String> {
+    let background = match background {
+        PublicationBackground::White => PublicationCellLineBackground::White,
+        PublicationBackground::Black => PublicationCellLineBackground::Black,
+        PublicationBackground::Transparent => PublicationCellLineBackground::Transparent,
+        PublicationBackground::Current => {
+            let channels = [
+                current_background.r,
+                current_background.g,
+                current_background.b,
+                current_background.a,
+            ];
+            if !channels
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            {
+                return Err("publication current background is invalid".to_owned());
+            }
+            let luminance = 0.2126 * current_background.r
+                + 0.7152 * current_background.g
+                + 0.0722 * current_background.b;
+            if luminance >= 0.5 {
+                PublicationCellLineBackground::White
+            } else {
+                PublicationCellLineBackground::Black
+            }
+        }
+    };
+    Ok(PublicationCellLineStyle::for_background(background))
+}
+
+fn publication_srgb_rgba_to_linear(color: [f32; 4]) -> [f32; 4] {
+    let convert = |value: f32| {
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [
+        convert(color[0]),
+        convert(color[1]),
+        convert(color[2]),
+        color[3],
+    ]
+}
+
+fn fit_visible_structure_to_export(
+    mut camera: Camera,
+    width: u32,
+    height: u32,
+    opaque_atoms: &[AtomInstance],
+    transparent_atoms: &[AtomInstance],
+    cell_lines: &[LineVertex],
+    bonds: &[crate::renderer::instance::BondInstance],
+) -> Result<Camera, String> {
+    if width == 0 || height == 0 {
+        return Err("publication framing dimensions must be non-zero".to_owned());
+    }
+    let forward = (camera.target - camera.eye).normalize_or_zero();
+    let right = forward.cross(camera.up).normalize_or_zero();
+    let up = right.cross(forward).normalize_or_zero();
+    if forward.length_squared() <= f32::EPSILON
+        || right.length_squared() <= f32::EPSILON
+        || up.length_squared() <= f32::EPSILON
+    {
+        return Err("publication camera basis is degenerate".to_owned());
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    let mut include_sphere = |position: [f32; 3], radius: f32| -> Result<(), String> {
+        let position = glam::Vec3::from_array(position);
+        if !position.is_finite() || !radius.is_finite() || radius < 0.0 {
+            return Err("publication framing structure bounds are invalid".to_owned());
+        }
+        let relative = position - camera.target;
+        let projected =
+            glam::Vec3::new(relative.dot(right), relative.dot(up), relative.dot(forward));
+        let radius = glam::Vec3::splat(radius);
+        min = min.min(projected - radius);
+        max = max.max(projected + radius);
+        Ok(())
+    };
+    for atom in opaque_atoms.iter().chain(transparent_atoms) {
+        if atom.radius <= 0.0 {
+            return Err("publication framing atom bounds are invalid".to_owned());
+        }
+        include_sphere(atom.position, atom.radius)?;
+    }
+    for line in cell_lines {
+        include_sphere(line.position, 0.0)?;
+    }
+    for bond in bonds {
+        include_sphere(bond.start, bond.radius)?;
+        include_sphere(bond.end, bond.radius)?;
+    }
+    if !min.is_finite() || !max.is_finite() || min.x > max.x || min.y > max.y || min.z > max.z {
+        return Err("publication framing has no visible atom bounds".to_owned());
+    }
+    let center = (min + max) * 0.5;
+    let structure_translation = right * center.x + up * center.y + forward * center.z;
+    camera.eye += structure_translation;
+    camera.target += structure_translation;
+    let span = max - min;
+    let aspect = width as f32 / height as f32;
+    let inner = 1.0 - 2.0 * PUBLICATION_FRAMING_MARGIN;
+    if !aspect.is_finite() || aspect <= 0.0 || inner <= 0.0 {
+        return Err("publication framing aspect is invalid".to_owned());
+    }
+    camera.set_aspect(width as f32, height as f32);
+    let half_depth = span.z * 0.5;
+    camera.znear = 0.01;
+    if camera.is_perspective {
+        let half_vertical = (camera.fovy_deg.to_radians() * 0.5).tan() * inner;
+        let half_horizontal = half_vertical * aspect;
+        if !half_vertical.is_finite()
+            || !half_horizontal.is_finite()
+            || half_vertical <= 0.0
+            || half_horizontal <= 0.0
+        {
+            return Err("publication perspective framing is invalid".to_owned());
+        }
+        let required_distance = (span.x * 0.5 / half_horizontal + half_depth)
+            .max(span.y * 0.5 / half_vertical + half_depth)
+            .max(camera.znear + half_depth + 1.0e-3);
+        camera.eye = camera.target - forward * required_distance;
+        camera.zfar = (required_distance + half_depth + 1.0).max(10.0);
+    } else {
+        camera.orthographic_scale = (span.y / inner).max(span.x / (aspect * inner)).max(1.0e-3);
+        let current_distance = (camera.target - camera.eye).length();
+        let required_distance = current_distance.max(camera.znear + half_depth + 1.0e-3);
+        camera.eye = camera.target - forward * required_distance;
+        camera.zfar = (required_distance + half_depth + 1.0).max(10.0);
+    }
+    Ok(camera)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -379,6 +524,7 @@ pub(crate) struct PublicationRenderConfig {
     tile_dimensions: [u32; 2],
     tile_layout: [u32; 2],
     look_profile: PublicationLookProfile,
+    cell_line_style: PublicationCellLineStyle,
     publication_bond_instances: Vec<crate::renderer::instance::BondInstance>,
     readback_layout: OffscreenReadbackLayout,
     admission: PublicationExportAdmissionReceipt,
@@ -650,20 +796,32 @@ fn publication_render_plan(
     if limits.max_texture_dimension_2d == 0 {
         return Err(PublicationExportRejection::TextureDimensionLimit);
     }
-    let tile_dimensions = [
+    let selected_samples = if limits.publication_msaa_x4 { 4 } else { 1 };
+    let mut tile_dimensions = [
         request.width.min(limits.max_texture_dimension_2d),
         request.height.min(limits.max_texture_dimension_2d),
     ];
-    Ok(PublicationRenderPlan {
-        requested_samples: 4,
-        selected_samples: if limits.publication_msaa_x4 { 4 } else { 1 },
-        tile_layout: [
-            request.width.div_ceil(tile_dimensions[0]),
-            request.height.div_ceil(tile_dimensions[1]),
-        ],
-        tile_dimensions,
-        tile_overlap_pixels: 0,
-    })
+    loop {
+        let plan = PublicationRenderPlan {
+            requested_samples: 4,
+            selected_samples,
+            tile_layout: [
+                request.width.div_ceil(tile_dimensions[0]),
+                request.height.div_ceil(tile_dimensions[1]),
+            ],
+            tile_dimensions,
+            tile_overlap_pixels: 0,
+        };
+        let estimate = publication_export_resource_estimate(request, plan)?;
+        if estimate.transient_gpu_bytes <= publication_export_budgets().max_transient_gpu_bytes {
+            return Ok(plan);
+        }
+        if tile_dimensions == [1, 1] {
+            return Err(PublicationExportRejection::TransientGpuBudget);
+        }
+        let axis = usize::from(tile_dimensions[1] > tile_dimensions[0]);
+        tile_dimensions[axis] = tile_dimensions[axis].div_ceil(2).max(1);
+    }
 }
 
 fn publication_export_resource_estimate(
@@ -934,6 +1092,31 @@ fn upload_atom_instances(queue: &wgpu::Queue, buffer: &wgpu::Buffer, instances: 
 }
 
 impl Renderer {
+    pub(crate) fn publication_export_camera(
+        &self,
+        width: u32,
+        height: u32,
+        publication_bond_instances: &[crate::renderer::instance::BondInstance],
+    ) -> Result<Camera, String> {
+        fit_visible_structure_to_export(
+            self.camera,
+            width,
+            height,
+            &self.opaque_atom_instances,
+            &self.transparent_atom_instances,
+            if self.show_cell {
+                &self.cell_line_vertices
+            } else {
+                &[]
+            },
+            if self.show_bonds {
+                publication_bond_instances
+            } else {
+                &[]
+            },
+        )
+    }
+
     pub(crate) fn publication_export_request(
         &self,
         width: u32,
@@ -991,24 +1174,14 @@ impl Renderer {
             ));
         }
 
+        let cell_line_style = cell_line_style_for_background(background, self.clear_color)?;
         let background = match background {
             PublicationBackground::Transparent => wgpu::Color::TRANSPARENT,
             PublicationBackground::White => wgpu::Color::WHITE,
             PublicationBackground::Black => wgpu::Color::BLACK,
             PublicationBackground::Current => self.clear_color,
         };
-        let mut camera = Camera {
-            eye: self.camera.eye,
-            target: self.camera.target,
-            up: self.camera.up,
-            fovy_deg: self.camera.fovy_deg,
-            aspect: self.camera.aspect,
-            znear: self.camera.znear,
-            zfar: self.camera.zfar,
-            is_perspective: self.camera.is_perspective,
-            orthographic_scale: self.camera.orthographic_scale,
-        };
-        camera.set_aspect(width as f32, height as f32);
+        let camera = self.publication_export_camera(width, height, &publication_bond_instances)?;
 
         let plan = admission.render_plan;
         look_profile.validate_fixed()?;
@@ -1024,6 +1197,7 @@ impl Renderer {
             tile_dimensions: plan.tile_dimensions,
             tile_layout: plan.tile_layout,
             look_profile,
+            cell_line_style,
             publication_bond_instances,
             readback_layout: offscreen_readback_layout(
                 plan.tile_dimensions[0],
@@ -1332,6 +1506,7 @@ impl Renderer {
             line_pipeline,
             cell_line_buffer,
             cell_line_count: 0,
+            cell_line_vertices: Vec::new(),
             measurement_line_buffer,
             measurement_line_count: 0,
             bond_pipeline,
@@ -1767,6 +1942,8 @@ impl Renderer {
     /// Upload prepared cell boundaries, bonds, and measurement lines.
     pub fn update_lines(&mut self, scene: &RenderLineScene) {
         self.cell_line_count = scene.cell_lines.len() as u32;
+        self.cell_line_vertices.clear();
+        self.cell_line_vertices.extend_from_slice(&scene.cell_lines);
         if self.cell_line_count > 0 {
             self.cell_line_buffer =
                 self.gpu
@@ -2120,7 +2297,9 @@ impl Renderer {
         let publication_bond_instance_count =
             u32::try_from(config.publication_bond_instances.len())
                 .map_err(|_| "publication bond instance count overflow".to_owned())?;
-        if publication_bond_instance_count != config.admission.request.publication_bond_instance_count {
+        if publication_bond_instance_count
+            != config.admission.request.publication_bond_instance_count
+        {
             return Err("publication bond scene changed after admission".to_owned());
         }
         self.validate_publication_export_receipt(&config.admission)?;
@@ -2177,6 +2356,26 @@ impl Renderer {
                 })
         });
         let publication_bond_buffer = publication_bond_buffer.as_ref();
+        let publication_cell_line_color =
+            publication_srgb_rgba_to_linear(config.cell_line_style.cell_line_color_rgba);
+        let publication_cell_lines: Vec<LineVertex> = self
+            .cell_line_vertices
+            .iter()
+            .map(|line| LineVertex {
+                position: line.position,
+                color: publication_cell_line_color,
+            })
+            .collect();
+        let publication_cell_line_buffer = (!publication_cell_lines.is_empty()).then(|| {
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Cell Line Buffer"),
+                    contents: bytemuck::cast_slice(&publication_cell_lines),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+        });
+        let publication_cell_line_buffer = publication_cell_line_buffer.as_ref();
 
         for tile_row in 0..config.tile_layout[1] {
             let tile_y = tile_row
@@ -2209,6 +2408,7 @@ impl Renderer {
                     tile_dimensions: [tile_width, tile_height],
                     tile_layout: [1, 1],
                     look_profile: config.look_profile,
+                    cell_line_style: config.cell_line_style,
                     publication_bond_instances: Vec::new(),
                     readback_layout: offscreen_readback_layout(tile_width, tile_height)
                         .map_err(|error| error.to_string())?,
@@ -2220,6 +2420,7 @@ impl Renderer {
                         &publication_pipelines,
                         &publication_look_bind_group,
                         publication_bond_buffer,
+                        publication_cell_line_buffer,
                         publication_bond_instance_count,
                         tile_x,
                         tile_y,
@@ -2287,6 +2488,7 @@ impl Renderer {
         publication_pipelines: &PublicationPipelines,
         publication_look_bind_group: &wgpu::BindGroup,
         publication_bond_buffer: Option<&wgpu::Buffer>,
+        publication_cell_line_buffer: Option<&wgpu::Buffer>,
         publication_bond_instance_count: u32,
         tile_x: u32,
         tile_y: u32,
@@ -2469,9 +2671,11 @@ impl Renderer {
             }
 
             if self.show_cell && self.cell_line_count > 0 {
+                let publication_cell_line_buffer = publication_cell_line_buffer
+                    .ok_or_else(|| "publication cell line buffer is missing".to_owned())?;
                 pass.set_pipeline(&publication_pipelines.line);
                 pass.set_bind_group(0, &export_camera_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                pass.set_vertex_buffer(0, publication_cell_line_buffer.slice(..));
                 pass.draw(0..self.cell_line_count, 0..1);
             }
 
@@ -2543,9 +2747,11 @@ impl Renderer {
                     replay.draw(0..6, 0..self.instance_count);
                 }
                 if self.show_cell && self.cell_line_count > 0 {
+                    let publication_cell_line_buffer = publication_cell_line_buffer
+                        .ok_or_else(|| "publication cell line buffer is missing".to_owned())?;
                     replay.set_pipeline(&publication_pipelines.line);
                     replay.set_bind_group(0, &export_camera_bind_group, &[]);
-                    replay.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
+                    replay.set_vertex_buffer(0, publication_cell_line_buffer.slice(..));
                     replay.draw(0..self.cell_line_count, 0..1);
                 }
                 if self.show_bonds && publication_bond_instance_count > 0 {
@@ -2780,6 +2986,129 @@ impl Renderer {
     pub fn set_isosurface_opacity(&mut self, opacity: f32) {
         if let Some(iso_pipe) = &mut self.isosurface_pipeline {
             iso_pipe.set_opacity(&self.gpu.queue, opacity);
+        }
+    }
+}
+
+#[cfg(test)]
+mod publication_export_tests {
+    use super::*;
+    use crate::renderer::instance::BondInstance;
+
+    fn test_camera(is_perspective: bool) -> Camera {
+        Camera {
+            eye: glam::Vec3::new(0.0, 0.0, 30.0),
+            target: glam::Vec3::ZERO,
+            up: glam::Vec3::Y,
+            fovy_deg: 45.0,
+            aspect: 1.0,
+            znear: 0.1,
+            zfar: 200.0,
+            is_perspective,
+            orthographic_scale: 30.0,
+        }
+    }
+
+    fn assert_inside_framing_margin(camera: &Camera, point: glam::Vec3) {
+        let clip =
+            (camera.build_projection_matrix() * camera.build_view_matrix()) * point.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        let inner = 1.0 - 2.0 * PUBLICATION_FRAMING_MARGIN;
+        assert!(ndc.x.abs() <= inner + 1.0e-5, "x={}", ndc.x);
+        assert!(ndc.y.abs() <= inner + 1.0e-5, "y={}", ndc.y);
+        assert!((0.0..=1.0).contains(&ndc.z), "z={}", ndc.z);
+    }
+
+    #[test]
+    fn current_background_uses_actual_luminance() {
+        let light =
+            cell_line_style_for_background(PublicationBackground::Current, wgpu::Color::WHITE)
+                .unwrap();
+        let dark =
+            cell_line_style_for_background(PublicationBackground::Current, wgpu::Color::BLACK)
+                .unwrap();
+        assert_eq!(light.cell_line_color_rgba, [0.18, 0.22, 0.28, 1.0]);
+        assert_eq!(dark.cell_line_color_rgba, [0.82, 0.86, 0.92, 1.0]);
+        assert!(
+            cell_line_style_for_background(
+                PublicationBackground::Current,
+                wgpu::Color {
+                    r: f64::NAN,
+                    ..wgpu::Color::BLACK
+                },
+            )
+            .is_err()
+        );
+        let converted = publication_srgb_rgba_to_linear([0.0, 0.04045, 1.0, 0.5]);
+        assert_eq!(converted[0], 0.0);
+        assert!((converted[1] - 0.003130805).abs() <= 1.0e-8);
+        assert_eq!(converted[2], 1.0);
+        assert_eq!(converted[3], 0.5);
+    }
+
+    #[test]
+    fn orthographic_framing_includes_atoms_cell_lines_and_bonds() {
+        let atoms = [AtomInstance {
+            position: [0.0, 0.0, 0.0],
+            radius: 1.0,
+            color: [1.0; 4],
+        }];
+        let cell_lines = [LineVertex {
+            position: [10.0, 0.0, 0.0],
+            color: [1.0; 4],
+        }];
+        let bonds = [BondInstance {
+            start: [0.0, -8.0, 0.0],
+            radius: 0.5,
+            end: [0.0, 8.0, 0.0],
+            _pad: 0.0,
+            color: [1.0; 4],
+        }];
+        let camera = fit_visible_structure_to_export(
+            test_camera(false),
+            1000,
+            1000,
+            &atoms,
+            &[],
+            &cell_lines,
+            &bonds,
+        )
+        .unwrap();
+
+        for point in [
+            glam::Vec3::new(-1.0, 0.0, 0.0),
+            glam::Vec3::new(10.0, 0.0, 0.0),
+            glam::Vec3::new(0.0, -8.5, 0.0),
+            glam::Vec3::new(0.0, 8.5, 0.0),
+        ] {
+            assert_inside_framing_margin(&camera, point);
+        }
+    }
+
+    #[test]
+    fn perspective_framing_uses_the_nearest_depth_extent() {
+        let atoms = [
+            AtomInstance {
+                position: [-5.0, -3.0, 8.0],
+                radius: 1.0,
+                color: [1.0; 4],
+            },
+            AtomInstance {
+                position: [5.0, 3.0, -8.0],
+                radius: 1.0,
+                color: [1.0; 4],
+            },
+        ];
+        let camera =
+            fit_visible_structure_to_export(test_camera(true), 1600, 900, &atoms, &[], &[], &[])
+                .unwrap();
+
+        for x in [-6.0, 6.0] {
+            for y in [-4.0, 4.0] {
+                for z in [-9.0, 9.0] {
+                    assert_inside_framing_margin(&camera, glam::Vec3::new(x, y, z));
+                }
+            }
         }
     }
 }

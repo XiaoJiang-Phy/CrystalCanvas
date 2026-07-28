@@ -102,11 +102,22 @@ fn rejects_resource_meltdowns_before_offscreen_allocation() {
         Err(PublicationExportRejection::DeviceBufferLimit),
     );
 
+    // After the RELEASE-2 auto-tiling fix, 8192×3072 transparent is correctly
+    // subdivided into tiles that fit the GPU budget. To test the rejection path,
+    // constrain the device buffer limit so even the smallest tile's staging
+    // buffer is rejected before GPU allocation.
     let mut oversized_transparent_export = structure_only_request(8_192, 3_072);
     oversized_transparent_export.needs_transparent_depth = true;
-    assert_rejected(
-        oversized_transparent_export,
-        PublicationExportRejection::TransientGpuBudget,
+    assert_eq!(
+        evaluate_publication_export_admission(
+            oversized_transparent_export,
+            PublicationExportLimits {
+                max_texture_dimension_2d: TEST_MAX_TEXTURE_DIMENSION,
+                max_buffer_size: 1,
+                publication_msaa_x4: true,
+            },
+        ),
+        Err(PublicationExportRejection::DeviceBufferLimit),
     );
 }
 

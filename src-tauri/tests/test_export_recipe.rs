@@ -1,14 +1,14 @@
 use crystal_canvas::export_recipe::{
+    EXPORT_RECIPE_SCHEMA, EXPORT_RECIPE_SCHEMA_VERSION, ExportRecipeKind, PublicationLookRecipe,
+    PublicationRasterRecipe, RecipeArtifact, RecipeCamera, RecipeCodec, RecipeColorProfile,
+    RecipeMaterials, RecipeOutput, RecipeRendering, RecipeScene, RecipeSource,
     parse_publication_recipe, publication_sidecar_path, write_publication_raster_pair,
-    ExportRecipeKind, PublicationLookRecipe, PublicationRasterRecipe, RecipeArtifact, RecipeCamera,
-    RecipeCodec, RecipeColorProfile, RecipeMaterials, RecipeOutput, RecipeRendering, RecipeScene,
-    RecipeSource, EXPORT_RECIPE_SCHEMA, EXPORT_RECIPE_SCHEMA_VERSION,
 };
 use crystal_canvas::renderer::publication_look::{
     PublicationLookProfile, PublicationLookProfileId,
 };
 use crystal_canvas::renderer::renderer::{
-    evaluate_publication_export_admission, PublicationExportLimits, PublicationExportRequest,
+    PublicationExportLimits, PublicationExportRequest, evaluate_publication_export_admission,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -72,7 +72,9 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
             orthographic_scale: 30.0,
             znear: 0.1,
             zfar: 200.0,
-            aspect_policy: "export_dimensions_override_interactive_aspect".to_owned(),
+            aspect_policy: "fit_visible_structure_to_export_aspect_with_margin_v1".to_owned(),
+            fit_visible_structure_to_export: true,
+            publication_framing_margin: 0.08,
         },
         scene: RecipeScene {
             atoms: true,
@@ -98,6 +100,7 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
                 ("Na".to_owned(), [0.0, 0.0, 1.0, 1.0]),
             ]),
             color_value_space: "sRGB_straight_alpha".to_owned(),
+            cell_line_color_rgba: [0.20, 0.28, 0.40, 1.0],
         },
         rendering: RecipeRendering {
             lighting_policy: "publication_profile_v1".to_owned(),
@@ -166,9 +169,11 @@ fn validation_rejects_unknown_versions_non_finite_values_and_missing_units() {
     let mut unknown_version = valid_recipe();
     unknown_version.schema_version += 1;
     let bytes = serde_json::to_vec(&unknown_version).unwrap();
-    assert!(parse_publication_recipe(&bytes)
-        .unwrap_err()
-        .contains("unsupported export recipe schema version"));
+    assert!(
+        parse_publication_recipe(&bytes)
+            .unwrap_err()
+            .contains("unsupported export recipe schema version")
+    );
 
     let mut non_finite = valid_recipe();
     non_finite.camera.eye[0] = f32::NAN;
@@ -176,17 +181,21 @@ fn validation_rejects_unknown_versions_non_finite_values_and_missing_units() {
 
     let mut missing_source_unit = valid_recipe();
     missing_source_unit.source.source_length_unit.clear();
-    assert!(missing_source_unit
-        .validate()
-        .unwrap_err()
-        .contains("source units"));
+    assert!(
+        missing_source_unit
+            .validate()
+            .unwrap_err()
+            .contains("source units")
+    );
 
     let mut missing_radius_unit = valid_recipe();
     missing_radius_unit.materials.radius_length_unit.clear();
-    assert!(missing_radius_unit
-        .validate()
-        .unwrap_err()
-        .contains("radius length unit"));
+    assert!(
+        missing_radius_unit
+            .validate()
+            .unwrap_err()
+            .contains("radius length unit")
+    );
 }
 
 #[test]
@@ -211,27 +220,38 @@ fn validation_rejects_forged_fixed_profile_snapshots() {
         forged_direction.validate().is_err(),
         "a normalized but substituted light direction must not be accepted as a fixed profile"
     );
+
+    let mut forged_cell_line_color = valid_recipe();
+    forged_cell_line_color.materials.cell_line_color_rgba = [1.0, 0.0, 1.0, 1.0];
+    assert!(
+        forged_cell_line_color.validate().is_err(),
+        "the recorded cell-line color must be derived from the effective background"
+    );
 }
 
 #[test]
 fn validation_rejects_zero_dimensions_and_inconsistent_alpha_contracts() {
     let mut zero_width = valid_recipe();
     zero_width.output.width = 0;
-    assert!(zero_width
-        .validate()
-        .unwrap_err()
-        .contains("dimensions must be non-zero"));
+    assert!(
+        zero_width
+            .validate()
+            .unwrap_err()
+            .contains("dimensions must be non-zero")
+    );
 
     let mut invalid_alpha = valid_recipe();
     invalid_alpha.output.encoded_alpha_policy = "premultiplied".to_owned();
-    assert!(invalid_alpha
-        .validate()
-        .unwrap_err()
-        .contains("alpha policy"));
+    assert!(
+        invalid_alpha
+            .validate()
+            .unwrap_err()
+            .contains("alpha policy")
+    );
 }
 
 #[test]
-fn validation_rejects_tampered_v8_plan_capability_and_fallback_metadata() {
+fn validation_rejects_tampered_v9_plan_capability_and_fallback_metadata() {
     let recipe = valid_recipe_for(8193, 1);
     assert_eq!(recipe.output.tile_layout, [2, 1]);
     assert_eq!(recipe.output.tile_dimensions, [8192, 1]);
@@ -242,37 +262,43 @@ fn validation_rejects_tampered_v8_plan_capability_and_fallback_metadata() {
 
     let mut capabilities = recipe.clone();
     capabilities.rendering.selected_capabilities.clear();
-    assert!(capabilities
-        .validate()
-        .unwrap_err()
-        .contains("rendering policy"));
+    assert!(
+        capabilities
+            .validate()
+            .unwrap_err()
+            .contains("rendering policy")
+    );
 
     let mut false_fallback = recipe.clone();
     false_fallback
         .rendering
         .applied_fallbacks
         .push("msaa_x4_unavailable".to_owned());
-    assert!(false_fallback
-        .validate()
-        .unwrap_err()
-        .contains("rendering policy"));
+    assert!(
+        false_fallback
+            .validate()
+            .unwrap_err()
+            .contains("rendering policy")
+    );
 
     let mut detached_plan = recipe;
     detached_plan.output.tile_dimensions = [4096, 1];
     detached_plan.output.tile_layout = [3, 1];
-    assert!(detached_plan
-        .validate()
-        .unwrap_err()
-        .contains("admission plan"));
+    assert!(
+        detached_plan
+            .validate()
+            .unwrap_err()
+            .contains("admission plan")
+    );
 }
 
 #[test]
-fn admission_receipt_serializes_the_complete_v6_policy_and_rejects_tampering() {
+fn admission_receipt_serializes_the_complete_v7_policy_and_rejects_tampering() {
     let recipe = valid_recipe();
     let value = serde_json::to_value(&recipe).unwrap();
     let admission = &value["rendering"]["publication_admission"];
 
-    assert_eq!(admission["policy_version"], 6);
+    assert_eq!(admission["policy_version"], 7);
     assert_eq!(admission["request"]["width"], 1);
     assert_eq!(admission["request"]["publication_bond_instance_count"], 0);
     assert_eq!(admission["estimate"]["publication_bond_bytes"], 0);
@@ -381,6 +407,7 @@ fn transparent_jpeg_is_explicitly_composited_onto_white() {
     recipe.output.raster_format = "jpeg".to_owned();
     recipe.output.effective_background = "white".to_owned();
     recipe.output.effective_background_rgba_linear = [1.0, 1.0, 1.0, 1.0];
+    recipe.materials.cell_line_color_rgba = [0.18, 0.22, 0.28, 1.0];
     recipe.output.encoded_alpha_policy = "none".to_owned();
     recipe.output.codec = RecipeCodec::Jpeg {
         quality: 95,
@@ -410,10 +437,12 @@ fn existing_primary_or_sidecar_is_never_silently_overwritten() {
         write_publication_raster_pair(&primary_path, vec![0, 0, 0, 0], valid_recipe()).unwrap_err();
     assert!(error.contains("already exists"));
     assert_eq!(std::fs::read(&primary_path).unwrap(), b"existing image");
-    assert!(!primary_directory
-        .path()
-        .join("figure.crystalcanvas.json")
-        .exists());
+    assert!(
+        !primary_directory
+            .path()
+            .join("figure.crystalcanvas.json")
+            .exists()
+    );
 
     let sidecar_directory = tempfile::tempdir().unwrap();
     let image_path = sidecar_directory.path().join("figure.png");

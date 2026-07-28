@@ -46,8 +46,28 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: validate release metadata
-        run: node --test scripts/release-closure.test.mjs
+      - name: validate Rust release gates
+        run: |
+          cargo check --manifest-path src-tauri/Cargo.toml
+          cargo test --all-targets --no-fail-fast --manifest-path src-tauri/Cargo.toml
+
+      - name: validate C++ release gates
+        run: |
+          cmake -S cpp/tests -B cpp/tests/build
+          cmake --build cpp/tests/build
+          ctest --test-dir cpp/tests/build --output-on-failure
+
+      - name: validate IPC and frontend release gates
+        run: |
+          npm run ipc:inventory
+          npm run check:ipc
+          npm run test:ipc
+          ./node_modules/.bin/tsc --noEmit
+          pnpm run build
+          git diff --check
+
+      - name: validate v0.7.0 release closure
+        run: node --test tests/release_2_red_gate.test.mjs
 
       - name: extract changelog
         id: extract_changelog

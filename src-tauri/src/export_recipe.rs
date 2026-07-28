@@ -3,8 +3,9 @@
 use crate::crystal_state::CrystalState;
 use crate::renderer::publication_look::{PublicationLookProfile, PublicationLookProfileId};
 use crate::renderer::renderer::{
-    MAX_PUBLICATION_RECIPE_BYTES, PublicationExportAdmissionReceipt, PublicationExportSourceState,
-    Renderer, evaluate_publication_export_admission, validate_publication_export_receipt_fields,
+    MAX_PUBLICATION_RECIPE_BYTES, PublicationBackground, PublicationExportAdmissionReceipt,
+    PublicationExportSourceState, Renderer, cell_line_style_for_background,
+    evaluate_publication_export_admission, validate_publication_export_receipt_fields,
 };
 use crate::settings::AppSettings;
 use image::codecs::jpeg::JpegEncoder;
@@ -20,7 +21,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const EXPORT_RECIPE_SCHEMA: &str = "crystalcanvas.export-recipe";
-pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 8;
+pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9;
 
 const MAX_RECIPE_STRUCTURE_NAME_BYTES: usize = 4 * 1024;
 const MAX_RECIPE_CUSTOM_ATOM_COLORS: usize = 118;
@@ -95,7 +96,7 @@ impl PublicationGlbRecipe {
             application_version: env!("CARGO_PKG_VERSION").to_owned(), generated_at_unix_ms: unix_time_ms()?, success: true,
             export_id: format!("{}-{}", canonical_structure_sha256(source), unix_time_ms()?),
             source: RecipeSource { structure_name: source.name.clone(), source_version: source.version, intrinsic_atom_count: scene.intrinsic_atom_count, structure_hash: Some(canonical_structure_sha256(source)), structure_hash_algorithm: Some("sha256-canonical-crystal-state-v1".to_owned()), source_length_unit: "angstrom".to_owned(), coordinate_space: "cartesian_right_handed_y_up".to_owned() },
-            camera: RecipeCamera { eye: camera.eye.to_array(), target: camera.target.to_array(), up: camera.up.to_array(), projection: if camera.is_perspective { "perspective".to_owned() } else { "orthographic".to_owned() }, fovy_deg: camera.fovy_deg, orthographic_scale: camera.orthographic_scale, znear: camera.znear, zfar: camera.zfar, aspect_policy: "current_renderer_camera".to_owned() },
+            camera: RecipeCamera { eye: camera.eye.to_array(), target: camera.target.to_array(), up: camera.up.to_array(), projection: if camera.is_perspective { "perspective".to_owned() } else { "orthographic".to_owned() }, fovy_deg: camera.fovy_deg, orthographic_scale: camera.orthographic_scale, znear: camera.znear, zfar: camera.zfar, aspect_policy: "current_renderer_camera".to_owned(), fit_visible_structure_to_export: false, publication_framing_margin: 0.0 },
             look_profile: PublicationLookRecipe::from_profile(scene.look_profile), coordinate_length_unit: "angstrom".to_owned(), meters_per_exported_unit: 1.0e-10,
             matrix_layout: "column_major".to_owned(), scale_policy: "scientific_visualization".to_owned(), material_mapping: "gltf_pbr_metallic_roughness; sRGB input colors are converted once to linear-sRGB factors; alpha is OPAQUE at 1.0 and BLEND below 1.0; renderer lighting and tone mapping are not baked".to_owned(),
             semantic_inventory: crate::blender_export::GlbSemanticInventory { intrinsic_atoms: scene.intrinsic_atom_count, atom_instances: scene.atoms.len(), bonds: scene.bonds.len(), cell_edges: scene.cell_edges.len(), materials: 0, meshes: 0 }, artifact: None,
@@ -178,6 +179,8 @@ pub struct RecipeCamera {
     pub znear: f32,
     pub zfar: f32,
     pub aspect_policy: String,
+    pub fit_visible_structure_to_export: bool,
+    pub publication_framing_margin: f32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -204,6 +207,7 @@ pub struct RecipeMaterials {
     pub bond_color_rgba: [f32; 4],
     pub custom_atom_colors_rgba: BTreeMap<String, [f32; 4]>,
     pub color_value_space: String,
+    pub cell_line_color_rgba: [f32; 4],
 }
 
 /// Complete fixed publication profile snapshot.
@@ -408,7 +412,7 @@ impl PublicationRasterRecipe {
         height: u32,
         requested_background: &str,
         raster_format: &str,
-    ) -> Result<Self, String> {
+    ) -> Result<(Self, Vec<crate::renderer::instance::BondInstance>), String> {
         look_profile.validate_fixed()?;
         let publication_bond_instance_count = if renderer.show_bonds {
             crate::renderer::instance::publication_bond_instance_count(
@@ -434,11 +438,22 @@ impl PublicationRasterRecipe {
         let admission =
             evaluate_publication_export_admission(request, renderer.publication_export_limits())
                 .map_err(|error| error.to_string())?;
-        let camera = &renderer.camera;
+        let publication_bond_instances = if renderer.show_bonds {
+            crate::renderer::instance::build_publication_bond_instances_with_count(
+                source,
+                settings,
+                look_profile.bond_color_mode,
+                publication_bond_instance_count,
+            )
+            .map_err(|error| error.message)?
+        } else {
+            Vec::new()
+        };
+        let camera =
+            renderer.publication_export_camera(width, height, &publication_bond_instances)?;
         let config = &renderer.gpu.render_config;
         let render_target_format = renderer.gpu.surface_format();
         let render_plan = admission.render_plan;
-        let look_recipe = PublicationLookRecipe::from_profile(look_profile);
         if !render_target_format.is_srgb() {
             return Err(format!(
                 "publication raster requires an sRGB render target, got {render_target_format:?}"
@@ -447,6 +462,15 @@ impl PublicationRasterRecipe {
 
         let (effective_background, effective_background_rgba_linear) =
             effective_background(renderer, requested_background, raster_format)?;
+        let background = match effective_background.as_str() {
+            "transparent" => PublicationBackground::Transparent,
+            "white" => PublicationBackground::White,
+            "black" => PublicationBackground::Black,
+            "default" => PublicationBackground::Current,
+            _ => return Err("publication cell-line background is unsupported".to_owned()),
+        };
+        let cell_line_style = cell_line_style_for_background(background, renderer.clear_color)?;
+        let look_recipe = PublicationLookRecipe::from_profile(look_profile);
         validate_recipe_metadata_inputs(source, settings)?;
         let encoded_alpha_policy = match (raster_format, effective_background.as_str()) {
             ("png", "transparent") => "straight",
@@ -489,7 +513,9 @@ impl PublicationRasterRecipe {
                 orthographic_scale: camera.orthographic_scale,
                 znear: camera.znear,
                 zfar: camera.zfar,
-                aspect_policy: "export_dimensions_override_interactive_aspect".to_owned(),
+                aspect_policy: "fit_visible_structure_to_export_aspect_with_margin_v1".to_owned(),
+                fit_visible_structure_to_export: true,
+                publication_framing_margin: 0.08,
             },
             scene: RecipeScene {
                 atoms: true,
@@ -512,6 +538,7 @@ impl PublicationRasterRecipe {
                 bond_color_rgba: settings.bond_color,
                 custom_atom_colors_rgba,
                 color_value_space: "sRGB_straight_alpha".to_owned(),
+                cell_line_color_rgba: cell_line_style.cell_line_color_rgba,
             },
             rendering: RecipeRendering {
                 lighting_policy: "publication_profile_v1".to_owned(),
@@ -567,7 +594,7 @@ impl PublicationRasterRecipe {
             artifact: None,
         };
         recipe.validate_fields(false)?;
-        Ok(recipe)
+        Ok((recipe, publication_bond_instances))
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -651,7 +678,10 @@ impl PublicationRasterRecipe {
         ) {
             return Err("camera projection is unsupported".to_owned());
         }
-        if self.camera.aspect_policy != "export_dimensions_override_interactive_aspect" {
+        if self.camera.aspect_policy != "fit_visible_structure_to_export_aspect_with_margin_v1"
+            || !self.camera.fit_visible_structure_to_export
+            || self.camera.publication_framing_margin != 0.08
+        {
             return Err("camera aspect policy is unsupported".to_owned());
         }
         let eye_target_distance_squared = self
@@ -690,6 +720,7 @@ impl PublicationRasterRecipe {
             .chain(std::iter::once(&self.materials.bond_tolerance))
             .chain(std::iter::once(&self.materials.bond_radius))
             .chain(self.materials.bond_color_rgba.iter())
+            .chain(self.materials.cell_line_color_rgba.iter())
             .chain(self.materials.custom_atom_colors_rgba.values().flatten())
             .all(|value| value.is_finite());
         if !material_finite
@@ -700,6 +731,7 @@ impl PublicationRasterRecipe {
                 .materials
                 .bond_color_rgba
                 .iter()
+                .chain(self.materials.cell_line_color_rgba.iter())
                 .chain(self.materials.custom_atom_colors_rgba.values().flatten())
                 .all(|value| (0.0..=1.0).contains(value))
         {
@@ -707,6 +739,28 @@ impl PublicationRasterRecipe {
         }
         if self.materials.radius_length_unit != "angstrom" {
             return Err("material radius length unit is not declared".to_owned());
+        }
+        let effective_background = match self.output.effective_background.as_str() {
+            "transparent" => PublicationBackground::Transparent,
+            "white" => PublicationBackground::White,
+            "black" => PublicationBackground::Black,
+            "default" => PublicationBackground::Current,
+            _ => return Err("publication cell-line background is unsupported".to_owned()),
+        };
+        let background_rgba = self.output.effective_background_rgba_linear;
+        let expected_cell_line_style = cell_line_style_for_background(
+            effective_background,
+            wgpu::Color {
+                r: background_rgba[0],
+                g: background_rgba[1],
+                b: background_rgba[2],
+                a: background_rgba[3],
+            },
+        )?;
+        if self.materials.cell_line_color_rgba != expected_cell_line_style.cell_line_color_rgba {
+            return Err(
+                "material cell-line color does not match the effective background".to_owned(),
+            );
         }
         if self.materials.atom_radius_policy != "mapped_covalent_radius_angstrom_scaled" {
             return Err("material policy is unsupported".to_owned());

@@ -2,7 +2,7 @@
 //!
 //! These tests intentionally inspect source contracts because the publication
 //! render path requires a window-backed GPU. They must be RED until the fixed
-//! profile system, publication-only shading, midpoint bonds, and recipe v8 are
+//! profile system, publication-only shading, midpoint bonds, and recipe v9 are
 //! implemented together.
 
 use std::path::PathBuf;
@@ -96,12 +96,12 @@ fn unlit_is_a_strict_profile_not_a_dimmed_lit_mode() {
 }
 
 #[test]
-fn recipe_v8_serializes_the_complete_validated_look_snapshot() {
+fn recipe_v9_serializes_the_complete_validated_look_snapshot() {
     let recipe = source("src/export_recipe.rs");
 
     assert!(
-        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 8"),
-        "LOOK-2 changes reproducible appearance and must bump the recipe schema exactly from v7 to v8"
+        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9"),
+        "RELEASE-2 adds reproducible framing and cell-line contrast to the LOOK-2 recipe, so the combined baseline is schema v9"
     );
     for required in [
         "PublicationLookRecipe",
@@ -125,7 +125,7 @@ fn recipe_v8_serializes_the_complete_validated_look_snapshot() {
     ] {
         assert!(
             recipe.contains(required),
-            "recipe v8 must serialize the effective publication look, not only a profile name; missing {required:?}"
+            "recipe v9 must serialize the effective publication look, not only a profile name; missing {required:?}"
         );
     }
     assert!(

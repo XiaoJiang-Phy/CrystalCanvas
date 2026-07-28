@@ -1,0 +1,93 @@
+{
+  "schema": "crystalcanvas.export-recipe",
+  "schema_version": 9,
+  "kind": "blender_structure_scene",
+  "application_version": "0.7.0",
+  "generated_at_unix_ms": 1785242277659,
+  "success": true,
+  "export_id": "09edd009902f161dd26c12295e7e902e16770d4ffbee1a98998695230c85e1ab-1785242277659",
+  "source": {
+    "structure_name": "TiO2_supercell",
+    "source_version": 6,
+    "intrinsic_atom_count": 162,
+    "structure_hash": "09edd009902f161dd26c12295e7e902e16770d4ffbee1a98998695230c85e1ab",
+    "structure_hash_algorithm": "sha256-canonical-crystal-state-v1",
+    "source_length_unit": "angstrom",
+    "coordinate_space": "cartesian_right_handed_y_up"
+  },
+  "camera": {
+    "eye": [
+      6.899756,
+      6.899756,
+      29.971176
+    ],
+    "target": [
+      6.899756,
+      6.899756,
+      4.4388204
+    ],
+    "up": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "projection": "orthographic",
+    "fovy_deg": 45.0,
+    "orthographic_scale": 20.699268,
+    "znear": 0.1,
+    "zfar": 200.0,
+    "aspect_policy": "current_renderer_camera",
+    "fit_visible_structure_to_export": false,
+    "publication_framing_margin": 0.0
+  },
+  "look_profile": {
+    "profile_id": "scientific_gloss",
+    "profile_version": "v1",
+    "key_direction": [
+      0.3,
+      0.6,
+      0.7416199
+    ],
+    "key_intensity": 0.82,
+    "fill_direction": [
+      -0.55,
+      0.24,
+      0.7999375
+    ],
+    "fill_intensity": 0.2,
+    "rim_direction": [
+      0.1,
+      -0.74,
+      0.6651316
+    ],
+    "rim_intensity": 0.18,
+    "ambient": 0.16,
+    "roughness": 0.3,
+    "specular": 0.34,
+    "opacity": 1.0,
+    "exposure": 0.0,
+    "tone_mapping": "aces_fitted",
+    "input_color_space": "sRGB_straight_alpha",
+    "output_color_space": "sRGB",
+    "bond_color_mode": "by_elements",
+    "cell_line_width_pixels": 1.0,
+    "depth_enhancement": "disabled"
+  },
+  "coordinate_length_unit": "angstrom",
+  "meters_per_exported_unit": 1e-10,
+  "matrix_layout": "column_major",
+  "scale_policy": "scientific_visualization",
+  "material_mapping": "gltf_pbr_metallic_roughness; sRGB input colors are converted once to linear-sRGB factors; alpha is OPAQUE at 1.0 and BLEND below 1.0; renderer lighting and tone mapping are not baked",
+  "semantic_inventory": {
+    "intrinsic_atoms": 162,
+    "atom_instances": 210,
+    "bonds": 486,
+    "cell_edges": 12,
+    "materials": 3,
+    "meshes": 5
+  },
+  "artifact": {
+    "file_name": "rutile-scientific-gloss-1.glb",
+    "sha256": "b50c11d0e631bdbb66d62622ecd941fe1bbb66ebaa3fd2c083bd45419d6c46ff"
+  }
+}

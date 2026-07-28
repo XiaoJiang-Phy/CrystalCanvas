@@ -42,7 +42,8 @@ fn publication_sampling_uses_the_active_format_capabilities_and_has_only_the_4x_
         "a selected multisample target must resolve into a single-sample copy/readback target, not be rejected by the retired EXPORT-1B guard"
     );
     assert!(
-        pipeline.contains("sample_count") && !pipeline.contains("MultisampleState {\n            count: 1"),
+        pipeline.contains("sample_count")
+            && !pipeline.contains("MultisampleState {\n            count: 1"),
         "all publication pipeline and depth attachments must receive the selected sample count; a hard-coded single-sample attachment can produce incompatible passes"
     );
 }
@@ -164,8 +165,8 @@ fn recipe_validation_rejects_malformed_render_2_sampling_and_tile_metadata() {
         );
     }
     assert!(
-        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 8"),
-        "LOOK-2 extends the RENDER-2 recipe with its serialized appearance contract, so the combined baseline is schema v8"
+        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9"),
+        "RELEASE-2 extends the combined rendering recipe with framing and cell-line contrast, so the baseline is schema v9"
     );
 }
 

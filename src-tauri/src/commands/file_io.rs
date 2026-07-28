@@ -172,12 +172,6 @@ pub fn export_image(
         .map(|profile| profile.parse("publicationProfile"))
         .transpose()?
         .unwrap_or(PublicationLookProfileId::ScientificGloss);
-    let publication_background = match bg_mode {
-        ExportImageBackground::Transparent => PublicationBackground::Transparent,
-        ExportImageBackground::White => PublicationBackground::White,
-        ExportImageBackground::Black => PublicationBackground::Black,
-        ExportImageBackground::Default => PublicationBackground::Current,
-    };
     let primary_path = std::path::Path::new(&path);
     let raster_format = crate::export_recipe::validate_publication_raster_targets(primary_path)
         .map_err(IpcError::invalid_argument)?;
@@ -203,31 +197,28 @@ pub fn export_image(
         .map_err(|e| IpcError::lock(format!("Failed to lock renderer: {}", e)))?;
 
     let look_profile = PublicationLookProfile::for_id(profile_id).map_err(IpcError::render)?;
-    let recipe = crate::export_recipe::PublicationRasterRecipe::from_current_scene(
-        &crystal,
-        &settings,
-        &renderer,
-        look_profile,
-        width,
-        height,
-        bg_mode.as_str(),
-        raster_format,
-    )
-    .map_err(IpcError::invalid_argument)?;
-    let publication_bond_instances = if renderer.show_bonds {
-        crate::renderer::instance::build_publication_bond_instances_with_count(
+    let (recipe, publication_bond_instances) =
+        crate::export_recipe::PublicationRasterRecipe::from_current_scene(
             &crystal,
             &settings,
-            look_profile.bond_color_mode,
-            recipe
-                .rendering
-                .publication_admission
-                .request
-                .publication_bond_instance_count,
+            &renderer,
+            look_profile,
+            width,
+            height,
+            bg_mode.as_str(),
+            raster_format,
         )
-        .map_err(|error| IpcError::render(error.message))?
-    } else {
-        Vec::new()
+        .map_err(IpcError::invalid_argument)?;
+    let publication_background = match recipe.output.effective_background.as_str() {
+        "transparent" => PublicationBackground::Transparent,
+        "white" => PublicationBackground::White,
+        "black" => PublicationBackground::Black,
+        "default" => PublicationBackground::Current,
+        _ => {
+            return Err(IpcError::render(
+                "publication recipe selected an unsupported effective background",
+            ));
+        }
     };
     drop(settings);
     drop(crystal);

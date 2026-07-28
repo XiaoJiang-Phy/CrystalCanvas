@@ -30,12 +30,23 @@ function command_body(source, command) {
     return source.slice(start, next === -1 ? source.length : next);
 }
 
-test('EXPORT-1A keeps the existing browser wire contract and native-only policy', () => {
+test('DELIVERY-2 keeps the publication-profile wire contract for raster and one-way Blender export', () => {
     assert.deepEqual(
         inventory.backend_command_args.export_image,
-        ['bgMode', 'height', 'path', 'width'],
+        ['bgMode', 'height', 'path', 'publicationProfile', 'width'],
+    );
+    assert.deepEqual(
+        inventory.backend_command_args.export_blender_scene,
+        ['path', 'publicationProfile'],
     );
     assert.equal(classifications.export_image, 'external_io');
+    assert.equal(classifications.export_blender_scene, 'external_io');
+
+    const raster = command_body(file_io, 'export_image');
+    const blender = command_body(file_io, 'export_blender_scene');
+    assert.match(raster, /publication_profile\s*\.map\(\|profile\|\s*profile\.parse\("publicationProfile"\)\)/);
+    assert.match(raster, /PublicationLookProfileId::ScientificGloss/);
+    assert.match(blender, /publication_profile\.parse\("publicationProfile"\)/);
 });
 
 test('EXPORT-1A snapshots state in global lock order and writes the pair after unlock', () => {
@@ -50,9 +61,10 @@ test('EXPORT-1A snapshots state in global lock order and writes the pair after u
     assert.ok(renderer_lock < renderer_drop && renderer_drop < pair_write);
 });
 
-test('RENDER-2 declares the v7 recipe envelope, admission receipt, and paired artifact hash', () => {
+test('RENDER-2, LOOK-2, and RELEASE-2 retain the v9 recipe envelope, admission receipt, and paired artifact hash', () => {
     assert.match(recipe, /"crystalcanvas\.export-recipe"/);
-    assert.match(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*7/);
+    assert.match(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*9/);
+    assert.doesNotMatch(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*[78]/);
     assert.match(recipe, /PublicationRaster/);
     assert.match(recipe, /BlenderStructureScene/);
     assert.match(recipe, /sha256/);

@@ -55,6 +55,34 @@ pub enum DepthEnhancement {
     Disabled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicationCellLineBackground {
+    Transparent,
+    White,
+    Black,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PublicationCellLineStyle {
+    pub cell_line_color_rgba: [f32; 4],
+}
+
+impl PublicationCellLineStyle {
+    pub const fn for_background(background: PublicationCellLineBackground) -> Self {
+        match background {
+            PublicationCellLineBackground::White => Self {
+                cell_line_color_rgba: [0.18, 0.22, 0.28, 1.0],
+            },
+            PublicationCellLineBackground::Black => Self {
+                cell_line_color_rgba: [0.82, 0.86, 0.92, 1.0],
+            },
+            PublicationCellLineBackground::Transparent => Self {
+                cell_line_color_rgba: [0.20, 0.28, 0.40, 1.0],
+            },
+        }
+    }
+}
+
 impl DepthEnhancement {
     pub const fn as_str(self) -> &'static str {
         match self {
