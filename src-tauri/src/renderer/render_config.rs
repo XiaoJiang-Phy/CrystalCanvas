@@ -4,8 +4,8 @@
 
 use wgpu;
 
-/// Runtime GPU configuration captured from the adapter at initialization.
-/// Used to log device capabilities and enforce feature constraints.
+/// Runtime limits negotiated for the active device at initialization.
+/// These are the limits the renderer may actually use, not adapter maxima.
 #[derive(Debug, Clone)]
 pub struct RenderConfig {
     /// Name of the GPU device (e.g. "Intel Iris Plus Graphics 640")
@@ -29,12 +29,11 @@ pub struct RenderConfig {
 }
 
 impl RenderConfig {
-    /// Capture GPU configuration from a wgpu Adapter.
-    /// Logs all relevant device info for diagnostics.
-    pub fn from_adapter(adapter: &wgpu::Adapter) -> Self {
+    /// Capture adapter identity and the negotiated device limits.
+    pub fn from_adapter_and_device(adapter: &wgpu::Adapter, device: &wgpu::Device) -> Self {
         let info = adapter.get_info();
-        let limits = adapter.limits();
-        
+        let limits = device.limits();
+
         let supports_compute_shaders = limits.max_compute_workgroup_size_x > 0;
 
         let config = Self {
@@ -63,8 +62,15 @@ impl RenderConfig {
         );
         log::info!("  Max tex 2D: {}", config.max_texture_dimension_2d);
         log::info!("  Bind groups:{}", config.max_bind_groups);
-        log::info!("  Compute:    {} (Max wg: {:?})", config.supports_compute_shaders, config.max_compute_workgroup_size);
-        log::info!("  Storage Buf:{} MB", config.max_storage_buffer_size / (1024 * 1024));
+        log::info!(
+            "  Compute:    {} (Max wg: {:?})",
+            config.supports_compute_shaders,
+            config.max_compute_workgroup_size
+        );
+        log::info!(
+            "  Storage Buf:{} MB",
+            config.max_storage_buffer_size / (1024 * 1024)
+        );
         log::info!("===========================");
 
         config

@@ -4,6 +4,7 @@
 
 pub mod commands;
 pub mod crystal_state;
+pub mod export_recipe;
 pub mod ffi;
 pub mod io;
 pub mod ipc;

@@ -53,9 +53,6 @@ impl GpuContext {
         }))
         .expect("Failed to find a suitable GPU adapter");
 
-        // Log device capabilities
-        let render_config = RenderConfig::from_adapter(&adapter);
-
         // Request device with default limits (sufficient for ≤1K atoms)
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -67,6 +64,8 @@ impl GpuContext {
             None,
         ))
         .expect("Failed to create GPU device");
+
+        let render_config = RenderConfig::from_adapter_and_device(&adapter, &device);
 
         // Configure the surface
         let surface_caps = surface.get_capabilities(&adapter);

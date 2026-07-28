@@ -10,8 +10,8 @@ use wgpu::util::DeviceExt;
 use super::camera::{Camera, CameraUniform};
 use super::gpu_context::GpuContext;
 use super::instance::{
-    apply_phonon_frame, validate_phonon_display_envelope, AtomInstance, PreparedAtomScene,
-    RenderLineScene,
+    AtomInstance, PreparedAtomScene, RenderLineScene, apply_phonon_frame,
+    validate_phonon_display_envelope,
 };
 use super::pipeline;
 
@@ -331,6 +331,289 @@ pub struct Renderer {
     pub bz_scale: f32,
 }
 
+const MAX_PUBLICATION_READBACK_BYTES: u64 = 192 * 1024 * 1024;
+const MAX_PUBLICATION_TOTAL_GPU_BYTES: u64 = 384 * 1024 * 1024;
+const MAX_PUBLICATION_PEAK_CPU_BYTES: u64 = 384 * 1024 * 1024;
+const PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES: u64 = 256;
+const PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
+const PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
+const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
+pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 4;
+
+struct OffscreenReadbackLayout {
+    unpadded_bytes_per_row: u32,
+    padded_bytes_per_row: u32,
+    staging_size: u64,
+    rgba_len: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportRequest {
+    pub width: u32,
+    pub height: u32,
+    pub needs_transparent_depth: bool,
+    pub has_measurement_overlays: bool,
+    pub has_hopping_overlays: bool,
+    pub has_isosurface: bool,
+    pub has_volume: bool,
+    pub has_phonon_presentation: bool,
+    pub has_atom_drag: bool,
+    pub show_bz: bool,
+    pub has_measurement_state: bool,
+    pub has_selection_highlights: bool,
+    pub has_wannier_overlay: bool,
+    pub has_active_phonon_state: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PublicationExportSourceState {
+    pub has_measurement_state: bool,
+    pub has_selection_highlights: bool,
+    pub has_wannier_overlay: bool,
+    pub has_active_phonon_state: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportLimits {
+    pub max_texture_dimension_2d: u32,
+    pub max_buffer_size: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportResourceEstimate {
+    pub staging_bytes: u64,
+    pub rgba_bytes: u64,
+    pub jpeg_rgb_bytes: u64,
+    pub max_encoded_bytes: u64,
+    pub export_camera_uniform_bytes: u64,
+    pub gpu_driver_reserve_bytes: u64,
+    pub cpu_encoder_reserve_bytes: u64,
+    pub transient_gpu_bytes: u64,
+    pub readback_peak_cpu_bytes: u64,
+    pub png_encode_peak_cpu_bytes: u64,
+    pub jpeg_encode_peak_cpu_bytes: u64,
+    pub peak_cpu_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportBudgets {
+    pub max_readback_bytes: u64,
+    pub max_transient_gpu_bytes: u64,
+    pub max_peak_cpu_bytes: u64,
+    pub gpu_driver_reserve_bytes: u64,
+    pub cpu_encoder_reserve_bytes: u64,
+    pub encoded_overhead_bytes: u64,
+    pub max_recipe_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublicationExportAdmissionReceipt {
+    pub(crate) policy_version: u32,
+    pub(crate) request: PublicationExportRequest,
+    pub(crate) limits: PublicationExportLimits,
+    pub(crate) budgets: PublicationExportBudgets,
+    pub(crate) estimate: PublicationExportResourceEstimate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicationExportRejection {
+    ZeroDimensions,
+    MeasurementOverlays,
+    HoppingOverlays,
+    Isosurface,
+    Volume,
+    PhononPresentation,
+    AtomDrag,
+    BrillouinZone,
+    MeasurementState,
+    SelectionHighlights,
+    WannierOverlay,
+    ActivePhononState,
+    TextureDimensionLimit,
+    RowByteOverflow,
+    PaddedRowByteOverflow,
+    StagingByteOverflow,
+    StagingAddressSpace,
+    CpuByteOverflow,
+    RowLayoutLimit,
+    PaddedRowLayoutLimit,
+    DeviceBufferLimit,
+    ReadbackBudget,
+    TransientGpuBudget,
+    PeakCpuBudget,
+    PolicyVersion,
+    ReceiptMismatch,
+}
+
+impl std::fmt::Display for PublicationExportRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ZeroDimensions => "publication export dimensions must be non-zero",
+            Self::MeasurementOverlays => {
+                "publication export currently rejects measurement overlays"
+            }
+            Self::HoppingOverlays => "publication export currently rejects hopping overlays",
+            Self::Isosurface => "publication export currently rejects isosurface rendering",
+            Self::Volume => "publication export currently rejects volume rendering",
+            Self::PhononPresentation => "publication export currently rejects phonon presentation",
+            Self::AtomDrag => "publication export currently rejects atom drag preview",
+            Self::BrillouinZone => "publication export currently rejects Brillouin-zone view",
+            Self::MeasurementState => "publication export currently rejects measurement state",
+            Self::SelectionHighlights => {
+                "publication export currently rejects selection highlights"
+            }
+            Self::WannierOverlay => "publication export currently rejects Wannier overlays",
+            Self::ActivePhononState => "publication export currently rejects phonon state",
+            Self::TextureDimensionLimit => {
+                "publication export dimensions exceed the active device limit"
+            }
+            Self::RowByteOverflow => "offscreen row byte count overflow",
+            Self::PaddedRowByteOverflow => "offscreen padded row byte count overflow",
+            Self::StagingByteOverflow => "offscreen staging byte count overflow",
+            Self::StagingAddressSpace => "offscreen staging buffer exceeds addressable memory",
+            Self::CpuByteOverflow => "offscreen CPU byte count overflow",
+            Self::RowLayoutLimit => "offscreen row exceeds wgpu copy layout limits",
+            Self::PaddedRowLayoutLimit => "offscreen padded row exceeds wgpu copy layout limits",
+            Self::DeviceBufferLimit => {
+                "publication export readback exceeds the active device buffer limit"
+            }
+            Self::ReadbackBudget => "publication export readback exceeds the policy budget",
+            Self::TransientGpuBudget => {
+                "publication export transient GPU allocation exceeds the policy budget"
+            }
+            Self::PeakCpuBudget => {
+                "publication export peak CPU allocation exceeds the policy budget"
+            }
+            Self::PolicyVersion => "publication export receipt has an unsupported policy version",
+            Self::ReceiptMismatch => {
+                "publication export receipt does not match its request and limits"
+            }
+        })
+    }
+}
+
+impl std::error::Error for PublicationExportRejection {}
+
+const fn publication_export_budgets() -> PublicationExportBudgets {
+    PublicationExportBudgets {
+        max_readback_bytes: MAX_PUBLICATION_READBACK_BYTES,
+        max_transient_gpu_bytes: MAX_PUBLICATION_TOTAL_GPU_BYTES,
+        max_peak_cpu_bytes: MAX_PUBLICATION_PEAK_CPU_BYTES,
+        gpu_driver_reserve_bytes: PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES,
+        cpu_encoder_reserve_bytes: PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES,
+        encoded_overhead_bytes: PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES,
+        max_recipe_bytes: MAX_PUBLICATION_RECIPE_BYTES,
+    }
+}
+
+fn offscreen_readback_layout(
+    width: u32,
+    height: u32,
+) -> Result<OffscreenReadbackLayout, PublicationExportRejection> {
+    let unpadded_bytes_per_row = u64::from(width)
+        .checked_mul(4)
+        .ok_or(PublicationExportRejection::RowByteOverflow)?;
+    let alignment = u64::from(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let padded_bytes_per_row = unpadded_bytes_per_row
+        .checked_add(alignment - 1)
+        .ok_or(PublicationExportRejection::PaddedRowByteOverflow)?
+        / alignment
+        * alignment;
+    let staging_size = padded_bytes_per_row
+        .checked_mul(u64::from(height))
+        .ok_or(PublicationExportRejection::StagingByteOverflow)?;
+    usize::try_from(staging_size).map_err(|_| PublicationExportRejection::StagingAddressSpace)?;
+    let rgba_len = unpadded_bytes_per_row
+        .checked_mul(u64::from(height))
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or(PublicationExportRejection::CpuByteOverflow)?;
+
+    Ok(OffscreenReadbackLayout {
+        unpadded_bytes_per_row: u32::try_from(unpadded_bytes_per_row)
+            .map_err(|_| PublicationExportRejection::RowLayoutLimit)?,
+        padded_bytes_per_row: u32::try_from(padded_bytes_per_row)
+            .map_err(|_| PublicationExportRejection::PaddedRowLayoutLimit)?,
+        staging_size,
+        rgba_len,
+    })
+}
+
+fn publication_export_resource_estimate(
+    width: u32,
+    height: u32,
+    needs_transparent_depth: bool,
+) -> Result<PublicationExportResourceEstimate, PublicationExportRejection> {
+    let layout = offscreen_readback_layout(width, height)?;
+    let rgba_bytes =
+        u64::try_from(layout.rgba_len).map_err(|_| PublicationExportRejection::CpuByteOverflow)?;
+    let color_bytes = rgba_bytes;
+    let opaque_depth_bytes = rgba_bytes;
+    let transparent_depth_bytes = needs_transparent_depth.then_some(rgba_bytes).unwrap_or(0);
+    let budgets = publication_export_budgets();
+    let max_encoded_bytes = rgba_bytes
+        .checked_add(budgets.encoded_overhead_bytes)
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let total_gpu_bytes = color_bytes
+        .checked_add(opaque_depth_bytes)
+        .and_then(|value| value.checked_add(transparent_depth_bytes))
+        .and_then(|value| value.checked_add(layout.staging_size))
+        .and_then(|value| value.checked_add(PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES))
+        .and_then(|value| value.checked_add(budgets.gpu_driver_reserve_bytes))
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    let readback_peak_cpu_bytes = layout
+        .staging_size
+        .checked_add(rgba_bytes)
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let jpeg_rgb_bytes = rgba_bytes
+        .checked_div(4)
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let png_encode_peak_cpu_bytes = rgba_bytes
+        .checked_add(budgets.cpu_encoder_reserve_bytes)
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let jpeg_encode_peak_cpu_bytes = rgba_bytes
+        .checked_add(jpeg_rgb_bytes)
+        .and_then(|value| value.checked_add(budgets.cpu_encoder_reserve_bytes))
+        .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    let peak_cpu_bytes = readback_peak_cpu_bytes
+        .max(png_encode_peak_cpu_bytes)
+        .max(jpeg_encode_peak_cpu_bytes);
+
+    Ok(PublicationExportResourceEstimate {
+        staging_bytes: layout.staging_size,
+        rgba_bytes,
+        jpeg_rgb_bytes,
+        max_encoded_bytes,
+        export_camera_uniform_bytes: PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES,
+        gpu_driver_reserve_bytes: budgets.gpu_driver_reserve_bytes,
+        cpu_encoder_reserve_bytes: budgets.cpu_encoder_reserve_bytes,
+        transient_gpu_bytes: total_gpu_bytes,
+        readback_peak_cpu_bytes,
+        png_encode_peak_cpu_bytes,
+        jpeg_encode_peak_cpu_bytes,
+        peak_cpu_bytes,
+    })
+}
+
+fn finish_publication_export_error_scopes(device: &wgpu::Device) -> Result<(), String> {
+    device.poll(wgpu::Maintain::Wait);
+    let validation_error = pollster::block_on(device.pop_error_scope());
+    let out_of_memory_error = pollster::block_on(device.pop_error_scope());
+    let internal_error = pollster::block_on(device.pop_error_scope());
+    if let Some(error) = validation_error {
+        return Err(format!("publication export GPU validation error: {error}"));
+    }
+    if let Some(error) = out_of_memory_error {
+        return Err(format!("publication export GPU allocation error: {error}"));
+    }
+    if let Some(error) = internal_error {
+        return Err(format!("publication export GPU internal error: {error}"));
+    }
+    Ok(())
+}
+
 fn drag_instances(
     atoms: &[AtomInstance],
     source_atom_indices: &[usize],
@@ -436,6 +719,151 @@ fn upload_atom_instances(queue: &wgpu::Queue, buffer: &wgpu::Buffer, instances: 
 }
 
 impl Renderer {
+    pub(crate) fn publication_export_request(
+        &self,
+        width: u32,
+        height: u32,
+        source_state: PublicationExportSourceState,
+    ) -> PublicationExportRequest {
+        PublicationExportRequest {
+            width,
+            height,
+            needs_transparent_depth: self.transparent_instance_count > 0,
+            has_measurement_overlays: self.measurement_line_count > 0,
+            has_hopping_overlays: self.hopping_instance_count > 0,
+            has_isosurface: self.isosurface_pipeline.is_some(),
+            has_volume: self.volume_raycast_pipeline.is_some(),
+            has_phonon_presentation: self.phonon_presentation.is_some(),
+            has_atom_drag: self.atom_drag.is_some(),
+            show_bz: self.show_bz,
+            has_measurement_state: source_state.has_measurement_state,
+            has_selection_highlights: source_state.has_selection_highlights,
+            has_wannier_overlay: source_state.has_wannier_overlay,
+            has_active_phonon_state: source_state.has_active_phonon_state,
+        }
+    }
+
+    pub(crate) fn publication_export_limits(&self) -> PublicationExportLimits {
+        let limits = &self.gpu.render_config;
+        PublicationExportLimits {
+            max_texture_dimension_2d: limits.max_texture_dimension_2d,
+            max_buffer_size: limits.max_buffer_size,
+        }
+    }
+}
+
+#[must_use]
+pub fn evaluate_publication_export_admission(
+    request: PublicationExportRequest,
+    limits: PublicationExportLimits,
+) -> Result<PublicationExportAdmissionReceipt, PublicationExportRejection> {
+    if request.width == 0 || request.height == 0 {
+        return Err(PublicationExportRejection::ZeroDimensions);
+    }
+    if request.has_measurement_overlays {
+        return Err(PublicationExportRejection::MeasurementOverlays);
+    }
+    if request.has_hopping_overlays {
+        return Err(PublicationExportRejection::HoppingOverlays);
+    }
+    if request.has_isosurface {
+        return Err(PublicationExportRejection::Isosurface);
+    }
+    if request.has_volume {
+        return Err(PublicationExportRejection::Volume);
+    }
+    if request.has_phonon_presentation {
+        return Err(PublicationExportRejection::PhononPresentation);
+    }
+    if request.has_atom_drag {
+        return Err(PublicationExportRejection::AtomDrag);
+    }
+    if request.show_bz {
+        return Err(PublicationExportRejection::BrillouinZone);
+    }
+    if request.has_measurement_state {
+        return Err(PublicationExportRejection::MeasurementState);
+    }
+    if request.has_selection_highlights {
+        return Err(PublicationExportRejection::SelectionHighlights);
+    }
+    if request.has_wannier_overlay {
+        return Err(PublicationExportRejection::WannierOverlay);
+    }
+    if request.has_active_phonon_state {
+        return Err(PublicationExportRejection::ActivePhononState);
+    }
+    if request.width > limits.max_texture_dimension_2d
+        || request.height > limits.max_texture_dimension_2d
+    {
+        return Err(PublicationExportRejection::TextureDimensionLimit);
+    }
+
+    let budgets = publication_export_budgets();
+    let estimate = publication_export_resource_estimate(
+        request.width,
+        request.height,
+        request.needs_transparent_depth,
+    )?;
+    if estimate.staging_bytes > limits.max_buffer_size {
+        return Err(PublicationExportRejection::DeviceBufferLimit);
+    }
+    if estimate.rgba_bytes > budgets.max_readback_bytes {
+        return Err(PublicationExportRejection::ReadbackBudget);
+    }
+    if estimate.transient_gpu_bytes > budgets.max_transient_gpu_bytes {
+        return Err(PublicationExportRejection::TransientGpuBudget);
+    }
+    if estimate.peak_cpu_bytes > budgets.max_peak_cpu_bytes {
+        return Err(PublicationExportRejection::PeakCpuBudget);
+    }
+
+    Ok(PublicationExportAdmissionReceipt {
+        policy_version: PUBLICATION_EXPORT_POLICY_VERSION,
+        request,
+        limits,
+        budgets,
+        estimate,
+    })
+}
+
+pub(crate) fn validate_publication_export_receipt_fields(
+    receipt: &PublicationExportAdmissionReceipt,
+) -> Result<(), PublicationExportRejection> {
+    if receipt.policy_version != PUBLICATION_EXPORT_POLICY_VERSION {
+        return Err(PublicationExportRejection::PolicyVersion);
+    }
+    let expected = evaluate_publication_export_admission(receipt.request, receipt.limits)?;
+    if expected != *receipt {
+        return Err(PublicationExportRejection::ReceiptMismatch);
+    }
+    Ok(())
+}
+
+impl Renderer {
+    fn validate_publication_export_receipt(
+        &self,
+        receipt: &PublicationExportAdmissionReceipt,
+    ) -> Result<(), String> {
+        validate_publication_export_receipt_fields(receipt).map_err(|error| error.to_string())?;
+        if receipt.limits != self.publication_export_limits() {
+            return Err(
+                "publication export receipt does not match the active device limits".to_owned(),
+            );
+        }
+        let current_request = self.publication_export_request(
+            receipt.request.width,
+            receipt.request.height,
+            PublicationExportSourceState::default(),
+        );
+        if current_request != receipt.request {
+            return Err(
+                "publication export receipt does not match the active renderer scene".to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     /// Create a new Renderer attached to the given window.
     /// Initializes GPU context, camera, pipeline, and an empty instance buffer.
     pub fn new<W>(window: Arc<W>, width: u32, height: u32) -> Self
@@ -508,11 +936,11 @@ impl Renderer {
 
         let transparent_instance_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Transparent Instance Buffer"),
-                contents: bytemuck::cast_slice(&dummy_instance),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Transparent Instance Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_instance),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
 
         // Depth textures (dual-pass architecture)
         let (opaque_depth_texture, opaque_depth_view) =
@@ -545,11 +973,11 @@ impl Renderer {
             });
         let measurement_line_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Measurement Line Buffer"),
-                contents: bytemuck::cast_slice(&dummy_line),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Measurement Line Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_line),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
         let dummy_bond = [crate::renderer::instance::BondInstance {
             start: [0.0, 0.0, 0.0],
             radius: 0.0,
@@ -559,11 +987,11 @@ impl Renderer {
         }];
         let bond_instance_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Bond Instance Buffer"),
-                contents: bytemuck::cast_slice(&dummy_bond),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Bond Instance Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_bond),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
 
         let dummy_hopping = [crate::renderer::instance::BondInstance {
             start: [0.0, 0.0, 0.0],
@@ -574,11 +1002,11 @@ impl Renderer {
         }];
         let hopping_instance_buffer =
             gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Hopping Instance Buffer"),
-                contents: bytemuck::cast_slice(&dummy_hopping),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Hopping Instance Buffer"),
+                    contents: bytemuck::cast_slice(&dummy_hopping),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
 
         let bz_viewport = Some(crate::renderer::bz_renderer::BzSubViewport::new(
             &gpu, 400, 400,
@@ -789,10 +1217,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn set_phonon_display_scale(
-        &mut self,
-        display_scale: f64,
-    ) -> crate::ipc::IpcResult<()> {
+    pub fn set_phonon_display_scale(&mut self, display_scale: f64) -> crate::ipc::IpcResult<()> {
         if !display_scale.is_finite() {
             return Err(crate::ipc::IpcError::invalid_argument(
                 "phonon display scale must be finite",
@@ -1395,14 +1820,25 @@ impl Renderer {
     /// * `width` - Target image width in pixels.
     /// * `height` - Target image height in pixels.
     /// * `bg_mode` - Background mode: "transparent", "white", or "default" (current theme).
-    pub fn render_offscreen(
-        &mut self,
-        width: u32,
-        height: u32,
+    pub(crate) fn render_offscreen(
+        &self,
+        receipt: &PublicationExportAdmissionReceipt,
         bg_mode: &str,
     ) -> Result<Vec<u8>, String> {
-        let width = width.max(1);
-        let height = height.max(1);
+        self.validate_publication_export_receipt(receipt)?;
+        let width = receipt.request.width;
+        let height = receipt.request.height;
+        let readback_layout =
+            offscreen_readback_layout(width, height).map_err(|error| error.to_string())?;
+        self.gpu
+            .device
+            .push_error_scope(wgpu::ErrorFilter::Internal);
+        self.gpu
+            .device
+            .push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        self.gpu
+            .device
+            .push_error_scope(wgpu::ErrorFilter::Validation);
 
         // Choose background clear color
         let clear_color = match bg_mode {
@@ -1427,16 +1863,39 @@ impl Renderer {
             _ => self.clear_color, // "default" — use current theme color
         };
 
-        // Temporarily adjust camera aspect ratio for the off-screen dimensions
-        let original_aspect_w = self.gpu.config.width;
-        let original_aspect_h = self.gpu.config.height;
-        self.camera.set_aspect(width as f32, height as f32);
-        self.camera_uniform.update_from_camera(&self.camera);
-        self.gpu.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(&[self.camera_uniform]),
-        );
+        let mut export_camera = Camera {
+            eye: self.camera.eye,
+            target: self.camera.target,
+            up: self.camera.up,
+            fovy_deg: self.camera.fovy_deg,
+            aspect: self.camera.aspect,
+            znear: self.camera.znear,
+            zfar: self.camera.zfar,
+            is_perspective: self.camera.is_perspective,
+            orthographic_scale: self.camera.orthographic_scale,
+        };
+        export_camera.set_aspect(width as f32, height as f32);
+        let mut export_camera_uniform = CameraUniform::new();
+        export_camera_uniform.update_from_camera(&export_camera);
+        let export_camera_buffer =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Publication Export Camera Uniform Buffer"),
+                    contents: bytemuck::cast_slice(&[export_camera_uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let export_camera_bind_group =
+            self.gpu
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Publication Export Camera Bind Group"),
+                    layout: &self.camera_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: export_camera_buffer.as_entire_binding(),
+                    }],
+                });
 
         // Use the same format as the surface so existing pipelines are compatible
         let tex_format = self.gpu.surface_format();
@@ -1458,16 +1917,12 @@ impl Renderer {
         });
         let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create off-screen depth textures (dual-pass)
+        let needs_transparent = self.transparent_instance_count > 0;
+
         let (offscreen_opaque_depth, offscreen_opaque_depth_view) =
             pipeline::create_depth_texture(&self.gpu.device, width, height);
-        let (offscreen_transparent_depth, offscreen_transparent_depth_view) =
-            pipeline::create_transparent_depth_texture(&self.gpu.device, width, height);
-
-        // Temporarily rebind volume pipeline depth for offscreen size
-        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
-            vol_pipe.update_depth_view(&self.gpu.device, &offscreen_opaque_depth_view);
-        }
+        let offscreen_transparent_depth = needs_transparent
+            .then(|| pipeline::create_transparent_depth_texture(&self.gpu.device, width, height));
 
         let mut encoder = self
             .gpu
@@ -1501,7 +1956,7 @@ impl Renderer {
             });
 
             pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &export_camera_bind_group, &[]);
             if self.instance_count > 0 {
                 pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
                 pass.draw(0..6, 0..self.instance_count);
@@ -1509,43 +1964,37 @@ impl Renderer {
 
             if self.show_cell && self.cell_line_count > 0 {
                 pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(0, &export_camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.cell_line_buffer.slice(..));
                 pass.draw(0..self.cell_line_count, 0..1);
             }
 
             if self.measurement_line_count > 0 {
                 pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(0, &export_camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.measurement_line_buffer.slice(..));
                 pass.draw(0..self.measurement_line_count, 0..1);
             }
 
             if self.show_bonds && self.bond_instance_count > 0 {
                 pass.set_pipeline(&self.bond_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(0, &export_camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.bond_instance_buffer.slice(..));
                 pass.draw(0..72, 0..self.bond_instance_count);
             }
 
             if self.show_hoppings && self.hopping_instance_count > 0 {
                 pass.set_pipeline(&self.bond_pipeline);
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(0, &export_camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.hopping_instance_buffer.slice(..));
                 pass.draw(0..72, 0..self.hopping_instance_count);
             }
         }
 
-        // ═══ Offscreen Pass 2: Transparent ═══
-        let needs_transparent = (self.show_volume
-            && (self.volume_render_mode == RendererVolumeMode::Volume
-                || self.volume_render_mode == RendererVolumeMode::Both))
-            || (self.show_isosurface
-                && (self.volume_render_mode == RendererVolumeMode::Isosurface
-                    || self.volume_render_mode == RendererVolumeMode::Both))
-            || self.transparent_instance_count > 0;
-
-        if needs_transparent {
+        // ═══ Offscreen Pass 2: Transparent structure atoms ═══
+        if let Some((offscreen_transparent_depth, offscreen_transparent_depth_view)) =
+            &offscreen_transparent_depth
+        {
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &offscreen_opaque_depth,
@@ -1589,48 +2038,18 @@ impl Renderer {
                     occlusion_query_set: None,
                 });
 
-                if self.show_volume
-                    && (self.volume_render_mode == RendererVolumeMode::Volume
-                        || self.volume_render_mode == RendererVolumeMode::Both)
-                {
-                    if let Some(vol_pipe) = &self.volume_raycast_pipeline {
-                        vol_pipe.render(&mut pass, &self.camera_bind_group);
-                    }
-                }
-
-                if self.show_isosurface
-                    && (self.volume_render_mode == RendererVolumeMode::Isosurface
-                        || self.volume_render_mode == RendererVolumeMode::Both)
-                {
-                    if let Some(iso_pipe) = &self.isosurface_pipeline {
-                        iso_pipe.draw(&mut pass, &self.camera_bind_group);
-                    }
-                }
-
                 if self.transparent_instance_count > 0 {
                     pass.set_pipeline(&self.transparent_pipeline);
-                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_bind_group(0, &export_camera_bind_group, &[]);
                     pass.set_vertex_buffer(0, self.transparent_instance_buffer.slice(..));
                     pass.draw(0..6, 0..self.transparent_instance_count);
                 }
             }
         }
 
-        // Restore volume pipeline depth binding to on-screen size
-        if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
-            vol_pipe.update_depth_view(&self.gpu.device, &self.opaque_depth_view);
-        }
-
-        // Copy texture to a CPU-readable buffer
-        let bytes_per_pixel: u32 = 4;
-        let unpadded_bytes_per_row = bytes_per_pixel * width;
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
-        let staging_size = (padded_bytes_per_row * height) as u64;
-
         let staging_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Offscreen Staging Buffer"),
-            size: staging_size,
+            size: readback_layout.staging_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1646,7 +2065,7 @@ impl Renderer {
                 buffer: &staging_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
+                    bytes_per_row: Some(readback_layout.padded_bytes_per_row),
                     rows_per_image: Some(height),
                 },
             },
@@ -1658,6 +2077,7 @@ impl Renderer {
         );
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
+        finish_publication_export_error_scopes(&self.gpu.device)?;
 
         // Map the staging buffer and read the data
         let buffer_slice = staging_buffer.slice(..);
@@ -1673,15 +2093,22 @@ impl Renderer {
 
         // Strip row padding and convert BGRA -> RGBA
         let data = buffer_slice.get_mapped_range();
-        let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
+        let mut rgba_data = Vec::new();
+        rgba_data
+            .try_reserve_exact(readback_layout.rgba_len)
+            .map_err(|_| "unable to allocate offscreen RGBA output".to_owned())?;
         let is_bgra = matches!(
             tex_format,
             wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
         );
 
         for row in 0..height {
-            let offset = (row * padded_bytes_per_row) as usize;
-            let row_end = offset + (unpadded_bytes_per_row as usize);
+            let offset =
+                usize::try_from(u64::from(row) * u64::from(readback_layout.padded_bytes_per_row))
+                    .map_err(|_| "offscreen row offset exceeds addressable memory".to_owned())?;
+            let row_end = offset
+                + usize::try_from(readback_layout.unpadded_bytes_per_row)
+                    .map_err(|_| "offscreen row length exceeds addressable memory".to_owned())?;
             let row_data = &data[offset..row_end];
             if is_bgra {
                 // Swap B and R channels: BGRA -> RGBA
@@ -1697,11 +2124,6 @@ impl Renderer {
         }
         drop(data);
         staging_buffer.unmap();
-
-        // Restore camera aspect ratio
-        self.camera
-            .set_aspect(original_aspect_w as f32, original_aspect_h as f32);
-        self.update_camera();
 
         log::info!(
             "Offscreen render complete: {}x{}, {} bytes (bg={})",
@@ -1777,12 +2199,12 @@ impl Renderer {
             };
             let volume_raycast_pipeline =
                 crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
-                &self.gpu.device,
-                self.gpu.surface_format(),
-                &self.camera_bind_group_layout,
-                vol,
-                &self.opaque_depth_view,
-            );
+                    &self.gpu.device,
+                    self.gpu.surface_format(),
+                    &self.camera_bind_group_layout,
+                    vol,
+                    &self.opaque_depth_view,
+                );
             PreparedVolumetric {
                 isosurface_pipeline,
                 volume_raycast_pipeline,
@@ -1810,8 +2232,8 @@ impl Renderer {
                 self.gpu
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Isosurface Compute Encoder"),
-            });
+                        label: Some("Isosurface Compute Encoder"),
+                    });
             iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);
             self.gpu.queue.submit(std::iter::once(encoder.finish()));
         }
