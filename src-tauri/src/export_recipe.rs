@@ -3,9 +3,8 @@
 use crate::crystal_state::CrystalState;
 use crate::renderer::publication_look::{PublicationLookProfile, PublicationLookProfileId};
 use crate::renderer::renderer::{
-    evaluate_publication_export_admission, validate_publication_export_receipt_fields,
-    PublicationExportAdmissionReceipt, PublicationExportSourceState, Renderer,
-    MAX_PUBLICATION_RECIPE_BYTES,
+    MAX_PUBLICATION_RECIPE_BYTES, PublicationExportAdmissionReceipt, PublicationExportSourceState,
+    Renderer, evaluate_publication_export_admission, validate_publication_export_receipt_fields,
 };
 use crate::settings::AppSettings;
 use image::codecs::jpeg::JpegEncoder;
@@ -17,8 +16,8 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const EXPORT_RECIPE_SCHEMA: &str = "crystalcanvas.export-recipe";
 pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 8;
@@ -61,6 +60,100 @@ pub struct PublicationRasterRecipe {
     pub rendering: RecipeRendering,
     pub output: RecipeOutput,
     pub artifact: Option<RecipeArtifact>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct PublicationGlbRecipe {
+    pub schema: String,
+    pub schema_version: u32,
+    pub kind: ExportRecipeKind,
+    pub application_version: String,
+    pub generated_at_unix_ms: u64,
+    pub success: bool,
+    pub export_id: String,
+    pub source: RecipeSource,
+    pub camera: RecipeCamera,
+    pub look_profile: PublicationLookRecipe,
+    pub coordinate_length_unit: String,
+    pub meters_per_exported_unit: f64,
+    pub matrix_layout: String,
+    pub scale_policy: String,
+    pub material_mapping: String,
+    pub semantic_inventory: crate::blender_export::GlbSemanticInventory,
+    pub artifact: Option<RecipeArtifact>,
+}
+
+impl PublicationGlbRecipe {
+    pub fn from_scene(
+        source: &CrystalState,
+        scene: &crate::scene_export::PublicationSceneSnapshot,
+    ) -> Result<Self, String> {
+        validate_recipe_metadata(source.name.as_str(), 0, std::iter::empty())?;
+        let camera = &scene.camera;
+        let recipe = Self {
+            schema: EXPORT_RECIPE_SCHEMA.to_owned(), schema_version: EXPORT_RECIPE_SCHEMA_VERSION, kind: ExportRecipeKind::BlenderStructureScene,
+            application_version: env!("CARGO_PKG_VERSION").to_owned(), generated_at_unix_ms: unix_time_ms()?, success: true,
+            export_id: format!("{}-{}", canonical_structure_sha256(source), unix_time_ms()?),
+            source: RecipeSource { structure_name: source.name.clone(), source_version: source.version, intrinsic_atom_count: scene.intrinsic_atom_count, structure_hash: Some(canonical_structure_sha256(source)), structure_hash_algorithm: Some("sha256-canonical-crystal-state-v1".to_owned()), source_length_unit: "angstrom".to_owned(), coordinate_space: "cartesian_right_handed_y_up".to_owned() },
+            camera: RecipeCamera { eye: camera.eye.to_array(), target: camera.target.to_array(), up: camera.up.to_array(), projection: if camera.is_perspective { "perspective".to_owned() } else { "orthographic".to_owned() }, fovy_deg: camera.fovy_deg, orthographic_scale: camera.orthographic_scale, znear: camera.znear, zfar: camera.zfar, aspect_policy: "current_renderer_camera".to_owned() },
+            look_profile: PublicationLookRecipe::from_profile(scene.look_profile), coordinate_length_unit: "angstrom".to_owned(), meters_per_exported_unit: 1.0e-10,
+            matrix_layout: "column_major".to_owned(), scale_policy: "scientific_visualization".to_owned(), material_mapping: "gltf_pbr_metallic_roughness; sRGB input colors are converted once to linear-sRGB factors; alpha is OPAQUE at 1.0 and BLEND below 1.0; renderer lighting and tone mapping are not baked".to_owned(),
+            semantic_inventory: crate::blender_export::GlbSemanticInventory { intrinsic_atoms: scene.intrinsic_atom_count, atom_instances: scene.atoms.len(), bonds: scene.bonds.len(), cell_edges: scene.cell_edges.len(), materials: 0, meshes: 0 }, artifact: None,
+        };
+        recipe.validate()?;
+        Ok(recipe)
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != EXPORT_RECIPE_SCHEMA
+            || self.schema_version != EXPORT_RECIPE_SCHEMA_VERSION
+            || self.kind != ExportRecipeKind::BlenderStructureScene
+            || !self.success
+            || self.export_id.is_empty()
+            || self.source.source_length_unit != "angstrom"
+            || self.coordinate_length_unit != "angstrom"
+            || self.meters_per_exported_unit != 1.0e-10
+            || self.matrix_layout != "column_major"
+            || self.scale_policy != "scientific_visualization"
+            || !self.meters_per_exported_unit.is_finite()
+        {
+            return Err("publication GLB recipe metadata is invalid".to_owned());
+        }
+        self.look_profile.validate()?;
+        if !self
+            .camera
+            .eye
+            .iter()
+            .chain(self.camera.target.iter())
+            .chain(self.camera.up.iter())
+            .chain(
+                [
+                    self.camera.fovy_deg,
+                    self.camera.orthographic_scale,
+                    self.camera.znear,
+                    self.camera.zfar,
+                ]
+                .iter(),
+            )
+            .all(|value| value.is_finite())
+            || self.camera.znear <= 0.0
+            || self.camera.zfar <= self.camera.znear
+            || !matches!(
+                self.camera.projection.as_str(),
+                "perspective" | "orthographic"
+            )
+            || (self.camera.projection == "perspective"
+                && !(0.0 < self.camera.fovy_deg && self.camera.fovy_deg < 180.0))
+            || (self.camera.projection == "orthographic" && self.camera.orthographic_scale <= 0.0)
+        {
+            return Err("publication GLB camera is invalid".to_owned());
+        }
+        if let Some(artifact) = &self.artifact {
+            if artifact.file_name.is_empty() || !is_sha256(&artifact.sha256) {
+                return Err("publication GLB artifact metadata is invalid".to_owned());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -876,6 +969,100 @@ pub fn write_publication_raster_pair(
     commit_staged_pair(&image_temp, &recipe_temp, primary_path, &sidecar_path)?;
     sync_parent_directory(primary_path)?;
 
+    Ok(sidecar_path)
+}
+
+pub(crate) fn validate_publication_glb_targets(primary_path: &Path) -> Result<(), String> {
+    let extension = primary_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| "publication Blender path must include a .glb extension".to_owned())?;
+    if extension != "glb" {
+        return Err("publication Blender export requires a .glb path".to_owned());
+    }
+    let sidecar_path = publication_sidecar_path(primary_path)?;
+    ensure_output_path_available(primary_path, "publication GLB")?;
+    ensure_output_path_available(&sidecar_path, "publication GLB recipe")?;
+    let parent = primary_path.parent().unwrap_or_else(|| Path::new("."));
+    if !std::fs::metadata(parent)
+        .map_err(|error| format!("unable to inspect publication output directory: {error}"))?
+        .is_dir()
+    {
+        return Err("publication output parent is not a directory".to_owned());
+    }
+    Ok(())
+}
+
+pub fn write_publication_glb_pair(
+    primary_path: &Path,
+    glb: &[u8],
+    mut recipe: PublicationGlbRecipe,
+) -> Result<PathBuf, String> {
+    validate_publication_glb_targets(primary_path)?;
+    recipe.validate()?;
+    crate::blender_export::validate_glb_export_identity(glb, &recipe.export_id)?;
+    let sidecar_path = publication_sidecar_path(primary_path)?;
+    let glb_temp = temporary_sibling(primary_path, "glb")?;
+    let recipe_temp = temporary_sibling(&sidecar_path, "recipe")?;
+    let stage = |path: &Path, bytes: &[u8], label: &str| -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| format!("unable to stage {label}: {error}"))?;
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("unable to stage {label}: {error}"))
+    };
+    if let Err(error) = stage(&glb_temp, glb, "publication GLB") {
+        let _ = std::fs::remove_file(&glb_temp);
+        return Err(error);
+    }
+    recipe.artifact = Some(RecipeArtifact {
+        file_name: primary_path
+            .file_name()
+            .ok_or_else(|| "export path must include a file name".to_owned())?
+            .to_string_lossy()
+            .into_owned(),
+        sha256: hex_sha256(glb),
+    });
+    recipe.validate()?;
+    let stage_recipe = || -> Result<(), String> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&recipe_temp)
+            .map_err(|error| format!("unable to stage publication GLB recipe: {error}"))?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, &recipe)
+            .map_err(|error| format!("unable to serialize publication GLB recipe: {error}"))?;
+        writer
+            .flush()
+            .and_then(|()| writer.get_ref().sync_all())
+            .map_err(|error| format!("unable to stage publication GLB recipe: {error}"))
+    };
+    if let Err(error) = stage_recipe() {
+        let _ = std::fs::remove_file(&glb_temp);
+        let _ = std::fs::remove_file(&recipe_temp);
+        return Err(error);
+    }
+    if let Err(error) = commit_no_replace(&glb_temp, primary_path, "publication GLB") {
+        let _ = std::fs::remove_file(&glb_temp);
+        let _ = std::fs::remove_file(&recipe_temp);
+        return Err(error);
+    }
+    if let Err(error) = commit_no_replace(&recipe_temp, &sidecar_path, "publication GLB recipe") {
+        let rollback = std::fs::remove_file(primary_path);
+        let _ = std::fs::remove_file(&recipe_temp);
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => format!(
+                "{error}; unable to remove_file incomplete publication GLB: {rollback_error}"
+            ),
+        });
+    }
+    sync_parent_directory(primary_path)?;
     Ok(sidecar_path)
 }
 

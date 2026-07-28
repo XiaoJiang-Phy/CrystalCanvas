@@ -47,6 +47,7 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
     const [bgMode, setBgMode] = useState<ExportImageBackground>('transparent');
     const [publicationProfile, setPublicationProfile] = useState<PublicationLookProfileId>('scientific_gloss');
     const [format, setFormat] = useState<'png' | 'jpeg'>('png');
+    const [exportKind, setExportKind] = useState<'raster' | 'blender'>('raster');
     const [customWidth, setCustomWidth] = useState<number | null>(null);
     const [customHeight, setCustomHeight] = useState<number | null>(null);
     const [useCustomSize, setUseCustomSize] = useState(false);
@@ -104,15 +105,15 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
     };
 
     const handleExport = async () => {
-        if (isExporting || !hasValidOutputSize) return;
-        const ext = format === 'jpeg' ? 'jpg' : 'png';
+        if (isExporting || (exportKind === 'raster' && !hasValidOutputSize)) return;
+        const ext = exportKind === 'blender' ? 'glb' : format === 'jpeg' ? 'jpg' : 'png';
         setError(null);
         setIsExporting(true);
         try {
             let path = await safeDialogSave({
-                title: 'Export Image',
+                title: exportKind === 'blender' ? 'Export Blender Scene' : 'Export Image',
                 filters: [
-                    { name: format === 'png' ? 'PNG Image' : 'JPEG Image', extensions: format === 'jpeg' ? ['jpg', 'jpeg'] : ['png'] },
+                    exportKind === 'blender' ? { name: 'Blender Scene', extensions: ['glb'] } : { name: format === 'png' ? 'PNG Image' : 'JPEG Image', extensions: format === 'jpeg' ? ['jpg', 'jpeg'] : ['png'] },
                 ],
                 defaultPath: `crystal_export.${ext}`,
             });
@@ -120,19 +121,19 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
             if (!path) return;
 
             const pathLower = path.toLowerCase();
-            if (format === 'png' && !pathLower.endsWith('.png')) {
+            if (exportKind === 'blender' && !pathLower.endsWith('.glb')) {
+                path = `${path}.glb`;
+            } else if (exportKind === 'raster' && format === 'png' && !pathLower.endsWith('.png')) {
                 path = `${path}.png`;
-            } else if (format === 'jpeg' && !pathLower.endsWith('.jpg') && !pathLower.endsWith('.jpeg')) {
+            } else if (exportKind === 'raster' && format === 'jpeg' && !pathLower.endsWith('.jpg') && !pathLower.endsWith('.jpeg')) {
                 path = `${path}.jpg`;
             }
 
-            await safeInvoke('export_image', {
-                path,
-                width: outputW,
-                height: outputH,
-                bgMode,
-                publicationProfile,
-            });
+            if (exportKind === 'blender') {
+                await safeInvoke('export_blender_scene', { path, publicationProfile });
+            } else {
+                await safeInvoke('export_image', { path, width: outputW, height: outputH, bgMode, publicationProfile });
+            }
             onClose();
         } catch (cause) {
             setExportError(cause);
@@ -163,6 +164,12 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                 </header>
 
                 <div className="space-y-5 overflow-y-auto p-4">
+                    <section aria-label="Export type" className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => setExportKind('raster')} disabled={isExporting} aria-pressed={exportKind === 'raster'} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-xs aria-pressed:border-[var(--cc-accent)]">Raster Image</button>
+                        <button type="button" onClick={() => setExportKind('blender')} disabled={isExporting} aria-pressed={exportKind === 'blender'} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-xs aria-pressed:border-[var(--cc-accent)]">Blender Scene</button>
+                    </section>
+                    {exportKind === 'blender' && <p className="text-xs text-[var(--cc-muted)]">Exports atoms, visible bonds, unit-cell edges, and camera as GLB. A required sidecar is written beside the GLB as <code>.crystalcanvas.json</code>.</p>}
+                    {exportKind === 'raster' && <>
                     <section aria-labelledby="export-resolution" className="space-y-3">
                         <h3 id="export-resolution" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Resolution</h3>
                         <label className="flex items-center gap-2 text-xs">
@@ -188,7 +195,9 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                         )}
                         <p className="text-xs text-[var(--cc-muted)]">Output: <span className="tabular-nums text-[var(--cc-text)]">{outputW} × {outputH} px ({(outputW * outputH / 1e6).toFixed(1)} MP)</span></p>
                     </section>
+                    </>}
 
+                    {exportKind === 'raster' && <>
                     <section aria-labelledby="export-background" className="space-y-3">
                         <h3 id="export-background" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Background</h3>
                         <div className="grid grid-cols-4 gap-2">
@@ -200,6 +209,7 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                             ))}
                         </div>
                     </section>
+                    </>}
 
                     <section aria-labelledby="export-format" className="space-y-3">
                         <h3 id="export-format" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Format</h3>
@@ -219,13 +229,13 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                         </div>
                     </section>
 
-                    {!hasValidOutputSize && <div role="alert" className="rounded border border-[var(--cc-danger)] bg-[var(--cc-panel)] px-2 py-1.5 text-xs">Output dimensions must be between 1 and 16384 px.</div>}
+                    {exportKind === 'raster' && !hasValidOutputSize && <div role="alert" className="rounded border border-[var(--cc-danger)] bg-[var(--cc-panel)] px-2 py-1.5 text-xs">Output dimensions must be between 1 and 16384 px.</div>}
                     {error && <div role="alert" data-error-code={error.code} className="rounded border border-[var(--cc-danger)] bg-[var(--cc-panel)] px-2 py-1.5 text-xs">{error.message}</div>}
                 </div>
 
                 <footer className="flex justify-end gap-2 border-t border-[var(--cc-border)] bg-[var(--cc-panel)] px-4 py-3">
                     <button type="button" onClick={onClose} disabled={isExporting} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
-                    <button type="button" onClick={() => void handleExport()} disabled={isExporting || !hasValidOutputSize} aria-busy={isExporting} className="rounded border border-[var(--cc-accent)] bg-[var(--cc-accent)] px-3 py-1.5 text-xs font-medium text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60">{isExporting ? 'Rendering…' : 'Export'}</button>
+                    <button type="button" onClick={() => void handleExport()} disabled={isExporting || (exportKind === 'raster' && !hasValidOutputSize)} aria-busy={isExporting} className="rounded border border-[var(--cc-accent)] bg-[var(--cc-accent)] px-3 py-1.5 text-xs font-medium text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-accent)] disabled:cursor-not-allowed disabled:opacity-60">{isExporting ? 'Rendering…' : 'Export'}</button>
                 </footer>
             </div>
         </div>

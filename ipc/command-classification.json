@@ -16,6 +16,7 @@
     "delete_atoms": "committed_mutation",
     "export_file": "external_io",
     "export_image": "external_io",
+    "export_blender_scene": "external_io",
     "generate_kpath_text": "read",
     "get_bond_analysis": "read",
     "get_bz_label_positions": "read",

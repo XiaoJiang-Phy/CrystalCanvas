@@ -360,7 +360,10 @@ pub fn element_color(symbol: &str) -> [f32; 4] {
     get_jmol_color(symbol)
 }
 
-fn effective_element_color(settings: &crate::settings::AppSettings, symbol: &str) -> [f32; 4] {
+pub(crate) fn effective_element_color(
+    settings: &crate::settings::AppSettings,
+    symbol: &str,
+) -> [f32; 4] {
     settings
         .custom_atom_colors
         .get(symbol)

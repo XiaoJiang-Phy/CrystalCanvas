@@ -978,7 +978,10 @@ impl Renderer {
     ) -> Result<PublicationRenderConfig, String> {
         let publication_bond_instance_count = u32::try_from(publication_bond_instances.len())
             .map_err(|_| "publication bond instance count overflow".to_owned())?;
-        self.validate_publication_export_receipt(admission, publication_bond_instance_count)?;
+        if publication_bond_instance_count != admission.request.publication_bond_instance_count {
+            return Err("publication bond scene changed after admission".to_owned());
+        }
+        self.validate_publication_export_receipt(admission)?;
         let width = admission.request.width;
         let height = admission.request.height;
         let target_format = self.gpu.surface_format();
@@ -1116,6 +1119,16 @@ pub(crate) fn validate_publication_export_receipt_fields(
 
 impl Renderer {
     fn validate_publication_export_receipt(
+        &self,
+        receipt: &PublicationExportAdmissionReceipt,
+    ) -> Result<(), String> {
+        self.validate_publication_export_receipt_with_bond_count(
+            receipt,
+            receipt.request.publication_bond_instance_count,
+        )
+    }
+
+    fn validate_publication_export_receipt_with_bond_count(
         &self,
         receipt: &PublicationExportAdmissionReceipt,
         publication_bond_instance_count: u32,
@@ -2107,10 +2120,10 @@ impl Renderer {
         let publication_bond_instance_count =
             u32::try_from(config.publication_bond_instances.len())
                 .map_err(|_| "publication bond instance count overflow".to_owned())?;
-        self.validate_publication_export_receipt(
-            &config.admission,
-            publication_bond_instance_count,
-        )?;
+        if publication_bond_instance_count != config.admission.request.publication_bond_instance_count {
+            return Err("publication bond scene changed after admission".to_owned());
+        }
+        self.validate_publication_export_receipt(&config.admission)?;
         if config.width != config.admission.request.width
             || config.height != config.admission.request.height
         {
@@ -2280,10 +2293,7 @@ impl Renderer {
         full_width: u32,
         full_height: u32,
     ) -> Result<PublicationRenderResult, String> {
-        self.validate_publication_export_receipt(
-            &config.admission,
-            config.admission.request.publication_bond_instance_count,
-        )?;
+        self.validate_publication_export_receipt(&config.admission)?;
         if config.target_format != self.gpu.surface_format() {
             return Err("publication render target format changed after configuration".to_owned());
         }

@@ -14,6 +14,7 @@
     "commit_atom_drag",
     "compute_brillouin_zone",
     "delete_atoms",
+    "export_blender_scene",
     "export_file",
     "export_image",
     "generate_kpath_text",
@@ -114,6 +115,10 @@
     "compute_brillouin_zone": [],
     "delete_atoms": [
       "indices"
+    ],
+    "export_blender_scene": [
+      "path",
+      "publicationProfile"
     ],
     "export_file": [
       "format",
@@ -480,6 +485,24 @@
           "optional": false,
           "rust_type": "Vec<usize>",
           "type": "Array<number>"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "export_blender_scene": {
+      "args": [
+        {
+          "name": "path",
+          "optional": false,
+          "rust_type": "String",
+          "type": "string"
+        },
+        {
+          "name": "publicationProfile",
+          "optional": false,
+          "rust_type": "IpcEnumInput<PublicationLookProfileId>",
+          "type": "PublicationLookProfileId"
         }
       ],
       "result": "null",
@@ -1463,6 +1486,7 @@
     "commit_atom_drag": "committed_mutation",
     "compute_brillouin_zone": "renderer_only",
     "delete_atoms": "committed_mutation",
+    "export_blender_scene": "external_io",
     "export_file": "external_io",
     "export_image": "external_io",
     "generate_kpath_text": "read",
@@ -1645,6 +1669,15 @@
       "file": "src/hooks/useTauriMenu.ts",
       "args": [
         "indices"
+      ],
+      "response_type": null
+    },
+    {
+      "command": "export_blender_scene",
+      "file": "src/components/layout/ExportImageModal.tsx",
+      "args": [
+        "path",
+        "publicationProfile"
       ],
       "response_type": null
     },
@@ -2250,6 +2283,9 @@
     "delete_atoms": [
       "src/components/panels/AtomOperationsPanel.tsx",
       "src/hooks/useTauriMenu.ts"
+    ],
+    "export_blender_scene": [
+      "src/components/layout/ExportImageModal.tsx"
     ],
     "export_image": [
       "src/components/layout/ExportImageModal.tsx"

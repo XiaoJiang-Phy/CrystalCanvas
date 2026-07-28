@@ -103,6 +103,7 @@ export interface IpcCommandContract {
     delete_atoms: { args: { indices: number[] }; result: null };
     export_file: { args: { format: ExportFileFormat; path: string }; result: null };
     export_image: { args: { path: string; width: number; height: number; bgMode: ExportImageBackground; publicationProfile?: PublicationLookProfileId | null }; result: null };
+    export_blender_scene: { args: { path: string; publicationProfile: PublicationLookProfileId }; result: null };
     generate_kpath_text: { args: { npoints: number }; result: KPathText };
     get_bond_analysis: { args: { thresholdFactor?: number | null }; result: BondAnalysisResult };
     get_bz_label_positions: { args: { width: number; height: number }; result: ScreenLabel[] };
@@ -390,6 +391,7 @@ const IPC_RESULT_VALIDATORS: {
     compute_brillouin_zone: is_bz_info,
     delete_atoms: is_null,
     export_file: is_null,
+    export_blender_scene: is_null,
     export_image: is_null,
     generate_kpath_text: is_kpath_text,
     get_bond_analysis: is_bond_analysis,

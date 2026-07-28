@@ -12,6 +12,8 @@ pub mod llm;
 pub mod phonon;
 pub mod renderer;
 pub mod settings;
+pub mod scene_export;
+pub mod blender_export;
 pub mod utils;
 pub mod volumetric;
 pub mod brillouin_zone;

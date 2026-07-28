@@ -266,6 +266,50 @@ pub fn export_image(
     Ok(())
 }
 
+/// Export the admitted structure scene as a one-way Blender-compatible GLB.
+#[tauri::command]
+pub fn export_blender_scene(
+    path: String,
+    publication_profile: IpcEnumInput<PublicationLookProfileId>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    let profile_id = publication_profile.parse("publicationProfile")?;
+    let primary_path = std::path::Path::new(&path);
+    crate::export_recipe::validate_publication_glb_targets(primary_path)
+        .map_err(IpcError::invalid_argument)?;
+    let crystal = crystal_state
+        .lock()
+        .map_err(|error| IpcError::lock(format!("Failed to lock crystal state: {error}")))?;
+    let settings = settings_state
+        .lock()
+        .map_err(|error| IpcError::lock(format!("Failed to lock settings: {error}")))?;
+    let renderer = renderer_state
+        .lock()
+        .map_err(|error| IpcError::lock(format!("Failed to lock renderer: {error}")))?;
+    let look_profile = PublicationLookProfile::for_id(profile_id).map_err(IpcError::render)?;
+    let scene = crate::scene_export::build_publication_scene_snapshot(
+        &crystal,
+        &settings,
+        &renderer,
+        look_profile,
+    )
+    .map_err(|error| IpcError::render(error.message))?;
+    let recipe = crate::export_recipe::PublicationGlbRecipe::from_scene(&crystal, &scene)
+        .map_err(IpcError::invalid_argument)?;
+    drop(renderer);
+    drop(settings);
+    drop(crystal);
+    let artifact = crate::blender_export::build_blender_glb(&scene, &recipe.export_id)
+        .map_err(|error| IpcError::render(error.message))?;
+    let mut recipe = recipe;
+    recipe.semantic_inventory = artifact.semantic_inventory;
+    crate::export_recipe::write_publication_glb_pair(primary_path, &artifact.bytes, recipe)
+        .map_err(IpcError::io)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn write_text_file(path: String, content: String) -> IpcResult<()> {
     std::fs::write(&path, &content)
