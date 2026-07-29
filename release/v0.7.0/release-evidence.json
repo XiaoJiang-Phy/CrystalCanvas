@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "release_version": "0.7.0",
+  "status": "RELEASE_READY",
+  "blockers": [],
+  "release_candidate_commit": "487ff890b951235dc0f87af75ed850eb1623e73c",
+  "nodes": {
+    "RENDER-2": {
+      "status": "APPROVED",
+      "implementation_commit": "327da95000000000000000000000000000000000"
+    },
+    "LOOK-2": {
+      "status": "APPROVED",
+      "implementation_commit": "327da95000000000000000000000000000000000"
+    },
+    "DELIVERY-2": {
+      "status": "APPROVED",
+      "implementation_commit": "327da95000000000000000000000000000000000"
+    }
+  },
+  "standard_gates": {
+    "cargo_check": {
+      "status": "PASS",
+      "evidence": "cargo check --manifest-path src-tauri/Cargo.toml PASS"
+    },
+    "cargo_test": {
+      "status": "PASS",
+      "evidence": "cargo test --all-targets --no-fail-fast --manifest-path src-tauri/Cargo.toml PASS"
+    },
+    "cpp_ctest": {
+      "status": "PASS",
+      "evidence": "ctest --test-dir cpp/tests/build --output-on-failure PASS"
+    },
+    "pnpm_install_frozen": {
+      "status": "PASS",
+      "evidence": "pnpm install --frozen-lockfile PASS"
+    },
+    "ipc_inventory": {
+      "status": "PASS",
+      "evidence": "npm run ipc:inventory PASS"
+    },
+    "ipc_contract": {
+      "status": "PASS",
+      "evidence": "npm run check:ipc PASS"
+    },
+    "ipc_tests": {
+      "status": "PASS",
+      "evidence": "npm run test:ipc PASS (38/38)"
+    },
+    "typescript": {
+      "status": "PASS",
+      "evidence": "./node_modules/.bin/tsc --noEmit PASS"
+    },
+    "frontend_build": {
+      "status": "PASS",
+      "evidence": "pnpm run build PASS"
+    },
+    "diff_check": {
+      "status": "PASS",
+      "evidence": "git diff --check PASS"
+    }
+  },
+  "desktop_matrix": {
+    "macos_intel_metal": {
+      "status": "PASS",
+      "evidence": "macOS Intel Metal rendering verified"
+    },
+    "browser_not_in_tauri": {
+      "status": "PASS",
+      "evidence": "Browser mock mode rejected mutations with not_in_tauri"
+    },
+    "macos_apple_silicon_metal": {
+      "status": "PASS",
+      "evidence": "Built and verified on macOS Apple Silicon"
+    },
+    "ubuntu_vulkan": {
+      "status": "NOT_AVAILABLE",
+      "evidence": "Ubuntu Vulkan package deferred",
+      "reason": "Target not in release matrix"
+    },
+    "windows_contract_validation": {
+      "status": "NOT_AVAILABLE",
+      "evidence": "Windows build deferred",
+      "reason": "Target not in release matrix"
+    }
+  },
+  "manual_validation": {
+    "native_fidelity_verdict": "NATIVE_PRIMARY",
+    "blender_headless_import": {
+      "status": "PASS",
+      "evidence": "Blender 4.0 headless GLB import verified"
+    },
+    "blender_gui_import": {
+      "status": "PASS",
+      "evidence": "Blender 4.0 GUI import verified"
+    },
+    "blender_version": "Blender 4.0",
+    "reviewed_by": "XiaoJiang-Phy",
+    "reviewed_at": "2026-07-28T22:00:00Z"
+  },
+  "artifacts": [
+    {
+      "kind": "raster",
+      "identity": "rutile-4k-white-gloss-ortho",
+      "path": "tests/figure/rutile-4k-white-gloss-ortho.png",
+      "sha256": "5576556ccff06acee31babc897eeda3f4f6fe4294d4e1abcce83c55e2c473ab4",
+      "sidecar_path": "tests/figure/rutile-4k-white-gloss-ortho.crystalcanvas.json",
+      "sidecar_sha256": "e8a41089f4a4f9b6d8a98a9ed1406c884e34193afa95ba3821791b8f233fa562"
+    },
+    {
+      "kind": "raster",
+      "identity": "rutile-4k-black-unlit",
+      "path": "tests/figure/rutile-4k-black-unlit.png",
+      "sha256": "d6aa7d130a4fae0db634ea5c401c12d98539f77ff9830818bc88f722389aae14",
+      "sidecar_path": "tests/figure/rutile-4k-black-unlit.crystalcanvas.json",
+      "sidecar_sha256": "e88fac94bc649acc0d8fc377ca653bbbf599b93468aa44b953c7c6991846b043"
+    },
+    {
+      "kind": "raster",
+      "identity": "rutile-4k-transparent-studio-perspective",
+      "path": "tests/figure/rutile-4k-transparent-studio-perspective.png",
+      "sha256": "38bb14a9708eac37e76b0a32df82aca137b6a1416b34d588e4bc5e0b17de9983",
+      "sidecar_path": "tests/figure/rutile-4k-transparent-studio-perspective.crystalcanvas.json",
+      "sidecar_sha256": "de16c1659cb5e89f70f8057af51f831164ed82cb6698c8b2c98a076b6228ea6b"
+    },
+    {
+      "kind": "raster",
+      "identity": "rutile-8k-white-gloss-1",
+      "path": "tests/figure/rutile-8k-white-gloss-1.png",
+      "sha256": "d08b5496dba3025d97864aab9c4649735b0e1ce1c9a2dfe6f7b0688f6c8b71fd",
+      "sidecar_path": "tests/figure/rutile-8k-white-gloss-1.crystalcanvas.json",
+      "sidecar_sha256": "d6af419d3bbd141a0b47d5e18af58bce4bc34208f9ffbd4d32b4be6589839997"
+    },
+    {
+      "kind": "glb",
+      "identity": "c36bf547318d5deb4379006ed6198ea1616ff8a7c3c832dd465f588ca2da30d8-1785237162844",
+      "path": "tests/figure/rutile-scientific-gloss.glb",
+      "sha256": "b30d4b47bb486d8c9aa12918196a820a41a8ec2d6497cea51f377a6421ba44c1",
+      "sidecar_path": "tests/figure/rutile-scientific-gloss.crystalcanvas.json",
+      "sidecar_sha256": "5c64d26cb6f055c57923923390e23eeead569d56db88c3bfdad614db6f2b7d60"
+    }
+  ]
+}
