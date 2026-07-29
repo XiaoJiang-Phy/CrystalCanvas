@@ -207,10 +207,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         ti += 3u;
 
-        let start_idx = atomicAdd(&counter, 3u);
         let max_vertices = arrayLength(&vertices);
-        if start_idx + 2u >= max_vertices {
-            return; // Out of Bounds safety net! Discard remaining writes.
+        var start_idx: u32;
+        loop {
+            let observed = atomicLoad(&counter);
+            if observed > max_vertices || max_vertices - observed < 3u {
+                return;
+            }
+            let exchanged = atomicCompareExchangeWeak(&counter, observed, observed + 3u);
+            if exchanged.exchanged {
+                start_idx = observed;
+                break;
+            }
         }
         
         let e0 = u32(e0i);

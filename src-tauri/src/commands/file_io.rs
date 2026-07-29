@@ -25,23 +25,35 @@ pub fn load_cif_file(
         .map_err(IpcError::parse)?;
     log::info!("[load_cif_file] File parsed: {} atoms", state.num_atoms());
 
-    let vol_data = state.volumetric_data.take();
-    let vol_info = vol_data.as_ref().map(|v| {
+    let admitted_field = if state.volumetric_data.is_some() {
+        let source_sha256 = crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
+        Some(state.admit_volumetric_import(
+            std::path::Path::new(&path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("field")
+                .to_owned(),
+            source_sha256,
+        ).map_err(IpcError::invalid_argument)?)
+    } else {
+        None
+    };
+    let vol_info = admitted_field.map(|field| {
         let extension = std::path::Path::new(&path)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
         VolumetricInfo {
-            grid_dims: v.grid_dims,
-            data_min: v.data_min,
-            data_max: v.data_max,
+            grid_dims: field.grid_dims,
+            data_min: field.data_min,
+            data_max: field.data_max,
             format: extension,
         }
     });
 
-    let base_snapshot = state.clone();
-    state.volumetric_data = vol_data;
+    let mut base_snapshot = state.clone();
+    base_snapshot.field_scene = Default::default();
 
     let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
     let center = state.unit_cell_center();
@@ -69,13 +81,13 @@ pub fn load_cif_file(
     let previous_state = crate::undo::StructuralSnapshot::from_crystal_state(&cs);
 
     let prepared_volumetric = state
-        .volumetric_data
-        .as_ref()
-        .map(|vol| renderer.prepare_volumetric(vol))
+        .field_scene
+        .active_layer()
+        .map(|layer| renderer.prepare_field_layer(layer).map(|prepared| (prepared, layer.id, layer.revision)))
         .transpose()
         .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
-    renderer.clear_structure_bound_overlays();
+    renderer.clear_non_field_structure_bound_overlays();
     renderer.commit_atoms(atom_scene);
     renderer.update_lines(&line_scene);
 
@@ -86,11 +98,16 @@ pub fn load_cif_file(
         renderer.camera.set_orthographic(extent * 1.5);
     }
 
-    if let Some(prepared) = prepared_volumetric {
-        renderer.commit_volumetric(prepared);
+    if let Some((prepared, layer_id, layer_revision)) = prepared_volumetric {
+        renderer
+            .commit_field_layer(prepared, layer_id, layer_revision)
+            .map_err(|_| IpcError::render("stale field layer preparation"))?;
+    } else {
+        renderer.clear_volumetric();
     }
     renderer.update_camera();
 
+    let field_payload = super::volumetric::FieldSceneChangedPayload::from_scene(&state.field_scene);
     *base = Some(base_snapshot);
     let version = crate::transaction::stamp_version(&mut state, pending_version);
     *cs = state;
@@ -117,6 +134,10 @@ pub fn load_cif_file(
     if let Some(info) = vol_info {
         let _ = app.emit("volumetric_loaded", &info);
     }
+    let _ = app.emit(
+        "field_scene_changed",
+        field_payload,
+    );
 
     Ok(())
 }

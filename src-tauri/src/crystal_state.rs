@@ -26,6 +26,37 @@ pub fn validate_fractional_position(position: [f64; 3]) -> Result<(), &'static s
 }
 
 impl CrystalState {
+    pub fn active_field_layer(&self) -> Option<&crate::volumetric::FieldLayer> {
+        self.field_scene.active_layer()
+    }
+
+    pub fn field_scene_event(&self) -> crate::commands::volumetric::FieldSceneChangedPayload {
+        crate::commands::volumetric::FieldSceneChangedPayload::from_scene(&self.field_scene)
+    }
+
+    pub fn has_volumetric_import(&self) -> bool {
+        self.volumetric_data.is_some()
+    }
+
+    pub fn into_admitted_volumetric_import(
+        mut self,
+        label: String,
+        source_sha256: String,
+    ) -> Result<(Self, Option<FieldAdmission>), String> {
+        let admission = if self.volumetric_data.is_some() {
+            Some(self.admit_volumetric_import(label, source_sha256)?)
+        } else {
+            None
+        };
+        Ok((self, admission))
+    }
+
+    pub fn structural_base_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.invalidate_structure_bound_data();
+        snapshot
+    }
+
     pub(crate) fn validate_cartesian_positions(&self) -> Result<(), &'static str> {
         if self
             .cart_positions
@@ -455,12 +486,24 @@ pub struct CrystalState {
     #[serde(skip)]
     pub selected_atoms: Vec<usize>,
     #[serde(skip)]
-    pub volumetric_data: Option<crate::volumetric::VolumetricData>,
+    pub(crate) field_scene: crate::volumetric::FieldScene,
+    // Import staging only. `field_scene` is the committed field authority.
+    #[serde(skip)]
+    pub(crate) volumetric_data: Option<crate::volumetric::LegacyVolumetricData>,
     #[serde(skip)]
     pub bz_cache: Option<BrillouinZoneCache>,
     #[serde(skip)]
     pub wannier_overlay: Option<crate::wannier::WannierOverlay>,
     pub measurements: Vec<MeasurementOverlay>,
+}
+
+#[derive(Clone, Copy)]
+pub struct FieldAdmission {
+    pub layer_id: u64,
+    pub layer_revision: u64,
+    pub grid_dims: [usize; 3],
+    pub data_min: f32,
+    pub data_max: f32,
 }
 
 impl Default for CrystalState {
@@ -492,6 +535,7 @@ impl Default for CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: 0,
             selected_atoms: Vec::new(),
+            field_scene: Default::default(),
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
@@ -501,11 +545,32 @@ impl Default for CrystalState {
 }
 
 impl CrystalState {
-    pub fn invalidate_structure_bound_data(&mut self) {
+    /// Move parser staging into the committed scene before renderer admission.
+    pub(crate) fn admit_volumetric_import(
+        &mut self,
+        label: String,
+        source_sha256: String,
+    ) -> Result<FieldAdmission, String> {
+        let volumetric = self
+            .volumetric_data
+            .take()
+            .ok_or_else(|| "no volumetric data found in file".to_string())?;
+        let layer = self.field_scene.replace_with_source(label, volumetric, source_sha256)?;
+        Ok(FieldAdmission {
+            layer_id: layer.id,
+            layer_revision: layer.revision,
+            grid_dims: layer.grid_dims,
+            data_min: layer.data_min,
+            data_max: layer.data_max,
+        })
+    }
+
+    pub(crate) fn invalidate_structure_bound_data(&mut self) {
         self.bond_analysis = None;
         self.phonon_data = None;
         self.active_phonon_mode = None;
         self.phonon_phase = 0.0;
+        self.field_scene = Default::default();
         self.volumetric_data = None;
         self.bz_cache = None;
         self.wannier_overlay = None;
@@ -602,6 +667,7 @@ impl CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: actual_n,
             selected_atoms: Vec::new(),
+            field_scene: Default::default(),
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
@@ -1133,6 +1199,7 @@ impl CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: n_actual_usize,
             selected_atoms: Vec::new(),
+            field_scene: Default::default(),
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
@@ -1342,6 +1409,7 @@ impl CrystalState {
             phonon_phase: 0.0,
             intrinsic_sites: n_new_usize,
             selected_atoms: Vec::new(),
+            field_scene: Default::default(),
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,
@@ -1940,6 +2008,7 @@ mod tests {
             phonon_phase: 0.0,
             intrinsic_sites: 2,
             selected_atoms: vec![],
+            field_scene: Default::default(),
             volumetric_data: None,
             bz_cache: None,
             wannier_overlay: None,

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::crystal_state::CrystalState;
-use crate::volumetric::{VolumetricData, VolumetricFormat};
+use crate::volumetric::{FieldNormalization, FieldSourceMetadata, ScalarUnit, VolumetricData, VolumetricFormat};
 use std::fs;
 
 pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
@@ -82,7 +82,10 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
         return Err("Could not find NGX NGY NGZ grid dimensions in file".to_string());
     }
 
-    let n_voxels = grid_dims[0] * grid_dims[1] * grid_dims[2];
+    let n_voxels = grid_dims
+        .iter()
+        .try_fold(1_usize, |count, dimension| count.checked_mul(*dimension))
+        .ok_or_else(|| "Volumetric grid dimensions overflow".to_string())?;
     
     if n_voxels > 150 * 150 * 150 {
         return Err(format!("Grid size {}x{}x{} exceeds Phase A limit of 150^3", grid_dims[0], grid_dims[1], grid_dims[2]));
@@ -107,7 +110,7 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
     let mut data_min = f32::MAX;
     let mut data_max = f32::MIN;
 
-    for line in lines {
+    for line in lines.by_ref() {
         for token in line.split_whitespace() {
             if let Ok(mut val) = token.parse::<f32>() {
                 val *= normalization;
@@ -127,6 +130,20 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
     if data.len() != n_voxels {
         return Err(format!("Expected {} voxels, but only parsed {}", n_voxels, data.len()));
     }
+    if lines.any(is_chgcar_grid_header) {
+        return Err("CHGCAR contains multiple scalar datasets; explicit dataset selection is required".to_string());
+    }
+
+    let scalar_metadata = if matches!(format, VolumetricFormat::VaspChgcar) {
+        FieldSourceMetadata {
+            scalar_unit: ScalarUnit::ElectronPerCubicAngstrom,
+            scalar_unit_scale: 1.0,
+            normalization: FieldNormalization::VaspCellIntegratedToDensity,
+            metadata_declared: true,
+        }
+    } else {
+        FieldSourceMetadata::UNDECLARED
+    };
 
     state.volumetric_data = Some(VolumetricData {
         grid_dims,
@@ -135,10 +152,19 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
         data_min,
         data_max,
         source_format: format,
+        scalar_metadata,
         origin: [0.0, 0.0, 0.0],
     });
 
     Ok(state)
+}
+
+fn is_chgcar_grid_header(line: &str) -> bool {
+    let mut values = line.split_whitespace();
+    let Some(nx) = values.next().and_then(|value| value.parse::<usize>().ok()) else { return false; };
+    let Some(ny) = values.next().and_then(|value| value.parse::<usize>().ok()) else { return false; };
+    let Some(nz) = values.next().and_then(|value| value.parse::<usize>().ok()) else { return false; };
+    values.next().is_none() && nx > 0 && ny > 0 && nz > 0
 }
 
 #[cfg(test)]
@@ -310,4 +336,3 @@ mod tests {
         assert!(err.contains("NGX"), "error must cite NGX NGY NGZ: got '{err}'");
     }
 }
-

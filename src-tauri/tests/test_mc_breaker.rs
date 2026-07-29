@@ -4,7 +4,7 @@
 //! and strict 1e-3 epsilon tolerances.
 
 use crystal_canvas::renderer::isosurface::{marching_cubes_cpu, euler_characteristic_for_test};
-use crystal_canvas::volumetric::{VolumetricData, VolumetricFormat};
+use crystal_canvas::volumetric::{FieldSourceMetadata, VolumetricData, VolumetricFormat};
 
 #[test]
 fn test_breaker_strict_epsilon_sphere() {
@@ -38,6 +38,7 @@ fn test_breaker_strict_epsilon_sphere() {
         data_max,
         data,
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -66,6 +67,7 @@ fn test_breaker_empty_grid() {
         data_max: 0.0,
         data: vec![],
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -82,6 +84,7 @@ fn test_breaker_single_voxel() {
         data_max: 1.0,
         data: vec![1.0],
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -101,6 +104,7 @@ fn test_breaker_non_cubic_dims() {
         data_max: 0.0,
         data: vec![0.0; nx * ny * nz],
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
     
@@ -119,6 +123,7 @@ fn test_breaker_zero_field() {
         data_max: 0.0,
         data: vec![0.0; n * n * n],
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -142,6 +147,7 @@ fn test_breaker_zero_matrix() {
         data_max: 1.0,
         data,
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -163,6 +169,7 @@ fn test_breaker_nan_and_infinity_threshold() {
         data_max: 1.0,
         data: vec![0.5; n * n * n],
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -194,6 +201,7 @@ fn test_breaker_pathological_lattice() {
         data_max: 500.0,
         data,
         source_format: VolumetricFormat::VaspChgcar,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
 
@@ -203,4 +211,3 @@ fn test_breaker_pathological_lattice() {
         assert!(v.position.iter().all(|p| p.is_finite()), "Pathological lattice output NaN position");
     }
 }
-

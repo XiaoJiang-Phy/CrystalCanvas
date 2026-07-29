@@ -72,6 +72,7 @@ const browser_read_fixtures: BrowserReadFixtureFactory = {
     }),
     get_bz_label_positions: () => [],
     get_crystal_state: empty_crystal_state,
+    get_field_scene_info: () => ({ revision: 0, active_layer_id: null, layers: [] }),
     get_kpath_info: () => ({ points: [], segments: [] }),
     get_measurement_labels_screen: () => [],
     get_measurements: () => [],

@@ -16,75 +16,28 @@ use crystal_canvas::crystal_state::{CollisionError, CrystalState};
 fn make_test_state_with_atom_at_origin() -> CrystalState {
     // Create a minimal CrystalState with one atom at fractional (0, 0, 0)
     // in a cubic cell a=b=c=5.0Å
-    let mut state = CrystalState {
-        name: "Test".to_string(),
-        cell_a: 5.0,
-        cell_b: 5.0,
-        cell_c: 5.0,
-        cell_alpha: 90.0,
-        cell_beta: 90.0,
-        cell_gamma: 90.0,
-        spacegroup_hm: "P1".to_string(),
-        spacegroup_number: 1,
-        labels: vec![],
-        elements: vec![],
-        fract_x: vec![],
-        fract_y: vec![],
-        fract_z: vec![],
-        occupancies: vec![],
-        atomic_numbers: vec![],
-        cart_positions: vec![],
-        version: 1,
-        bond_analysis: None,
-        phonon_data: None,
-        active_phonon_mode: None,
-        phonon_phase: 0.0,
-        intrinsic_sites: 0,
-        selected_atoms: vec![],
-        volumetric_data: None,
-        bz_cache: None,
-        is_2d: false,
-        vacuum_axis: None,
-        wannier_overlay: None,
-        measurements: vec![],
-    };
+    let mut state = CrystalState::default();
+    state.name = "Test".to_string();
+    state.cell_a = 5.0;
+    state.cell_b = 5.0;
+    state.cell_c = 5.0;
+    state.spacegroup_hm = "P1".to_string();
+    state.spacegroup_number = 1;
+    state.version = 1;
     state.try_add_atom("O", 8, [0.0, 0.0, 0.0]).unwrap();
     state
 }
 
 fn empty_cubic(a: f64) -> CrystalState {
-    CrystalState {
-        name: "Empty".to_string(),
-        cell_a: a,
-        cell_b: a,
-        cell_c: a,
-        cell_alpha: 90.0,
-        cell_beta: 90.0,
-        cell_gamma: 90.0,
-        spacegroup_hm: "P1".to_string(),
-        spacegroup_number: 1,
-        labels: vec![],
-        elements: vec![],
-        fract_x: vec![],
-        fract_y: vec![],
-        fract_z: vec![],
-        occupancies: vec![],
-        atomic_numbers: vec![],
-        cart_positions: vec![],
-        version: 1,
-        bond_analysis: None,
-        phonon_data: None,
-        active_phonon_mode: None,
-        phonon_phase: 0.0,
-        intrinsic_sites: 0,
-        selected_atoms: vec![],
-        volumetric_data: None,
-        bz_cache: None,
-        is_2d: false,
-        vacuum_axis: None,
-        wannier_overlay: None,
-        measurements: vec![],
-    }
+    let mut state = CrystalState::default();
+    state.name = "Empty".to_string();
+    state.cell_a = a;
+    state.cell_b = a;
+    state.cell_c = a;
+    state.spacegroup_hm = "P1".to_string();
+    state.spacegroup_number = 1;
+    state.version = 1;
+    state
 }
 
 // ===========================================================================

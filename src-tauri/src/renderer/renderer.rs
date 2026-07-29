@@ -18,6 +18,7 @@ use super::publication_look::{
     PublicationCellLineBackground, PublicationCellLineStyle, PublicationLookProfile,
     PublicationLookUniform,
 };
+use crate::volumetric::MAX_VISIBLE_FIELD_LAYERS_FIELD_1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererVolumeMode {
@@ -26,10 +27,18 @@ pub enum RendererVolumeMode {
     Both,
 }
 
-pub struct PreparedVolumetric {
+pub struct PreparedFieldLayer {
+    layer_id: crate::volumetric::FieldLayerId,
+    layer_revision: crate::volumetric::FieldSceneRevision,
+    renderer_field_epoch: u64,
+    render_settings: crate::volumetric::FieldRenderSettings,
+    grid_dims: [usize; 3],
+    gpu_bytes: u64,
     isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
     volume_raycast_pipeline: crate::renderer::volume_raycast::VolumeRaycastPipeline,
 }
+
+pub type PreparedVolumetric = PreparedFieldLayer;
 
 #[derive(Clone, Copy)]
 struct AtomDragInstance {
@@ -318,7 +327,11 @@ pub struct Renderer {
     pub show_bonds: bool,
 
     // Volumetric rendering
-    pub isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    pub active_field_layer_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    pub active_field_layer: Option<(crate::volumetric::FieldLayerId, crate::volumetric::FieldSceneRevision)>,
+    /// Changes whenever a prepared field resource can no longer be committed.
+    field_resource_epoch: u64,
+    active_field_gpu_bytes: u64,
     pub show_isosurface: bool,
     pub volume_raycast_pipeline: Option<crate::renderer::volume_raycast::VolumeRaycastPipeline>,
     pub show_volume: bool,
@@ -344,6 +357,8 @@ const PUBLICATION_LOOK_UNIFORM_BYTES: u64 = 256;
 const PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
+const MAX_ACTIVE_FIELD_GPU_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_FIELD_ISOSURFACE_VERTEX_BYTES: u64 = 96 * 1024 * 1024;
 pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
 pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 7;
 const PUBLICATION_FRAMING_MARGIN: f32 = 0.08;
@@ -1131,7 +1146,7 @@ impl Renderer {
             needs_transparent_depth: self.transparent_instance_count > 0,
             has_measurement_overlays: self.measurement_line_count > 0,
             has_hopping_overlays: self.hopping_instance_count > 0,
-            has_isosurface: self.isosurface_pipeline.is_some(),
+            has_isosurface: self.active_field_layer_pipeline.is_some(),
             has_volume: self.volume_raycast_pipeline.is_some(),
             has_phonon_presentation: self.phonon_presentation.is_some(),
             has_atom_drag: self.atom_drag.is_some(),
@@ -1517,7 +1532,10 @@ impl Renderer {
             show_hoppings: true,
             show_cell: true,
             show_bonds: true,
-            isosurface_pipeline: None,
+            active_field_layer_pipeline: None,
+            active_field_layer: None,
+            field_resource_epoch: 0,
+            active_field_gpu_bytes: 0,
             show_isosurface: false,
             volume_raycast_pipeline: None,
             show_volume: false,
@@ -2254,7 +2272,7 @@ impl Renderer {
                     && (self.volume_render_mode == RendererVolumeMode::Isosurface
                         || self.volume_render_mode == RendererVolumeMode::Both)
                 {
-                    if let Some(iso_pipe) = &self.isosurface_pipeline {
+                    if let Some(iso_pipe) = &self.active_field_layer_pipeline {
                         iso_pipe.draw(&mut pass, &self.camera_bind_group);
                     }
                 }
@@ -2874,7 +2892,10 @@ impl Renderer {
 
     /// Clear volumetric pipelines when switching to a non-volumetric file.
     pub fn clear_volumetric(&mut self) {
-        self.isosurface_pipeline = None;
+        self.field_resource_epoch = self.field_resource_epoch.wrapping_add(1);
+        self.active_field_layer_pipeline = None;
+        self.active_field_layer = None;
+        self.active_field_gpu_bytes = 0;
         self.volume_raycast_pipeline = None;
         self.show_isosurface = false;
         self.show_volume = false;
@@ -2883,6 +2904,17 @@ impl Renderer {
 
     pub fn clear_structure_bound_overlays(&mut self) {
         self.clear_volumetric();
+        self.clear_non_field_structure_bound_overlays();
+    }
+
+    pub fn set_active_field_visibility(&mut self, visible: bool) {
+        self.show_isosurface = visible && self.active_field_layer_pipeline.is_some();
+        self.show_volume = visible && self.volume_raycast_pipeline.is_some();
+    }
+
+    /// Clear overlays derived from the crystal structure while preserving a
+    /// prepared field resource until its replacement can be committed.
+    pub fn clear_non_field_structure_bound_overlays(&mut self) {
         self.update_hoppings(&[]);
         self.show_hoppings = false;
         self.bz_viewport = None;
@@ -2914,18 +2946,54 @@ impl Renderer {
         }
     }
 
-    pub fn prepare_volumetric(
+    fn prepare_scalar_field(
         &self,
-        vol: &crate::volumetric::VolumetricData,
-    ) -> Result<PreparedVolumetric, ()> {
+        layer_id: crate::volumetric::FieldLayerId,
+        layer_revision: crate::volumetric::FieldSceneRevision,
+        vol: &impl crate::volumetric::ScalarFieldView,
+        render_settings: crate::volumetric::FieldRenderSettings,
+    ) -> Result<PreparedFieldLayer, ()> {
+        let scalar_bytes = (vol.scalar_data().len() as u64)
+            .checked_mul(std::mem::size_of::<f32>() as u64)
+            .ok_or(())?;
+        let vertex_capacity = if self.gpu.render_config.supports_compute_shaders {
+            crate::renderer::isosurface::marching_cubes_vertex_count(
+                vol,
+                render_settings.isovalue,
+                render_settings.sign_mode,
+            )?
+        } else {
+            0
+        };
+        let isosurface_bytes = u64::from(vertex_capacity.max(3))
+            .checked_mul(std::mem::size_of::<crate::renderer::isosurface::IsoVertex>() as u64)
+            .ok_or(())?;
+        // Two storage copies plus conservative upload staging for each copy.
+        let gpu_bytes = scalar_bytes
+            .checked_mul(4)
+            .and_then(|bytes| bytes.checked_add(isosurface_bytes))
+            .ok_or(())?;
+        let limits = self.gpu.device.limits();
+        if scalar_bytes > u64::from(limits.max_storage_buffer_binding_size)
+            || isosurface_bytes > u64::from(limits.max_storage_buffer_binding_size)
+            || isosurface_bytes > MAX_FIELD_ISOSURFACE_VERTEX_BYTES
+            || gpu_bytes > MAX_ACTIVE_FIELD_GPU_BYTES
+            || self.active_field_gpu_bytes.checked_add(gpu_bytes).ok_or(())? > MAX_ACTIVE_FIELD_GPU_BYTES
+            || !vol.lattice_angstrom().iter().chain(vol.origin_angstrom().iter()).all(|value| {
+                value.is_finite() && (*value as f32).is_finite()
+            })
+        {
+            return Err(());
+        }
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let isosurface_pipeline = if self.gpu.render_config.supports_compute_shaders {
-                Some(crate::renderer::isosurface::IsosurfacePipeline::new(
+                Some(crate::renderer::isosurface::IsosurfacePipeline::new_with_vertex_capacity(
                     &self.gpu.device,
                     &self.gpu.queue,
                     self.gpu.surface_format(),
                     &self.camera_bind_group_layout,
                     vol,
+                    vertex_capacity,
                 ))
             } else {
                 log::warn!(
@@ -2940,26 +3008,142 @@ impl Renderer {
                     &self.camera_bind_group_layout,
                     vol,
                     &self.opaque_depth_view,
-                );
-            PreparedVolumetric {
+                )?;
+            Ok(PreparedFieldLayer {
+                layer_id,
+                layer_revision,
+                renderer_field_epoch: self.field_resource_epoch,
+                render_settings,
+                grid_dims: vol.grid_dims(),
+                gpu_bytes,
                 isosurface_pipeline,
                 volume_raycast_pipeline,
-            }
+            })
         }))
-        .map_err(|_| ())
+        .map_err(|_| ())?
+    }
+
+    pub fn prepare_volumetric(
+        &self,
+        vol: &crate::volumetric::VolumetricData,
+    ) -> Result<PreparedVolumetric, ()> {
+        self.prepare_scalar_field(0, 0, vol, crate::volumetric::FieldRenderSettings::default())
+    }
+
+    pub fn prepare_field_layer(
+        &self,
+        layer: &crate::volumetric::FieldLayer,
+    ) -> Result<PreparedFieldLayer, ()> {
+        self.prepare_scalar_field(layer.id, layer.revision, layer, layer.render_settings)
+    }
+
+    pub fn prepare_field_layer_with_render_settings(
+        &self,
+        layer: &crate::volumetric::FieldLayer,
+        render_settings: crate::volumetric::FieldRenderSettings,
+    ) -> Result<PreparedFieldLayer, ()> {
+        self.prepare_scalar_field(layer.id, layer.revision, layer, render_settings)
+    }
+
+    pub fn update_field_render_settings(
+        &mut self,
+        layer: &crate::volumetric::FieldLayer,
+        render_settings: crate::volumetric::FieldRenderSettings,
+    ) -> Result<(), ()> {
+        let can_reuse = if self.gpu.render_config.supports_compute_shaders {
+            let required_vertices =
+                crate::renderer::isosurface::marching_cubes_vertex_count(
+                    layer,
+                    render_settings.isovalue,
+                    render_settings.sign_mode,
+                )?;
+            self.active_field_layer == Some((layer.id, layer.revision))
+                && self
+                    .active_field_layer_pipeline
+                    .as_ref()
+                    .is_some_and(|pipeline| pipeline.vertex_capacity() >= required_vertices)
+        } else {
+            self.active_field_layer == Some((layer.id, layer.revision))
+        };
+
+        if can_reuse {
+            self.apply_field_render_settings(render_settings);
+            self.update_isovalue(layer.grid_dims, render_settings.isovalue);
+            return Ok(());
+        }
+
+        let prepared = self.prepare_field_layer_with_render_settings(layer, render_settings)?;
+        self.commit_field_layer(prepared, layer.id, layer.revision)
     }
 
     pub fn commit_volumetric(&mut self, prepared: PreparedVolumetric) {
+        let _ = self.commit_field_layer(prepared, 0, 0);
+    }
+
+    pub fn commit_field_layer(
+        &mut self,
+        prepared: PreparedFieldLayer,
+        layer_id: crate::volumetric::FieldLayerId,
+        layer_revision: crate::volumetric::FieldSceneRevision,
+    ) -> Result<(), ()> {
+        if MAX_VISIBLE_FIELD_LAYERS_FIELD_1 != 1 {
+            log::warn!("FIELD-1 requires exactly one visible field layer");
+            return Err(());
+        }
+        if prepared.layer_id != layer_id || prepared.layer_revision != layer_revision {
+            log::warn!("stale prepared field layer was not committed");
+            return Err(());
+        }
+        if prepared.renderer_field_epoch != self.field_resource_epoch {
+            log::warn!("stale prepared field layer resource epoch was not committed");
+            return Err(());
+        }
+        let render_settings = prepared.render_settings;
+        let grid_dims = prepared.grid_dims;
+        let gpu_bytes = prepared.gpu_bytes;
         self.show_isosurface = prepared.isosurface_pipeline.is_some();
-        self.isosurface_pipeline = prepared.isosurface_pipeline;
+        self.active_field_layer_pipeline = prepared.isosurface_pipeline;
+        self.active_field_layer = Some((layer_id, layer_revision));
         self.volume_raycast_pipeline = Some(prepared.volume_raycast_pipeline);
-        self.show_volume = true;
-        self.volume_render_mode = RendererVolumeMode::Both;
+        self.active_field_gpu_bytes = gpu_bytes;
+        self.field_resource_epoch = self.field_resource_epoch.wrapping_add(1);
+        self.apply_field_render_settings(render_settings);
+        self.update_isovalue(grid_dims, render_settings.isovalue);
+        Ok(())
+    }
+
+    fn apply_field_render_settings(&mut self, settings: crate::volumetric::FieldRenderSettings) {
+        self.active_colormap_mode = settings.colormap_mode;
+        self.show_isosurface = settings.visible && self.active_field_layer_pipeline.is_some();
+        self.show_volume = settings.visible;
+        self.volume_render_mode = match settings.render_mode {
+            crate::volumetric::FieldRenderMode::Isosurface => RendererVolumeMode::Isosurface,
+            crate::volumetric::FieldRenderMode::Volume => RendererVolumeMode::Volume,
+            crate::volumetric::FieldRenderMode::Both => RendererVolumeMode::Both,
+        };
+        if let Some(iso) = &mut self.active_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, settings.color);
+            iso.set_color_negative(&self.gpu.queue, settings.color_negative);
+            iso.set_opacity(&self.gpu.queue, settings.opacity);
+            let sign_mode = match settings.sign_mode {
+                crate::volumetric::FieldSignMode::Positive => 0,
+                crate::volumetric::FieldSignMode::Negative => 1,
+                crate::volumetric::FieldSignMode::Both => 2,
+            };
+            iso.set_sign_mode(&self.gpu.queue, sign_mode);
+        }
+        if let Some(volume) = &self.volume_raycast_pipeline {
+            volume.set_colormap(&self.gpu.queue, settings.colormap_mode);
+            volume.set_signed_mapping(
+                &self.gpu.queue,
+                matches!(settings.sign_mode, crate::volumetric::FieldSignMode::Both),
+            );
+        }
     }
 
     /// Update isovalue threshold and trigger compute pass.
     pub fn update_isovalue(&mut self, grid_dims: [usize; 3], threshold: f32) {
-        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+        if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             self.isosurface_dispatch_size =
                 iso_pipe.update_threshold(&self.gpu.queue, grid_dims, threshold);
 
@@ -2977,14 +3161,14 @@ impl Renderer {
 
     /// Update isosurface solid color.
     pub fn set_isosurface_color(&mut self, color: [f32; 4]) {
-        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+        if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             iso_pipe.set_color(&self.gpu.queue, color);
         }
     }
 
     /// Update isosurface opacity.
     pub fn set_isosurface_opacity(&mut self, opacity: f32) {
-        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+        if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             iso_pipe.set_opacity(&self.gpu.queue, opacity);
         }
     }

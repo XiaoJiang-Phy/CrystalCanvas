@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use wgpu::util::DeviceExt;
-use crate::volumetric::VolumetricData;
+use crate::volumetric::ScalarFieldView;
+
+/// Above this proxy condition number, converting Cartesian rays into fractional
+/// coordinates loses too much precision for a reliable volume intersection.
+const MAX_FIELD_LATTICE_CONDITION: f64 = 1.0e12;
+
+fn finite_f32(value: f64) -> Result<f32, ()> {
+    let converted = value as f32;
+    converted.is_finite().then_some(converted).ok_or(())
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -62,26 +71,58 @@ impl VolumeRaycastPipeline {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
-        volumetric_data: &VolumetricData,
+        volumetric_data: &impl ScalarFieldView,
         depth_view: &wgpu::TextureView,
-    ) -> Self {
-        let mat = glam::DMat3::from_cols_array(&volumetric_data.lattice).as_mat3();
-        let inv_mat_t = mat.inverse().transpose();
+    ) -> Result<Self, ()> {
+        let lattice = volumetric_data.lattice_angstrom();
+        let origin = volumetric_data.origin_angstrom();
+        let data = volumetric_data.scalar_data();
+        let mat = glam::DMat3::from_cols_array(lattice);
+        let cross_bc = mat.y_axis.cross(mat.z_axis);
+        let cross_ca = mat.z_axis.cross(mat.x_axis);
+        let cross_ab = mat.x_axis.cross(mat.y_axis);
+        let determinant = mat.x_axis.dot(cross_bc);
+        let matrix_norm = (mat.x_axis.length_squared()
+            + mat.y_axis.length_squared()
+            + mat.z_axis.length_squared())
+            .sqrt();
+        let inverse_norm = (cross_bc.length_squared()
+            + cross_ca.length_squared()
+            + cross_ab.length_squared())
+            .sqrt()
+            / determinant.abs();
+        let condition = matrix_norm * inverse_norm;
+        if !determinant.is_finite()
+            || determinant.abs() <= f64::MIN_POSITIVE
+            || !condition.is_finite()
+            || condition > MAX_FIELD_LATTICE_CONDITION
+        {
+            log::warn!(
+                "Rejected volume raycast lattice: determinant={determinant:e}, condition={condition:e}"
+            );
+            return Err(());
+        }
+        // Columns of M^{-T}; the shader consumes this form for Cartesian-to-
+        // fractional coordinates.  The cofactor form avoids an unchecked inverse.
+        let inv_mat_t = glam::DMat3::from_cols(
+            cross_bc / determinant,
+            cross_ca / determinant,
+            cross_ab / determinant,
+        );
         
-        let grid = volumetric_data.grid_dims;
-        let t_min = volumetric_data.data_min;
-        let t_max = volumetric_data.data_max;
+        let grid = volumetric_data.grid_dims();
+        let (t_min, t_max) = volumetric_data.scalar_range();
 
         // Nyquist-compliant step size: half the minimum voxel spacing
         // $\Delta t = 0.5 \cdot \min(|\mathbf{a}|/N_x,\, |\mathbf{b}|/N_y,\, |\mathbf{c}|/N_z)$
-        let h_a = mat.x_axis.length() / grid[0].max(1) as f32;
-        let h_b = mat.y_axis.length() / grid[1].max(1) as f32;
-        let h_c = mat.z_axis.length() / grid[2].max(1) as f32;
-        let step_size = (h_a.min(h_b).min(h_c) * 0.5).max(1e-4);
+        let h_a = mat.x_axis.length() / grid[0].max(1) as f64;
+        let h_b = mat.y_axis.length() / grid[1].max(1) as f64;
+        let h_c = mat.z_axis.length() / grid[2].max(1) as f64;
+        let step_size = finite_f32((h_a.min(h_b).min(h_c) * 0.5).max(1e-4))?;
 
         // max_steps covers the full body diagonal with headroom
         let diagonal = mat.x_axis.length() + mat.y_axis.length() + mat.z_axis.length();
-        let max_steps = ((diagonal / step_size) * 1.5) as u32;
+        let max_steps = ((diagonal / f64::from(step_size)) * 1.5) as u32;
         let max_steps = max_steps.clamp(256, 2048);
 
         log::info!(
@@ -89,15 +130,22 @@ impl VolumeRaycastPipeline {
             h_a, h_b, h_c, step_size, max_steps
         );
 
+        let lattice_a = [finite_f32(mat.x_axis.x)?, finite_f32(mat.x_axis.y)?, finite_f32(mat.x_axis.z)?, 0.0];
+        let lattice_b = [finite_f32(mat.y_axis.x)?, finite_f32(mat.y_axis.y)?, finite_f32(mat.y_axis.z)?, 0.0];
+        let lattice_c = [finite_f32(mat.z_axis.x)?, finite_f32(mat.z_axis.y)?, finite_f32(mat.z_axis.z)?, 0.0];
+        let inv_lattice_a = [finite_f32(inv_mat_t.x_axis.x)?, finite_f32(inv_mat_t.x_axis.y)?, finite_f32(inv_mat_t.x_axis.z)?, 0.0];
+        let inv_lattice_b = [finite_f32(inv_mat_t.y_axis.x)?, finite_f32(inv_mat_t.y_axis.y)?, finite_f32(inv_mat_t.y_axis.z)?, 0.0];
+        let inv_lattice_c = [finite_f32(inv_mat_t.z_axis.x)?, finite_f32(inv_mat_t.z_axis.y)?, finite_f32(inv_mat_t.z_axis.z)?, 0.0];
+        let uniform_origin = [finite_f32(origin[0])?, finite_f32(origin[1])?, finite_f32(origin[2])?, 0.0];
         let uniforms = VolumeRaycastUniforms {
-            lattice_a: [mat.x_axis.x, mat.x_axis.y, mat.x_axis.z, 0.0],
-            lattice_b: [mat.y_axis.x, mat.y_axis.y, mat.y_axis.z, 0.0],
-            lattice_c: [mat.z_axis.x, mat.z_axis.y, mat.z_axis.z, 0.0],
-            inv_lattice_a: [inv_mat_t.x_axis.x, inv_mat_t.x_axis.y, inv_mat_t.x_axis.z, 0.0],
-            inv_lattice_b: [inv_mat_t.y_axis.x, inv_mat_t.y_axis.y, inv_mat_t.y_axis.z, 0.0],
-            inv_lattice_c: [inv_mat_t.z_axis.x, inv_mat_t.z_axis.y, inv_mat_t.z_axis.z, 0.0],
+            lattice_a,
+            lattice_b,
+            lattice_c,
+            inv_lattice_a,
+            inv_lattice_b,
+            inv_lattice_c,
             eye_pos: [0.0, 0.0, 0.0, 1.0],
-            origin: [volumetric_data.origin[0] as f32, volumetric_data.origin[1] as f32, volumetric_data.origin[2] as f32, 0.0],
+            origin: uniform_origin,
             grid_dims: [grid[0] as u32, grid[1] as u32, grid[2] as u32, 0],
             transfer_range: [t_min, t_max],
             opacity_scale: 1.0,
@@ -120,7 +168,7 @@ impl VolumeRaycastPipeline {
 
         let scalar_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Volume Raycast Scalar Buffer"),
-            contents: bytemuck::cast_slice(&volumetric_data.data),
+            contents: bytemuck::cast_slice(data),
             usage: wgpu::BufferUsages::STORAGE,
         });
 
@@ -204,7 +252,7 @@ impl VolumeRaycastPipeline {
             &bind_group_layout,
         );
 
-        Self {
+        Ok(Self {
             render_pipeline,
             render_bind_group,
             bind_group_layout,
@@ -213,7 +261,7 @@ impl VolumeRaycastPipeline {
             vertex_buffer,
             index_buffer,
             index_count,
-        }
+        })
     }
 
     fn build_bind_group(

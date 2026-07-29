@@ -1,5 +1,5 @@
 use crate::crystal_state::CrystalState;
-use crate::volumetric::{VolumetricData, VolumetricFormat};
+use crate::volumetric::{FieldSourceMetadata, VolumetricData, VolumetricFormat};
 use std::fs;
 use std::path::Path;
 
@@ -91,7 +91,10 @@ pub fn parse_xsf_volumetric(path: &str) -> Result<CrystalState, String> {
                 return Err("Degenerate grid dimensions".to_string());
             }
 
-            let n_voxels = grid_dims[0] * grid_dims[1] * grid_dims[2];
+            let n_voxels = grid_dims
+                .iter()
+                .try_fold(1_usize, |count, dimension| count.checked_mul(*dimension))
+                .ok_or_else(|| "XSF grid dimensions overflow".to_string())?;
             if n_voxels > 150 * 150 * 150 {
                 return Err(format!("Grid size {}x{}x{} exceeds limit of 150^3", grid_dims[0], grid_dims[1], grid_dims[2]));
             }
@@ -249,6 +252,7 @@ pub fn parse_xsf_volumetric(path: &str) -> Result<CrystalState, String> {
         data_min,
         data_max,
         source_format: VolumetricFormat::Xsf,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     });
 

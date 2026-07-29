@@ -91,31 +91,19 @@ struct BenchmarkSnapshot {
 
 impl BenchmarkSnapshot {
     fn into_crystal_state(self) -> CrystalState {
-        CrystalState {
-            name: self.name,
-            cell_a: self.cell_a,
-            cell_b: self.cell_b,
-            cell_c: self.cell_c,
-            cell_alpha: self.cell_alpha,
-            cell_beta: self.cell_beta,
-            cell_gamma: self.cell_gamma,
-            spacegroup_hm: self.spacegroup_hm,
-            spacegroup_number: self.spacegroup_number,
-            labels: self.labels,
-            elements: self.elements,
-            fract_x: self.fract_x,
-            fract_y: self.fract_y,
-            fract_z: self.fract_z,
-            occupancies: self.occupancies,
-            atomic_numbers: self.atomic_numbers,
-            cart_positions: self.cart_positions,
-            version: self.version,
-            is_2d: self.is_2d,
-            vacuum_axis: self.vacuum_axis,
-            intrinsic_sites: self.intrinsic_sites,
-            measurements: self.measurements,
-            ..CrystalState::default()
-        }
+        let mut state = CrystalState::default();
+        state.name = self.name;
+        state.cell_a = self.cell_a; state.cell_b = self.cell_b; state.cell_c = self.cell_c;
+        state.cell_alpha = self.cell_alpha; state.cell_beta = self.cell_beta; state.cell_gamma = self.cell_gamma;
+        state.spacegroup_hm = self.spacegroup_hm; state.spacegroup_number = self.spacegroup_number;
+        state.labels = self.labels; state.elements = self.elements;
+        state.fract_x = self.fract_x; state.fract_y = self.fract_y; state.fract_z = self.fract_z;
+        state.occupancies = self.occupancies; state.atomic_numbers = self.atomic_numbers;
+        state.cart_positions = self.cart_positions;
+        state.version = self.version; state.is_2d = self.is_2d;
+        state.vacuum_axis = self.vacuum_axis; state.intrinsic_sites = self.intrinsic_sites;
+        state.measurements = self.measurements;
+        state
     }
 }
 

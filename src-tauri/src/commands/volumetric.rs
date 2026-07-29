@@ -149,16 +149,15 @@ pub fn load_volumetric_file(
     new_state
         .validate_structural_invariants()
         .map_err(IpcError::parse)?;
+    let source_sha256 = crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
     
-    let vol_data = new_state
-        .volumetric_data
-        .take()
-        .ok_or_else(|| IpcError::parse("no volumetric data found in file"))?;
-    
+    let admitted = new_state
+        .admit_volumetric_import(filename.clone(), source_sha256)
+        .map_err(IpcError::invalid_argument)?;
     let info = VolumetricInfo {
-        grid_dims: vol_data.grid_dims,
-        data_min: vol_data.data_min,
-        data_max: vol_data.data_max,
+        grid_dims: admitted.grid_dims,
+        data_min: admitted.data_min,
+        data_max: admitted.data_max,
         format: extension,
     };
     
@@ -179,11 +178,13 @@ pub fn load_volumetric_file(
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let pending_version = crate::transaction::next_version(&cs)?;
 
+    let active_layer = new_state.field_scene.active_layer()
+        .ok_or_else(|| IpcError::render("new field layer is missing"))?;
     let prepared_volumetric = r
-        .prepare_volumetric(&vol_data)
+        .prepare_field_layer(active_layer)
         .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
-    r.clear_structure_bound_overlays();
+    r.clear_non_field_structure_bound_overlays();
     r.commit_atoms(atom_scene);
     r.update_lines(&line_scene);
 
@@ -194,9 +195,10 @@ pub fn load_volumetric_file(
         r.camera.set_orthographic(extent * 1.5);
     }
     r.update_camera();
-    r.commit_volumetric(prepared_volumetric);
+    r.commit_field_layer(prepared_volumetric, admitted.layer_id, admitted.layer_revision)
+        .map_err(|_| IpcError::render("stale field layer preparation"))?;
 
-    let has_negative = vol_data.data_min < -0.01 * vol_data.data_max.abs();
+    let has_negative = info.data_min < -0.01 * info.data_max.abs();
     r.active_colormap_mode = if has_negative { 4 } else { 0 };
     if has_negative {
         if let Some(vol) = &r.volume_raycast_pipeline {
@@ -205,11 +207,12 @@ pub fn load_volumetric_file(
         }
         log::info!(
             "Signed volumetric data detected (min={:.3e}). Enabled signed mapping + Coolwarm.",
-            vol_data.data_min
+            info.data_min
         );
     }
 
-    new_state.volumetric_data = Some(vol_data);
+    new_state.volumetric_data = None;
+    let field_payload = FieldSceneChangedPayload::from_scene(&new_state.field_scene);
     let version = crate::transaction::stamp_version(&mut new_state, pending_version);
     *cs = new_state;
 
@@ -224,6 +227,7 @@ pub fn load_volumetric_file(
     .ok();
     
     let _ = app.emit("volumetric_loaded", &info);
+    let _ = app.emit("field_scene_changed", field_payload);
     
     Ok(info)
 }
@@ -231,50 +235,43 @@ pub fn load_volumetric_file(
 #[tauri::command]
 pub fn set_isovalue(
     value: f32,
+    layer_id: u64,
+    expected_revision: u64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
-    let (grid_dims, data_range) = {
-        let cs = crystal_state
-            .lock()
-            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-        cs.volumetric_data
-            .as_ref()
-            .map(|v| {
-            let abs_max = v.data_min.abs().max(v.data_max.abs());
-            (v.grid_dims, abs_max)
-            })
-            .unzip()
-    };
-
-    if let Some(dims) = grid_dims {
-        let mut r = renderer_state
-            .lock()
-            .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-        r.update_isovalue(dims, value);
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&cs.field_scene, expected_revision)?;
+    let layer = cs
+        .field_scene
+        .active_layer()
+        .filter(|layer| layer.id == layer_id)
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    let data_range = layer.data_min.abs().max(layer.data_max.abs());
+    let mut render_settings = layer.render_settings;
+    render_settings.isovalue = value;
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    r.update_field_render_settings(layer, render_settings)
+        .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
 
         // Auto-sync isosurface color with volume colormap.
         // Must match volume_raycast.wgsl sqrt-stretched signed mapping:
         // $t = 0.5 \pm 0.5\sqrt{|v/v_{\max}|}$
-        if let Some(abs_max) = data_range {
-            let norm = (value.abs() / abs_max.max(1e-10)).clamp(0.0, 1.0);
-            let stretched = norm.sqrt();
-            let t_pos = 0.5 + 0.5 * stretched;     // positive lobe → upper half
-            let t_neg = 0.5 - 0.5 * stretched;     // negative lobe → lower half
-            let color_pos = colormap_sample(r.active_colormap_mode, t_pos);
-            let color_neg = colormap_sample(r.active_colormap_mode, t_neg);
-            let r_mut = &mut *r;
-            if let Some(iso) = &mut r_mut.isosurface_pipeline {
-                let alpha = iso.cur_color[3];
-                iso.set_color(
-                    &r_mut.gpu.queue,
-                    [color_pos[0], color_pos[1], color_pos[2], alpha],
-                );
-                iso.set_color_negative(
-                    &r_mut.gpu.queue,
-                    [color_neg[0], color_neg[1], color_neg[2], alpha],
-                );
-            }
+        let norm = (value.abs() / data_range.max(1e-10)).clamp(0.0, 1.0);
+        let stretched = norm.sqrt();
+        let t_pos = 0.5 + 0.5 * stretched;
+        let t_neg = 0.5 - 0.5 * stretched;
+        let color_pos = colormap_sample(r.active_colormap_mode, t_pos);
+        let color_neg = colormap_sample(r.active_colormap_mode, t_neg);
+        let r_mut = &mut *r;
+        if let Some(iso) = &mut r_mut.active_field_layer_pipeline {
+            let alpha = iso.cur_color[3];
+            iso.set_color(&r_mut.gpu.queue, [color_pos[0], color_pos[1], color_pos[2], alpha]);
+            iso.set_color_negative(&r_mut.gpu.queue, [color_neg[0], color_neg[1], color_neg[2], alpha]);
         }
 
         // Sync volume clip threshold + density cutoff (Both mode)
@@ -290,6 +287,10 @@ pub fn set_isovalue(
                 vol.set_clip_threshold(&r.gpu.queue, 0.0);
             }
         }
+    if let Some(layer) = cs.field_scene.active_layer_mut() {
+        layer.render_settings.isovalue = value;
+        layer.render_settings.color = [color_pos[0], color_pos[1], color_pos[2], layer.render_settings.opacity];
+        layer.render_settings.color_negative = [color_neg[0], color_neg[1], color_neg[2], layer.render_settings.opacity];
     }
     Ok(())
 }
@@ -297,14 +298,19 @@ pub fn set_isovalue(
 #[tauri::command]
 pub fn set_isosurface_color(
     color: [f32; 4],
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let r_mut = &mut *r;
-    if let Some(iso) = &mut r_mut.isosurface_pipeline {
+    if let Some(iso) = &mut r_mut.active_field_layer_pipeline {
         iso.set_color(&r_mut.gpu.queue, color);
+    }
+    if let Some(layer) = state.field_scene.active_layer_mut() {
+        layer.render_settings.color = color;
     }
     Ok(())
 }
@@ -312,12 +318,20 @@ pub fn set_isosurface_color(
 #[tauri::command]
 pub fn set_isosurface_opacity(
     opacity: f32,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
+    let opacity = opacity.clamp(0.0, 1.0);
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     r.set_isosurface_opacity(opacity);
+    if let Some(layer) = state.field_scene.active_layer_mut() {
+        layer.render_settings.opacity = opacity;
+        layer.render_settings.color[3] = opacity;
+        layer.render_settings.color_negative[3] = opacity;
+    }
     Ok(())
 }
 
@@ -333,39 +347,32 @@ pub fn set_isosurface_sign_mode(
         IsosurfaceSignMode::Negative => 1,
         IsosurfaceSignMode::Both => 2,
     };
-
-    let grid_dims = {
-        let cs = crystal_state
-            .lock()
-            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-        cs.volumetric_data.as_ref().map(|v| v.grid_dims)
+    let field_sign_mode = match mode {
+        IsosurfaceSignMode::Positive => crate::volumetric::FieldSignMode::Positive,
+        IsosurfaceSignMode::Negative => crate::volumetric::FieldSignMode::Negative,
+        IsosurfaceSignMode::Both => crate::volumetric::FieldSignMode::Both,
     };
 
-    let r = renderer_state
+    let mut cs = crystal_state
+            .lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let Some(layer) = cs.field_scene.active_layer() else { return Ok(()); };
+    let mut render_settings = layer.render_settings;
+    render_settings.sign_mode = field_sign_mode;
+
+    let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    if let Some(iso) = &r.isosurface_pipeline {
-        iso.set_sign_mode(&r.gpu.queue, sign_mode);
-    }
-
-    if let Some(_dims) = grid_dims {
-        let dispatch = r.isosurface_dispatch_size;
-        if let Some(iso) = &r.isosurface_pipeline {
-            let mut encoder =
-                r.gpu
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Sign Mode Re-dispatch"),
-            });
-            iso.dispatch_compute(&mut encoder, dispatch);
-            r.gpu.queue.submit(std::iter::once(encoder.finish()));
-        }
-    }
+    r.update_field_render_settings(layer, render_settings)
+        .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
 
     // Sync volume signed mapping with sign_mode
     let use_signed = sign_mode == 2;
     if let Some(vol) = &r.volume_raycast_pipeline {
         vol.set_signed_mapping(&r.gpu.queue, use_signed);
+    }
+    if let Some(layer) = cs.field_scene.active_layer_mut() {
+        layer.render_settings.sign_mode = field_sign_mode;
     }
 
     Ok(())
@@ -374,22 +381,29 @@ pub fn set_isosurface_sign_mode(
 #[tauri::command]
 pub fn set_volume_render_mode(
     mode: IpcEnumInput<VolumeRenderMode>,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
     let mode = mode.parse("mode")?;
-    let mut r = renderer_state
-        .lock()
-        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let new_mode = match mode {
         VolumeRenderMode::Isosurface => crate::renderer::renderer::RendererVolumeMode::Isosurface,
         VolumeRenderMode::Volume => crate::renderer::renderer::RendererVolumeMode::Volume,
         VolumeRenderMode::Both => crate::renderer::renderer::RendererVolumeMode::Both,
     };
+    let field_render_mode = match mode {
+        VolumeRenderMode::Isosurface => crate::volumetric::FieldRenderMode::Isosurface,
+        VolumeRenderMode::Volume => crate::volumetric::FieldRenderMode::Volume,
+        VolumeRenderMode::Both => crate::volumetric::FieldRenderMode::Both,
+    };
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let mut r = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     r.volume_render_mode = new_mode;
 
     // Sync volume clip threshold + density cutoff with current isovalue
     let iso_threshold = r
-        .isosurface_pipeline
+        .active_field_layer_pipeline
         .as_ref()
         .map_or(0.0, |iso| iso.cur_threshold.abs());
     let (clip, cutoff) = match new_mode {
@@ -399,6 +413,9 @@ pub fn set_volume_render_mode(
     if let Some(vol) = &r.volume_raycast_pipeline {
         vol.set_clip_threshold(&r.gpu.queue, clip);
         vol.set_density_cutoff(&r.gpu.queue, cutoff);
+    }
+    if let Some(layer) = state.field_scene.active_layer_mut() {
+        layer.render_settings.render_mode = field_render_mode;
     }
     Ok(())
 }
@@ -459,15 +476,12 @@ pub fn set_volume_colormap(
         VolumeColormap::Viridis => 0,
     };
 
-    let iso_sync = {
-        let cs = crystal_state
-            .lock()
-            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-        cs.volumetric_data.as_ref().map(|v| {
-            let abs_max = v.data_min.abs().max(v.data_max.abs());
-            abs_max
-        })
-    };
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let iso_sync = cs.field_scene.active_layer().map(|layer| {
+        (layer.data_min.abs().max(layer.data_max.abs()), layer.render_settings.opacity)
+    });
 
     let mut r = renderer_state
         .lock()
@@ -479,9 +493,9 @@ pub fn set_volume_colormap(
 
     // Re-sync isosurface color with the new colormap
     // Matches volume_raycast.wgsl sqrt-stretched signed mapping
-    if let Some(abs_max) = iso_sync {
+    if let Some((abs_max, opacity)) = iso_sync {
         let r_mut = &mut *r;
-        if let Some(iso) = &mut r_mut.isosurface_pipeline {
+        if let Some(iso) = &mut r_mut.active_field_layer_pipeline {
             let cur_threshold = iso.cur_threshold;
             let norm = (cur_threshold.abs() / abs_max.max(1e-10)).clamp(0.0, 1.0);
             let stretched = norm.sqrt();
@@ -489,7 +503,7 @@ pub fn set_volume_colormap(
             let t_neg = 0.5 - 0.5 * stretched;
             let color_pos = colormap_sample(colormap_mode, t_pos);
             let color_neg = colormap_sample(colormap_mode, t_neg);
-            let alpha = iso.cur_color[3];
+            let alpha = opacity;
             iso.set_color(
                 &r_mut.gpu.queue,
                 [color_pos[0], color_pos[1], color_pos[2], alpha],
@@ -498,6 +512,17 @@ pub fn set_volume_colormap(
                 &r_mut.gpu.queue,
                 [color_neg[0], color_neg[1], color_neg[2], alpha],
             );
+        }
+    }
+    if let Some(layer) = cs.field_scene.active_layer_mut() {
+        layer.render_settings.colormap_mode = colormap_mode;
+        if let Some((abs_max, opacity)) = iso_sync {
+            let threshold = layer.render_settings.isovalue;
+            let stretched = (threshold.abs() / abs_max.max(1e-10)).clamp(0.0, 1.0).sqrt();
+            let color_pos = colormap_sample(colormap_mode, 0.5 + 0.5 * stretched);
+            let color_neg = colormap_sample(colormap_mode, 0.5 - 0.5 * stretched);
+            layer.render_settings.color = [color_pos[0], color_pos[1], color_pos[2], opacity];
+            layer.render_settings.color_negative = [color_neg[0], color_neg[1], color_neg[2], opacity];
         }
     }
     Ok(())
@@ -510,20 +535,342 @@ pub fn get_volumetric_info(
     let cs = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-    if let Some(vol) = &cs.volumetric_data {
-        let fmt_str = match vol.source_format {
-            crate::volumetric::VolumetricFormat::VaspChgcar => "chgcar",
-            crate::volumetric::VolumetricFormat::VaspLocpot => "locpot",
-            crate::volumetric::VolumetricFormat::GaussianCube => "cube",
-            crate::volumetric::VolumetricFormat::Xsf => "xsf",
-        };
+    if let Some(vol) = cs.field_scene.active_layer() {
         Ok(Some(VolumetricInfo {
             grid_dims: vol.grid_dims,
             data_min: vol.data_min,
             data_max: vol.data_max,
-            format: fmt_str.to_string(),
+            format: "field".to_string(),
         }))
     } else {
         Ok(None)
     }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct FieldLayerInfo {
+    pub id: u64,
+    pub revision: u64,
+    pub label: String,
+    pub grid_dims: [usize; 3],
+    pub data_min: f32,
+    pub data_max: f32,
+    pub source_sha256: String,
+    pub normalized_sha256: String,
+    pub lineage: Option<Vec<crate::volumetric::FieldLineageTerm>>,
+    pub visible: bool,
+    pub isovalue: f32,
+    pub opacity: f32,
+    pub sign_mode: crate::volumetric::FieldSignMode,
+    pub render_mode: crate::volumetric::FieldRenderMode,
+    pub colormap_mode: u32,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct FieldSceneInfo {
+    pub revision: u64,
+    pub active_layer_id: Option<u64>,
+    pub layers: Vec<FieldLayerInfo>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct FieldSceneChangedPayload {
+    pub revision: u64,
+    pub active_layer_id: Option<u64>,
+}
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldLinearCombinationTerm {
+    pub layer_id: u64,
+    pub coefficient: f64,
+}
+
+impl FieldSceneInfo {
+    fn from_scene(scene: &crate::volumetric::FieldScene) -> Self {
+        Self {
+            revision: scene.revision,
+            active_layer_id: scene.active_layer,
+            layers: scene.layers.iter().map(|layer| FieldLayerInfo {
+                id: layer.id,
+                revision: layer.revision,
+                label: layer.label.clone(),
+                grid_dims: layer.grid_dims,
+                data_min: layer.data_min,
+                data_max: layer.data_max,
+                source_sha256: layer.source_sha256.clone(),
+                normalized_sha256: layer.normalized_sha256.clone(),
+                lineage: layer.lineage.clone(),
+                visible: layer.render_settings.visible,
+                isovalue: layer.render_settings.isovalue,
+                opacity: layer.render_settings.opacity,
+                sign_mode: layer.render_settings.sign_mode,
+                render_mode: layer.render_settings.render_mode,
+                colormap_mode: layer.render_settings.colormap_mode,
+            }).collect(),
+        }
+    }
+}
+
+impl FieldSceneChangedPayload {
+    pub(crate) fn from_scene(scene: &crate::volumetric::FieldScene) -> Self {
+        Self { revision: scene.revision, active_layer_id: scene.active_layer }
+    }
+}
+
+fn require_field_revision(
+    scene: &crate::volumetric::FieldScene,
+    expected_revision: u64,
+) -> IpcResult<()> {
+    if scene.revision == expected_revision {
+        Ok(())
+    } else {
+        Err(IpcError::invalid_argument("field scene revision is stale"))
+    }
+}
+
+fn require_field_structure_mapping(
+    volumetric: &crate::volumetric::VolumetricData,
+    state: &crate::crystal_state::CrystalState,
+) -> IpcResult<()> {
+    const LATTICE_TOLERANCE_ANGSTROM: f64 = 1.0e-5;
+    let structure_lattice = state.get_lattice_col_major();
+    let matches = volumetric
+        .lattice
+        .iter()
+        .zip(structure_lattice.iter())
+        .all(|(field, structure)| {
+            let scale = field.abs().max(structure.abs()).max(1.0);
+            (field - structure).abs() <= LATTICE_TOLERANCE_ANGSTROM * scale
+        });
+    matches
+        .then_some(())
+        .ok_or_else(|| IpcError::invalid_argument("field lattice does not map to the current structure"))
+}
+
+fn apply_explicit_scalar_unit(
+    volumetric: &mut crate::volumetric::VolumetricData,
+    scalar_unit: Option<&str>,
+) -> IpcResult<()> {
+    let Some(scalar_unit) = scalar_unit else { return Ok(()); };
+    if volumetric.scalar_metadata.metadata_declared {
+        return Ok(());
+    }
+    let scalar_unit = match scalar_unit {
+        "electron_per_cubic_angstrom" => crate::volumetric::ScalarUnit::ElectronPerCubicAngstrom,
+        "electron_per_bohr_cubed" => crate::volumetric::ScalarUnit::ElectronPerBohrCubed,
+        _ => return Err(IpcError::invalid_argument("unsupported explicit scalar unit")),
+    };
+    volumetric.scalar_metadata = crate::volumetric::FieldSourceMetadata {
+        scalar_unit,
+        scalar_unit_scale: 1.0,
+        normalization: crate::volumetric::FieldNormalization::Raw,
+        metadata_declared: true,
+    };
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_field_layer(
+    path: String,
+    scalar_unit: Option<String>,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneInfo> {
+    let source_sha256 = crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
+    let source_name = std::path::Path::new(&path).file_name().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let extension = std::path::Path::new(&path).extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let parsed = match if extension.is_empty() { source_name.as_str() } else { extension.as_str() } {
+        "cube" => crate::io::cube_parser::parse_cube(&path),
+        "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&path),
+        "chgcar" | "locpot" => crate::io::chgcar_parser::parse_chgcar(&path),
+        _ => return Err(IpcError::invalid_argument("unsupported field-layer format")),
+    }.map_err(IpcError::parse)?;
+    let label = std::path::Path::new(&path).file_name().and_then(|value| value.to_str()).unwrap_or("field").to_owned();
+    let mut volumetric = parsed.volumetric_data.ok_or_else(|| IpcError::parse("no volumetric data found in file"))?;
+    apply_explicit_scalar_unit(&mut volumetric, scalar_unit.as_deref())?;
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    require_field_structure_mapping(&volumetric, &state)?;
+    let mut prepared_scene = state.field_scene.clone();
+    let layer = prepared_scene
+        .add_layer_from_source(label, volumetric, source_sha256)
+        .map_err(IpcError::invalid_argument)?;
+    let mut renderer = renderer_state.lock().map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    let prepared = renderer.prepare_field_layer(layer)
+        .map_err(|_| IpcError::render("GPU out of memory while preparing field layer"))?;
+    let layer_id = layer.id;
+    let layer_revision = layer.revision;
+    renderer.commit_field_layer(prepared, layer_id, layer_revision)
+        .map_err(|_| IpcError::render("stale field layer preparation"))?;
+    state.field_scene = prepared_scene;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn remove_field_layer(
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneInfo> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    let mut prepared_scene = state.field_scene.clone();
+    prepared_scene.remove_layer(layer_id).map_err(IpcError::invalid_argument)?;
+    let mut renderer = renderer_state.lock().map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    if let Some(layer) = prepared_scene.active_layer() {
+        let prepared = renderer.prepare_field_layer(layer).map_err(|_| IpcError::render("GPU out of memory while preparing field layer"))?;
+        renderer.commit_field_layer(prepared, layer.id, layer.revision).map_err(|_| IpcError::render("stale field layer preparation"))?;
+    } else {
+        renderer.clear_volumetric();
+    }
+    state.field_scene = prepared_scene;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn set_field_layer_visibility(
+    layer_id: u64,
+    visible: bool,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneInfo> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    let active = state.field_scene.active_layer == Some(layer_id);
+    if !state.field_scene.layers.iter().any(|layer| layer.id == layer_id) {
+        return Err(IpcError::invalid_argument("field layer does not exist"));
+    }
+    if active {
+        let mut renderer = renderer_state.lock().map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+        renderer.set_active_field_visibility(visible);
+    }
+    state.field_scene.set_layer_visibility(layer_id, visible).map_err(IpcError::invalid_argument)?;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn rename_field_layer(
+    layer_id: u64,
+    label: String,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> IpcResult<FieldSceneInfo> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    state.field_scene.rename_layer(layer_id, label).map_err(IpcError::invalid_argument)?;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn reorder_field_layer(
+    layer_id: u64,
+    target_index: usize,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> IpcResult<FieldSceneInfo> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    state.field_scene.reorder_layer(layer_id, target_index).map_err(IpcError::invalid_argument)?;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn select_active_field_layer(
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneInfo> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    let mut prepared_scene = state.field_scene.clone();
+    prepared_scene.select_active(layer_id).map_err(IpcError::invalid_argument)?;
+    let layer = prepared_scene.active_layer().ok_or_else(|| IpcError::render("active field layer is missing"))?;
+    let mut renderer = renderer_state.lock().map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    let prepared = renderer.prepare_field_layer(layer).map_err(|_| IpcError::render("GPU out of memory while preparing field layer"))?;
+    renderer.commit_field_layer(prepared, layer.id, layer.revision).map_err(|_| IpcError::render("stale field layer preparation"))?;
+    state.field_scene = prepared_scene;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn combine_field_layers(
+    terms: Vec<FieldLinearCombinationTerm>,
+    output_label: String,
+    expected_revision: u64,
+    app: tauri::AppHandle,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneInfo> {
+    let mut state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    let mut prepared_scene = state.field_scene.clone();
+    if terms.len() > crate::volumetric::MAX_LINEAR_COMBINATION_TERMS {
+        return Err(IpcError::invalid_argument("linear combination term count is invalid"));
+    }
+    let mut linear_terms = Vec::new();
+    linear_terms
+        .try_reserve_exact(terms.len())
+        .map_err(|_| IpcError::invalid_argument("unable to reserve linear-combination terms"))?;
+    for term in terms {
+        linear_terms.push((term.layer_id, term.coefficient));
+    }
+    let layer = prepared_scene.combine(&linear_terms, output_label).map_err(IpcError::invalid_argument)?;
+    let layer_id = layer.id;
+    let layer_revision = layer.revision;
+    let mut renderer = renderer_state.lock().map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    let prepared = renderer.prepare_field_layer(layer).map_err(|_| IpcError::render("GPU out of memory while prepare field layer"))?;
+    renderer.commit_field_layer(prepared, layer_id, layer_revision).map_err(|_| IpcError::render("stale field layer commit"))?;
+    state.field_scene = prepared_scene;
+    let info = FieldSceneInfo::from_scene(&state.field_scene);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(info)
+}
+
+#[tauri::command]
+pub fn get_field_scene_info(
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+) -> IpcResult<FieldSceneInfo> {
+    let state = crystal_state.lock().map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    Ok(FieldSceneInfo::from_scene(&state.field_scene))
 }

@@ -174,13 +174,11 @@ fn test_sandbox_index_out_of_bounds() {
     use crystal_canvas::crystal_state::CrystalState;
     use crystal_canvas::llm::sandbox::validate_command;
 
-    let state = CrystalState {
-        elements: vec!["Si".to_string(), "Si".to_string()],
-        fract_x: vec![0.0, 0.5],
-        fract_y: vec![0.0, 0.5],
-        fract_z: vec![0.0, 0.5],
-        ..Default::default()
-    };
+    let mut state = CrystalState::default();
+    state.elements = vec!["Si".to_string(), "Si".to_string()];
+    state.fract_x = vec![0.0, 0.5];
+    state.fract_y = vec![0.0, 0.5];
+    state.fract_z = vec![0.0, 0.5];
 
     // Deleting index 2 should fail
     let cmd = CrystalCommand::DeleteAtoms(DeleteAtomsParams { indices: vec![2] });

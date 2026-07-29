@@ -128,6 +128,7 @@ pub fn parse_scf_out(path: &str) -> Result<CrystalState, String> {
         phonon_phase: 0.0,
         intrinsic_sites: elems.len(),
         selected_atoms: vec![],
+        field_scene: Default::default(),
         volumetric_data: None,
         bz_cache: None,
         wannier_overlay: None,

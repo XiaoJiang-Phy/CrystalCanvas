@@ -533,6 +533,7 @@ function collect_rust_declarations(rust_sources) {
                     const field = strip_rust_attributes(raw_field);
                     const field_match = field.match(/^(pub(?:\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*([\s\S]+)$/);
                     if (!field_match) continue;
+                    if (skipped) continue;
                     if (serializable && !field_match[1] && !skipped) private_serialized_field = true;
                     field_types.push(field_match[2]);
                     rust_named_dependencies(field_match[2]).forEach((name) => dependencies.add(name));
@@ -704,6 +705,7 @@ export async function create_inventory() {
     }
 
     const inventory = {
+        wire_contract_types: Object.keys(ts_dto_schemas).sort(),
         backend_commands,
         backend_command_args,
         backend_command_schemas,

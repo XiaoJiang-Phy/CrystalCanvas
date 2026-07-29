@@ -1,24 +1,13 @@
 use crystal_canvas::crystal_state::CrystalState;
 
 fn valid_state() -> CrystalState {
-    let mut state = CrystalState {
-        name: "invariant-probe".to_string(),
-        cell_a: 4.0,
-        cell_b: 5.0,
-        cell_c: 6.0,
-        cell_alpha: 70.0,
-        cell_beta: 80.0,
-        cell_gamma: 75.0,
-        labels: vec!["C1".to_string()],
-        elements: vec!["C".to_string()],
-        fract_x: vec![0.25],
-        fract_y: vec![0.5],
-        fract_z: vec![0.75],
-        occupancies: vec![1.0],
-        atomic_numbers: vec![6],
-        intrinsic_sites: 1,
-        ..CrystalState::default()
-    };
+    let mut state = CrystalState::default();
+    state.name = "invariant-probe".to_string();
+    state.cell_a = 4.0; state.cell_b = 5.0; state.cell_c = 6.0;
+    state.cell_alpha = 70.0; state.cell_beta = 80.0; state.cell_gamma = 75.0;
+    state.labels = vec!["C1".to_string()]; state.elements = vec!["C".to_string()];
+    state.fract_x = vec![0.25]; state.fract_y = vec![0.5]; state.fract_z = vec![0.75];
+    state.occupancies = vec![1.0]; state.atomic_numbers = vec![6]; state.intrinsic_sites = 1;
     state.fractional_to_cartesian();
     state
 }

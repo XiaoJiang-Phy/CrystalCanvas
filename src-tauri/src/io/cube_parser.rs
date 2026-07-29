@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::crystal_state::CrystalState;
-use crate::volumetric::{VolumetricData, VolumetricFormat};
+use crate::volumetric::{FieldSourceMetadata, VolumetricData, VolumetricFormat};
 use std::fs;
 
 const BOHR_TO_ANGSTROM: f64 = 0.529177249;
@@ -47,7 +47,7 @@ pub fn parse_cube(path: &str) -> Result<CrystalState, String> {
             is_bohr = false;
         }
 
-        grid_dims[i] = n_voxels_raw.abs() as usize;
+        grid_dims[i] = n_voxels_raw.unsigned_abs();
         
         let dx: f64 = parts[1].parse().map_err(|_| "Invalid dx")?;
         let dy: f64 = parts[2].parse().map_err(|_| "Invalid dy")?;
@@ -69,7 +69,10 @@ pub fn parse_cube(path: &str) -> Result<CrystalState, String> {
         }
     }
 
-    let n_voxels = grid_dims[0] * grid_dims[1] * grid_dims[2];
+    let n_voxels = grid_dims
+        .iter()
+        .try_fold(1_usize, |count, dimension| count.checked_mul(*dimension))
+        .ok_or_else(|| "Cube grid dimensions overflow".to_string())?;
     if n_voxels > 150 * 150 * 150 {
         return Err(format!("Grid size {}x{}x{} exceeds Phase A limit of 150^3", grid_dims[0], grid_dims[1], grid_dims[2]));
     }
@@ -205,6 +208,7 @@ pub fn parse_cube(path: &str) -> Result<CrystalState, String> {
         data_min,
         data_max,
         source_format: VolumetricFormat::GaussianCube,
+        scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     });
 

@@ -371,9 +371,30 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 log::error!("Invalid structure in {}: {}", path_str, error);
                                 return;
                             }
-                            let vol_data = state.volumetric_data.take();
-                            let base_snapshot = state.clone();
-                            state.volumetric_data = vol_data;
+                            if state.has_volumetric_import() {
+                                let source_sha256 = match crate::volumetric::source_artifact_sha256(&path_str) {
+                                    Ok(hash) => hash,
+                                    Err(error) => {
+                                        log::error!("Failed to hash field source: {}", error);
+                                        return;
+                                    }
+                                };
+                                state = match state.into_admitted_volumetric_import(
+                                    std::path::Path::new(&path_str)
+                                        .file_name()
+                                        .and_then(|name| name.to_str())
+                                        .unwrap_or("field")
+                                        .to_owned(),
+                                    source_sha256,
+                                ) {
+                                    Ok((state, _)) => state,
+                                    Err(error) => {
+                                        log::error!("Failed to admit field layer: {}", error);
+                                        return;
+                                    }
+                                };
+                            }
+                            let base_snapshot = state.structural_base_snapshot();
                             let Some(base_st) = handle.try_state::<commands::BaseCrystalState>()
                             else {
                                 log::error!("Base crystal state is unavailable");
@@ -456,9 +477,8 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                 }
                             };
                             let prepared_volumetric = match state
-                                .volumetric_data
-                                .as_ref()
-                                .map(|vol| renderer.prepare_volumetric(vol))
+                                .active_field_layer()
+                                .map(|layer| renderer.prepare_field_layer(layer).map(|prepared| (prepared, layer.id, layer.revision)))
                                 .transpose()
                             {
                                 Ok(prepared) => prepared,
@@ -481,11 +501,16 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                             };
                             let previous_state =
                                 crate::undo::StructuralSnapshot::from_crystal_state(&cs);
-                            renderer.clear_structure_bound_overlays();
+                            renderer.clear_non_field_structure_bound_overlays();
                             renderer.commit_atoms(atom_scene);
                             renderer.update_lines(&line_scene);
-                            if let Some(prepared) = prepared_volumetric {
-                                renderer.commit_volumetric(prepared);
+                            if let Some((prepared, layer_id, layer_revision)) = prepared_volumetric {
+                                if renderer.commit_field_layer(prepared, layer_id, layer_revision).is_err() {
+                                    log::error!("Stale field layer preparation");
+                                    return;
+                                }
+                            } else {
+                                renderer.clear_volumetric();
                             }
                             let extent = state.cell_a.max(state.cell_b).max(state.cell_c) as f32;
                             let center_vec = glam::Vec3::from_array(state.unit_cell_center());
@@ -497,6 +522,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                             }
                             renderer.update_camera();
                             *base = Some(base_snapshot);
+                            let field_payload = state.field_scene_event();
                             *cs = state;
                             u_stack.push(previous_state);
                             let can_undo = u_stack.can_undo();
@@ -512,6 +538,7 @@ fn handle_menu_event(app_handle: &tauri::AppHandle, event: tauri::menu::MenuEven
                                     version,
                                 },
                             );
+                            let _ = handle.emit("field_scene_changed", field_payload);
                             let _ = handle.emit(
                                 "undo_stack_changed",
                                 crate::transaction::UndoStackPayload { can_undo, can_redo },
@@ -812,6 +839,14 @@ fn main() {
             commands::get_measurements,
             commands::get_measurement_labels_screen,
             commands::load_volumetric_file,
+            commands::get_field_scene_info,
+            commands::add_field_layer,
+            commands::remove_field_layer,
+            commands::set_field_layer_visibility,
+            commands::rename_field_layer,
+            commands::reorder_field_layer,
+            commands::select_active_field_layer,
+            commands::combine_field_layers,
             commands::set_isovalue,
             commands::set_isosurface_color,
             commands::set_isosurface_opacity,

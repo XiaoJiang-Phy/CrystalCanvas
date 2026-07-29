@@ -18,66 +18,39 @@ use crystal_canvas::crystal_state::CrystalState;
 /// FCC Al conventional cell: a = 4.05 Å, Fm-3m (#225), 4 atoms
 fn make_fcc_al_state() -> CrystalState {
     let a0 = 4.05_f64;
-    CrystalState {
-        name: "Al_fcc_conv".to_string(),
-        cell_a: a0, cell_b: a0, cell_c: a0,
-        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
-        spacegroup_hm: "Fm-3m".to_string(),
-        spacegroup_number: 225,
-        labels: vec!["Al1".into(), "Al2".into(), "Al3".into(), "Al4".into()],
-        elements: vec!["Al".into(), "Al".into(), "Al".into(), "Al".into()],
-        fract_x: vec![0.0, 0.5, 0.5, 0.0],
-        fract_y: vec![0.0, 0.5, 0.0, 0.5],
-        fract_z: vec![0.0, 0.0, 0.5, 0.5],
-        occupancies: vec![1.0; 4],
-        atomic_numbers: vec![13; 4],
-        cart_positions: vec![[0.0; 3]; 4],
-        version: 1,
-        bond_analysis: None,
-        phonon_data: None,
-        active_phonon_mode: None,
-        phonon_phase: 0.0,
-        intrinsic_sites: 4,
-        selected_atoms: vec![],
-        volumetric_data: None,
-        bz_cache: None,
-        is_2d: false,
-        vacuum_axis: None,
-        wannier_overlay: None,
-        measurements: vec![],
-    }
+    let mut state = CrystalState::default();
+    state.name = "Al_fcc_conv".to_string();
+    state.cell_a = a0; state.cell_b = a0; state.cell_c = a0;
+    state.spacegroup_hm = "Fm-3m".to_string();
+    state.spacegroup_number = 225;
+    state.labels = vec!["Al1".into(), "Al2".into(), "Al3".into(), "Al4".into()];
+    state.elements = vec!["Al".into(), "Al".into(), "Al".into(), "Al".into()];
+    state.fract_x = vec![0.0, 0.5, 0.5, 0.0];
+    state.fract_y = vec![0.0, 0.5, 0.0, 0.5];
+    state.fract_z = vec![0.0, 0.0, 0.5, 0.5];
+    state.occupancies = vec![1.0; 4];
+    state.atomic_numbers = vec![13; 4];
+    state.cart_positions = vec![[0.0; 3]; 4];
+    state.intrinsic_sites = 4;
+    state.version = 1;
+    state
 }
 
 /// Simple cubic with 1 atom, Pm-3m (#221)
 fn make_sc_state(a: f64) -> CrystalState {
-    CrystalState {
-        name: "SC".to_string(),
-        cell_a: a, cell_b: a, cell_c: a,
-        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
-        spacegroup_hm: "Pm-3m".to_string(),
-        spacegroup_number: 221,
-        labels: vec!["X1".to_string()],
-        elements: vec!["X".to_string()],
-        fract_x: vec![0.0],
-        fract_y: vec![0.0],
-        fract_z: vec![0.0],
-        occupancies: vec![1.0],
-        atomic_numbers: vec![1],
-        cart_positions: vec![[0.0_f32; 3]],
-        version: 1,
-        bond_analysis: None,
-        phonon_data: None,
-        active_phonon_mode: None,
-        phonon_phase: 0.0,
-        intrinsic_sites: 1,
-        selected_atoms: vec![],
-        volumetric_data: None,
-        bz_cache: None,
-        is_2d: false,
-        vacuum_axis: None,
-        wannier_overlay: None,
-        measurements: vec![],
-    }
+    let mut state = CrystalState::default();
+    state.name = "SC".to_string();
+    state.cell_a = a; state.cell_b = a; state.cell_c = a;
+    state.spacegroup_hm = "Pm-3m".to_string();
+    state.spacegroup_number = 221;
+    state.labels = vec!["X1".to_string()];
+    state.elements = vec!["X".to_string()];
+    state.fract_x = vec![0.0]; state.fract_y = vec![0.0]; state.fract_z = vec![0.0];
+    state.occupancies = vec![1.0]; state.atomic_numbers = vec![1];
+    state.cart_positions = vec![[0.0_f32; 3]];
+    state.intrinsic_sites = 1;
+    state.version = 1;
+    state
 }
 
 /// Empty CrystalState
@@ -283,40 +256,28 @@ fn test_shift_termination_refreshes_cart_positions() {
 /// NaCl conventional cell (Fm-3m, 8 atoms)
 fn make_nacl_state() -> CrystalState {
     let a = 5.64;
-    CrystalState {
-        name: "NaCl".to_string(),
-        cell_a: a, cell_b: a, cell_c: a,
-        cell_alpha: 90.0, cell_beta: 90.0, cell_gamma: 90.0,
-        spacegroup_hm: "Fm-3m".to_string(),
-        spacegroup_number: 225,
-        labels: vec![
+    let mut state = CrystalState::default();
+    state.name = "NaCl".to_string();
+    state.cell_a = a; state.cell_b = a; state.cell_c = a;
+    state.spacegroup_hm = "Fm-3m".to_string();
+    state.spacegroup_number = 225;
+    state.labels = vec![
             "Na1".into(), "Na2".into(), "Na3".into(), "Na4".into(),
             "Cl1".into(), "Cl2".into(), "Cl3".into(), "Cl4".into(),
-        ],
-        elements: vec![
+        ];
+    state.elements = vec![
             "Na".into(), "Na".into(), "Na".into(), "Na".into(),
             "Cl".into(), "Cl".into(), "Cl".into(), "Cl".into(),
-        ],
-        fract_x: vec![0.0, 0.5, 0.5, 0.0,  0.5, 0.0, 0.0, 0.5],
-        fract_y: vec![0.0, 0.5, 0.0, 0.5,  0.5, 0.0, 0.5, 0.0],
-        fract_z: vec![0.0, 0.0, 0.5, 0.5,  0.5, 0.5, 0.0, 0.0],
-        occupancies: vec![1.0; 8],
-        atomic_numbers: vec![11, 11, 11, 11, 17, 17, 17, 17],
-        cart_positions: vec![[0.0; 3]; 8],
-        version: 1,
-        bond_analysis: None,
-        phonon_data: None,
-        active_phonon_mode: None,
-        phonon_phase: 0.0,
-        intrinsic_sites: 8,
-        selected_atoms: vec![],
-        volumetric_data: None,
-        bz_cache: None,
-        is_2d: false,
-        vacuum_axis: None,
-        wannier_overlay: None,
-        measurements: vec![],
-    }
+        ];
+    state.fract_x = vec![0.0, 0.5, 0.5, 0.0, 0.5, 0.0, 0.0, 0.5];
+    state.fract_y = vec![0.0, 0.5, 0.0, 0.5, 0.5, 0.0, 0.5, 0.0];
+    state.fract_z = vec![0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.0, 0.0];
+    state.occupancies = vec![1.0; 8];
+    state.atomic_numbers = vec![11, 11, 11, 11, 17, 17, 17, 17];
+    state.cart_positions = vec![[0.0; 3]; 8];
+    state.intrinsic_sites = 8;
+    state.version = 1;
+    state
 }
 
 /// KILLER TEST: NaCl (110) 3-layer slab must have atoms at DISTINCT z-coords.

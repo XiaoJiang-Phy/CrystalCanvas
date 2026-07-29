@@ -35,6 +35,47 @@ export interface VolumetricInfo {
     format: string;
 }
 
+export interface FieldLayerInfo {
+    id: number;
+    revision: number;
+    label: string;
+    grid_dims: [number, number, number];
+    data_min: number;
+    data_max: number;
+    source_sha256: string;
+    normalized_sha256: string;
+    lineage: FieldLineageTerm[] | null;
+    visible: boolean;
+    isovalue: number;
+    opacity: number;
+    sign_mode: FieldSignMode;
+    render_mode: FieldRenderMode;
+    colormap_mode: number;
+}
+
+export interface FieldLineageTerm {
+    source_sha256: string;
+    normalized_sha256: string;
+    compatibility_receipt_sha256: string;
+    coefficient: number;
+}
+
+export interface FieldSceneInfo {
+    revision: number;
+    active_layer_id: number | null;
+    layers: FieldLayerInfo[];
+}
+
+export interface FieldSceneChangedPayload {
+    revision: number;
+    active_layer_id: number | null;
+}
+
+export interface FieldLinearCombinationTerm {
+    layerId: number;
+    coefficient: number;
+}
+
 export interface TauriDragPayload {
     paths: string[];
     position: { x: number; y: number };
@@ -47,6 +88,8 @@ export interface StateChangedPayload {
 export type CameraAxis = 'a' | 'b' | 'c' | 'a_star' | 'b_star' | 'c_star' | 'reset';
 export type IsosurfaceSignMode = 'positive' | 'negative' | 'both';
 export type VolumeRenderMode = 'isosurface' | 'volume' | 'both';
+export type FieldSignMode = 'positive' | 'negative' | 'both';
+export type FieldRenderMode = 'isosurface' | 'volume' | 'both';
 export type VolumeColormap = 'viridis' | 'grayscale' | 'inferno' | 'plasma' | 'coolwarm'
     | 'hot' | 'magma' | 'cividis' | 'turbo' | 'rdylbu';
 export type LlmProvider = 'openai' | 'deepseek' | 'claude' | 'gemini' | 'ollama';
@@ -76,6 +119,7 @@ export class IpcException extends Error implements IpcError {
 }
 
 export interface IpcEventContract {
+    field_scene_changed: FieldSceneChangedPayload;
     'menu-action': string;
     state_changed: StateChangedPayload;
     'tauri://drag-drop': TauriDragPayload;
@@ -88,6 +132,7 @@ export interface IpcEventContract {
 
 export interface IpcCommandContract {
     add_atom: { args: { elementSymbol: string; atomicNumber: number; fractPos: [number, number, number] }; result: null };
+    add_field_layer: { args: { path: string; scalarUnit?: string | null; expectedRevision: number }; result: FieldSceneInfo };
     add_measurement: { args: { indices: number[] }; result: MeasurementOverlay };
     apply_cell_standardize: { args: { toPrimitive: boolean }; result: null };
     apply_niggli_reduce: { args: undefined; result: null };
@@ -106,6 +151,7 @@ export interface IpcCommandContract {
     export_blender_scene: { args: { path: string; publicationProfile: PublicationLookProfileId }; result: null };
     generate_kpath_text: { args: { npoints: number }; result: KPathText };
     get_bond_analysis: { args: { thresholdFactor?: number | null }; result: BondAnalysisResult };
+    get_field_scene_info: { args: undefined; result: FieldSceneInfo };
     get_bz_label_positions: { args: { width: number; height: number }; result: ScreenLabel[] };
     get_crystal_state: { args: undefined; result: CrystalState };
     get_kpath_info: { args: undefined; result: KPathInfo };
@@ -122,6 +168,10 @@ export interface IpcCommandContract {
     load_phonon_interactive: { args: { scfIn: string; scfOut: string; modes: string }; result: PhononModeSummary[] };
     load_volumetric_file: { args: { path: string }; result: VolumetricInfo };
     load_wannier_hr: { args: { path: string }; result: WannierInfo };
+    remove_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
+    rename_field_layer: { args: { layerId: number; label: string; expectedRevision: number }; result: FieldSceneInfo };
+    set_field_layer_visibility: { args: { layerId: number; visible: boolean; expectedRevision: number }; result: FieldSceneInfo };
+    reorder_field_layer: { args: { layerId: number; targetIndex: number; expectedRevision: number }; result: FieldSceneInfo };
     pan_camera: { args: { dx: number; dy: number }; result: null };
     pick_atom: { args: { x: number; y: number; screenW: number; screenH: number }; result: number | null };
     preview_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: CrystalState };
@@ -136,7 +186,8 @@ export interface IpcCommandContract {
     set_isosurface_color: { args: { color: [number, number, number, number] }; result: null };
     set_isosurface_opacity: { args: { opacity: number }; result: null };
     set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode }; result: null };
-    set_isovalue: { args: { value: number }; result: null };
+    set_isovalue: { args: { value: number; layerId: number; expectedRevision: number }; result: null };
+    select_active_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
     set_phonon_mode: { args: { modeIndex?: number | null }; result: null };
     set_phonon_phase: { args: { phase: number; amplitude?: number | null }; result: null };
     set_phonon_display_scale: { args: { displayScale: number }; result: null };
@@ -150,6 +201,7 @@ export interface IpcCommandContract {
     set_wannier_r_shell: { args: { shellIdx: number; active: boolean }; result: null };
     set_wannier_t_min: { args: { tMin: number }; result: null };
     shift_termination: { args: { targetLayerIdx: number; layerToleranceA?: number | null }; result: number };
+    combine_field_layers: { args: { terms: FieldLinearCombinationTerm[]; outputLabel: string; expectedRevision: number }; result: FieldSceneInfo };
     substitute_atoms: { args: { indices: number[]; newElementSymbol: string; newAtomicNumber: number }; result: null };
     toggle_bz_display: { args: { show: boolean }; result: null };
     toggle_hopping_display: { args: { show: boolean }; result: null };
@@ -283,6 +335,33 @@ export function is_volumetric_info(value: unknown): value is VolumetricInfo {
         && typeof candidate.format === 'string';
 }
 
+export function is_field_scene_info(value: unknown): value is FieldSceneInfo {
+    if (!is_record(value) || !is_nonnegative_integer(value.revision)
+        || (value.active_layer_id !== null && !is_nonnegative_integer(value.active_layer_id))
+        || !Array.isArray(value.layers)) return false;
+    return value.layers.every((layer) => is_record(layer)
+        && is_nonnegative_integer(layer.id) && is_nonnegative_integer(layer.revision)
+        && typeof layer.label === 'string'
+        && Array.isArray(layer.grid_dims) && layer.grid_dims.length === 3
+        && layer.grid_dims.every((dimension) => is_nonnegative_integer(dimension) && dimension > 0)
+        && is_finite_number(layer.data_min) && is_finite_number(layer.data_max)
+        && layer.data_min <= layer.data_max
+        && typeof layer.source_sha256 === 'string' && typeof layer.normalized_sha256 === 'string'
+        && typeof layer.visible === 'boolean' && is_finite_number(layer.isovalue)
+        && is_finite_number(layer.opacity) && layer.opacity >= 0 && layer.opacity <= 1
+        && (layer.sign_mode === 'positive' || layer.sign_mode === 'negative' || layer.sign_mode === 'both')
+        && (layer.render_mode === 'isosurface' || layer.render_mode === 'volume' || layer.render_mode === 'both')
+        && is_nonnegative_integer(layer.colormap_mode) && layer.colormap_mode <= 9
+        && (layer.lineage === null || (Array.isArray(layer.lineage) && layer.lineage.every((term) => is_record(term)
+            && typeof term.source_sha256 === 'string' && typeof term.normalized_sha256 === 'string'
+            && typeof term.compatibility_receipt_sha256 === 'string' && is_finite_number(term.coefficient)))));
+}
+
+function is_field_scene_changed(value: unknown): value is FieldSceneChangedPayload {
+    return is_record(value) && is_nonnegative_integer(value.revision)
+        && (value.active_layer_id === null || is_nonnegative_integer(value.active_layer_id));
+}
+
 function is_crystal_state(value: unknown): value is CrystalState {
     if (!is_record(value)) return false;
     const numeric_fields = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma'];
@@ -377,6 +456,7 @@ const IPC_RESULT_VALIDATORS: {
     [Command in TypedIpcCommand]: (value: unknown) => boolean;
 } = {
     add_atom: is_null,
+    add_field_layer: is_field_scene_info,
     add_measurement: is_measurement,
     apply_cell_standardize: is_null,
     apply_niggli_reduce: is_null,
@@ -395,6 +475,7 @@ const IPC_RESULT_VALIDATORS: {
     export_image: is_null,
     generate_kpath_text: is_kpath_text,
     get_bond_analysis: is_bond_analysis,
+    get_field_scene_info: is_field_scene_info,
     get_bz_label_positions: is_screen_labels,
     get_crystal_state: is_crystal_state,
     get_kpath_info: is_kpath_info,
@@ -411,6 +492,9 @@ const IPC_RESULT_VALIDATORS: {
     load_phonon_interactive: is_phonon_modes,
     load_volumetric_file: is_volumetric_info,
     load_wannier_hr: is_wannier_info,
+    remove_field_layer: is_field_scene_info,
+    rename_field_layer: is_field_scene_info,
+    reorder_field_layer: is_field_scene_info,
     pan_camera: is_null,
     pick_atom: (value) => value === null || is_nonnegative_integer(value),
     preview_slab: is_crystal_state,
@@ -426,6 +510,8 @@ const IPC_RESULT_VALIDATORS: {
     set_isosurface_opacity: is_null,
     set_isosurface_sign_mode: is_null,
     set_isovalue: is_null,
+    set_field_layer_visibility: is_field_scene_info,
+    select_active_field_layer: is_field_scene_info,
     set_phonon_mode: is_null,
     set_phonon_phase: is_null,
     set_phonon_display_scale: is_null,
@@ -439,6 +525,7 @@ const IPC_RESULT_VALIDATORS: {
     set_wannier_r_shell: is_null,
     set_wannier_t_min: is_null,
     shift_termination: is_integer,
+    combine_field_layers: is_field_scene_info,
     substitute_atoms: is_null,
     toggle_bz_display: is_null,
     toggle_hopping_display: is_null,
@@ -477,6 +564,7 @@ export function normalize_ipc_error(value: unknown): IpcException {
 }
 
 export function validate_ipc_event<Event extends TypedIpcEvent>(event: Event, value: unknown): IpcEventContract[Event] {
+    if (event === 'field_scene_changed' && is_field_scene_changed(value)) return value as IpcEventContract[Event];
     if (event === 'state_changed' && is_record(value) && is_nonnegative_integer(value.version)) return value as IpcEventContract[Event];
     if (event === 'tauri://drag-leave' && (value === null || value === undefined)) return value as IpcEventContract[Event];
     if (event === 'menu-action' && typeof value === 'string') return value as IpcEventContract[Event];

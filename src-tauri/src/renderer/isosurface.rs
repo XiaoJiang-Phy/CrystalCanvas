@@ -6,7 +6,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::renderer::mc_lut::{EDGE_TABLE, TRI_TABLE};
-use crate::volumetric::VolumetricData;
+use crate::volumetric::ScalarFieldView;
 
 // ─── Vertex type ─────────────────────────────────────────────────────────────
 
@@ -195,8 +195,11 @@ const CORNER_OFFSETS: [(usize, usize, usize); 8] = [
 ///
 /// # Complexity
 /// $O(N_x N_y N_z)$ time and $O(T)$ space, where $T$ is the output triangle count.
-pub fn marching_cubes_cpu(vol: &VolumetricData, threshold: f32) -> Vec<IsoVertex> {
-    let [nx, ny, nz] = vol.grid_dims;
+pub fn marching_cubes_cpu(vol: &impl ScalarFieldView, threshold: f32) -> Vec<IsoVertex> {
+    let [nx, ny, nz] = vol.grid_dims();
+    let data = vol.scalar_data();
+    let lattice = vol.lattice_angstrom();
+    let origin = vol.origin_angstrom();
     if nx < 2 || ny < 2 || nz < 2 {
         return Vec::new();
     }
@@ -209,7 +212,7 @@ pub fn marching_cubes_cpu(vol: &VolumetricData, threshold: f32) -> Vec<IsoVertex
                 // ── Build cube_case (8-bit sign configuration) ──────────────
                 let mut cube_case: u8 = 0;
                 for (ci, &(ox, oy, oz)) in CORNER_OFFSETS.iter().enumerate() {
-                    let v = sample(&vol.data, ix + ox, iy + oy, iz + oz, nx, ny);
+                    let v = sample(data, ix + ox, iy + oy, iz + oz, nx, ny);
                     if v >= threshold {
                         cube_case |= 1 << ci;
                     }
@@ -231,8 +234,8 @@ pub fn marching_cubes_cpu(vol: &VolumetricData, threshold: f32) -> Vec<IsoVertex
                     let (oax, oay, oaz) = CORNER_OFFSETS[ca as usize];
                     let (obx, oby, obz) = CORNER_OFFSETS[cb as usize];
 
-                    let fa = sample(&vol.data, ix + oax, iy + oay, iz + oaz, nx, ny);
-                    let fb = sample(&vol.data, ix + obx, iy + oby, iz + obz, nx, ny);
+                    let fa = sample(data, ix + oax, iy + oay, iz + oaz, nx, ny);
+                    let fb = sample(data, ix + obx, iy + oby, iz + obz, nx, ny);
                     let t  = interp_t(fa, fb, threshold);
 
                     // Fractional grid coordinates of the two endpoints
@@ -243,11 +246,11 @@ pub fn marching_cubes_cpu(vol: &VolumetricData, threshold: f32) -> Vec<IsoVertex
                     let vb = (iy + oby) as f64 / (ny - 1) as f64;
                     let wb = (iz + obz) as f64 / (nz - 1) as f64;
 
-                    let pa = frac_to_cart(ua, va, wa, &vol.lattice, &vol.origin);
-                    let pb = frac_to_cart(ub, vb, wb, &vol.lattice, &vol.origin);
+                    let pa = frac_to_cart(ua, va, wa, lattice, origin);
+                    let pb = frac_to_cart(ub, vb, wb, lattice, origin);
                     let pos = lerp3(pa, pb, t);
 
-                    let normal = gradient_at(&vol.data, nx, ny, nz, ix, iy, iz, t, axis);
+                    let normal = gradient_at(data, nx, ny, nz, ix, iy, iz, t, axis);
 
                     edge_verts[eidx] = Some(IsoVertex {
                         position: pos,
@@ -285,6 +288,44 @@ pub fn marching_cubes_cpu(vol: &VolumetricData, threshold: f32) -> Vec<IsoVertex
     vertices
 }
 
+pub(crate) fn marching_cubes_vertex_count(
+    vol: &impl ScalarFieldView,
+    threshold: f32,
+    sign_mode: crate::volumetric::FieldSignMode,
+) -> Result<u32, ()> {
+    let [nx, ny, nz] = vol.grid_dims();
+    if nx < 2 || ny < 2 || nz < 2 {
+        return Ok(0);
+    }
+    let data = vol.scalar_data();
+    let mut count = 0_u32;
+    for iz in 0..nz - 1 {
+        for iy in 0..ny - 1 {
+            for ix in 0..nx - 1 {
+                let mut cube_case = 0_usize;
+                for (corner, &(ox, oy, oz)) in CORNER_OFFSETS.iter().enumerate() {
+                    let value = sample(data, ix + ox, iy + oy, iz + oz, nx, ny);
+                    let inside = match sign_mode {
+                        crate::volumetric::FieldSignMode::Positive => value >= threshold,
+                        crate::volumetric::FieldSignMode::Negative => value <= -threshold,
+                        crate::volumetric::FieldSignMode::Both => value.abs() >= threshold,
+                    };
+                    if inside {
+                        cube_case |= 1 << corner;
+                    }
+                }
+                for edge in TRI_TABLE[cube_case] {
+                    if edge < 0 {
+                        break;
+                    }
+                    count = count.checked_add(1).ok_or(())?;
+                }
+            }
+        }
+    }
+    Ok(count)
+}
+
 // ─── GPU Isosurface Pipeline ─────────────────────────────────────────────────
 
 #[repr(C)]
@@ -319,8 +360,7 @@ pub struct IsosurfacePipeline {
     iso_params_buffer: wgpu::Buffer,
     vertices_buffer: wgpu::Buffer,
     indirect_buffer: wgpu::Buffer,
-    
-    max_vertices: u32,
+    vertex_capacity: u32,
     
     // Kept to allow potential dynamic re-computation without re-uploading
     scalar_buffer: wgpu::Buffer, 
@@ -341,7 +381,30 @@ impl IsosurfacePipeline {
         _queue: &wgpu::Queue,
         surface_format: wgpu::TextureFormat,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
-        vol: &VolumetricData,
+        vol: &impl ScalarFieldView,
+    ) -> Self {
+        let vertex_capacity = marching_cubes_vertex_count(
+            vol,
+            0.0,
+            crate::volumetric::FieldSignMode::Positive,
+        ).expect("validated scalar field must have a countable isosurface");
+        Self::new_with_vertex_capacity(
+            device,
+            _queue,
+            surface_format,
+            camera_bind_group_layout,
+            vol,
+            vertex_capacity,
+        )
+    }
+
+    pub fn new_with_vertex_capacity(
+        device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        vol: &impl ScalarFieldView,
+        vertex_capacity: u32,
     ) -> Self {
         // Compile the compute shader
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -350,13 +413,15 @@ impl IsosurfacePipeline {
         });
 
         // 1. Set up Uniforms and parameters
-        let [nx, ny, nz] = vol.grid_dims;
+        let [nx, ny, nz] = vol.grid_dims();
+        let lattice = vol.lattice_angstrom();
+        let origin = vol.origin_angstrom();
         let mc_params = MCParams {
             grid_dims: [nx as u32, ny as u32, nz as u32, 0],
-            lattice_a: [vol.lattice[0] as f32, vol.lattice[1] as f32, vol.lattice[2] as f32, 0.0],
-            lattice_b: [vol.lattice[3] as f32, vol.lattice[4] as f32, vol.lattice[5] as f32, 0.0],
-            lattice_c: [vol.lattice[6] as f32, vol.lattice[7] as f32, vol.lattice[8] as f32, 0.0],
-            origin: [vol.origin[0] as f32, vol.origin[1] as f32, vol.origin[2] as f32, 0.0],
+            lattice_a: [lattice[0] as f32, lattice[1] as f32, lattice[2] as f32, 0.0],
+            lattice_b: [lattice[3] as f32, lattice[4] as f32, lattice[5] as f32, 0.0],
+            lattice_c: [lattice[6] as f32, lattice[7] as f32, lattice[8] as f32, 0.0],
+            origin: [origin[0] as f32, origin[1] as f32, origin[2] as f32, 0.0],
             threshold: 0.0,
             sign_mode: 0,
             _pad0: [0.0; 2],
@@ -402,15 +467,11 @@ impl IsosurfacePipeline {
         // 3. Set up Scalar Field buffer
         let scalar_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("MC Scalar Field Buffer"),
-            contents: bytemuck::cast_slice(&vol.data),
+            contents: bytemuck::cast_slice(vol.scalar_data()),
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        // 4. Set up Output buffers
-        // We cap the total triangles to average case to prevent OOM on small GPUs.
-        // At most 5 triangles per voxel. Usually < 10% of voxels are intersected.
-        // Cap to 3M vertices (~72 MB buffer) to prevent mach_vm_allocate_kernel panics on shared-memory Macs.
-        let max_vertices = std::cmp::min(3_000_000, (nx * ny * nz * 5) as u32);
+        let max_vertices = vertex_capacity.max(3);
         
         let vertices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("MC Vertices Buffer"),
@@ -518,7 +579,7 @@ impl IsosurfacePipeline {
             iso_params_buffer,
             vertices_buffer,
             indirect_buffer,
-            max_vertices,
+            vertex_capacity: max_vertices,
             scalar_buffer,
             _edge_table_buffer: edge_table_buffer,
             _tri_table_buffer: tri_table_buffer,
@@ -526,6 +587,11 @@ impl IsosurfacePipeline {
             cur_color_negative: [0.0, 0.722, 0.831, 0.5],
             cur_threshold: 0.0,
         }
+    }
+
+    #[inline]
+    pub(crate) fn vertex_capacity(&self) -> u32 {
+        self.vertex_capacity
     }
 
     pub fn update_threshold(&mut self, queue: &wgpu::Queue, grid_dims: [usize; 3], threshold: f32) -> [u32; 3] {
@@ -678,6 +744,7 @@ mod tests {
             data_min,
             data_max,
             source_format: VolumetricFormat::VaspChgcar,
+            scalar_metadata: crate::volumetric::FieldSourceMetadata::UNDECLARED,
             origin: [0.0, 0.0, 0.0],
         }
     }
@@ -825,6 +892,7 @@ mod tests {
             data_max: *data.iter().reduce(|a,b| if a > b {a} else {b}).unwrap(),
             data,
             source_format: VolumetricFormat::GaussianCube,
+            scalar_metadata: crate::volumetric::FieldSourceMetadata::UNDECLARED,
             origin: [0.0, 0.0, 0.0],
         };
         let verts = marching_cubes_cpu(&vol, 0.0);
@@ -881,6 +949,7 @@ mod tests {
             data_max: 0.7,
             data,
             source_format: VolumetricFormat::GaussianCube,
+            scalar_metadata: crate::volumetric::FieldSourceMetadata::UNDECLARED,
             origin: [0.0, 0.0, 0.0],
         };
 
