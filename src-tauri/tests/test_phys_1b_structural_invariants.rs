@@ -3,11 +3,20 @@ use crystal_canvas::crystal_state::CrystalState;
 fn valid_state() -> CrystalState {
     let mut state = CrystalState::default();
     state.name = "invariant-probe".to_string();
-    state.cell_a = 4.0; state.cell_b = 5.0; state.cell_c = 6.0;
-    state.cell_alpha = 70.0; state.cell_beta = 80.0; state.cell_gamma = 75.0;
-    state.labels = vec!["C1".to_string()]; state.elements = vec!["C".to_string()];
-    state.fract_x = vec![0.25]; state.fract_y = vec![0.5]; state.fract_z = vec![0.75];
-    state.occupancies = vec![1.0]; state.atomic_numbers = vec![6]; state.intrinsic_sites = 1;
+    state.cell_a = 4.0;
+    state.cell_b = 5.0;
+    state.cell_c = 6.0;
+    state.cell_alpha = 70.0;
+    state.cell_beta = 80.0;
+    state.cell_gamma = 75.0;
+    state.labels = vec!["C1".to_string()];
+    state.elements = vec!["C".to_string()];
+    state.fract_x = vec![0.25];
+    state.fract_y = vec![0.5];
+    state.fract_z = vec![0.75];
+    state.occupancies = vec![1.0];
+    state.atomic_numbers = vec![6];
+    state.intrinsic_sites = 1;
     state.fractional_to_cartesian();
     state
 }
@@ -51,7 +60,11 @@ fn rejects_zero_and_ill_conditioned_nonempty_lattices() {
 
 #[test]
 fn rejects_an_empty_structure_with_a_degenerate_lattice() {
-    assert!(CrystalState::default().validate_structural_invariants().is_err());
+    assert!(
+        CrystalState::default()
+            .validate_structural_invariants()
+            .is_err()
+    );
 }
 
 #[test]
@@ -75,7 +88,13 @@ fn rejects_zero_identity_and_invalid_occupancy() {
     state.atomic_numbers[0] = 0;
     assert!(state.validate_structural_invariants().is_err());
 
-    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0e-6, 1.000001] {
+    for invalid in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -1.0e-6,
+        1.000001,
+    ] {
         let mut state = valid_state();
         state.occupancies[0] = invalid;
         assert!(state.validate_structural_invariants().is_err());

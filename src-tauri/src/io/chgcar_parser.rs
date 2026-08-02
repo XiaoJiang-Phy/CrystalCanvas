@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::crystal_state::CrystalState;
-use crate::volumetric::{FieldNormalization, FieldSourceMetadata, ScalarUnit, VolumetricData, VolumetricFormat};
+use crate::volumetric::{
+    FieldNormalization, FieldSourceMetadata, ScalarUnit, VolumetricData, VolumetricFormat,
+};
 use std::fs;
 
 pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
@@ -21,7 +23,8 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
 
     lines.next().ok_or("Empty file")?;
 
-    let scale: f64 = lines.next()
+    let scale: f64 = lines
+        .next()
         .ok_or("Missing scale")?
         .trim()
         .parse()
@@ -30,46 +33,68 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
     let mut lattice_vecs = [[0.0; 3]; 3];
     for i in 0..3 {
         let line = lines.next().ok_or("Missing lattice")?;
-        let parts: Vec<f64> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        if parts.len() < 3 { return Err("Invalid lattice line".to_string()); }
+        let parts: Vec<f64> = line
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if parts.len() < 3 {
+            return Err("Invalid lattice line".to_string());
+        }
         lattice_vecs[i] = [parts[0] * scale, parts[1] * scale, parts[2] * scale];
     }
-    
+
     let line6 = lines.next().ok_or("Missing species/counts line")?;
-    let counts: Vec<usize> = if line6.split_whitespace().any(|s| s.chars().any(|c| c.is_alphabetic())) {
+    let counts: Vec<usize> = if line6
+        .split_whitespace()
+        .any(|s| s.chars().any(|c| c.is_alphabetic()))
+    {
         let count_line = lines.next().ok_or("Missing counts line")?;
-        count_line.split_whitespace().filter_map(|s| s.parse().ok()).collect()
+        count_line
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect()
     } else {
-        line6.split_whitespace().filter_map(|s| s.parse().ok()).collect()
+        line6
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect()
     };
-    
+
     let total_atoms: usize = counts.iter().sum();
 
-    let mode_line = lines.next().ok_or("Missing coordinate mode")?.trim().to_lowercase();
+    let mode_line = lines
+        .next()
+        .ok_or("Missing coordinate mode")?
+        .trim()
+        .to_lowercase();
     if mode_line.starts_with('s') {
         let _ = lines.next().ok_or("Missing coordinate mode")?;
     }
-    
+
     let mut atoms_skipped = 0;
     while atoms_skipped < total_atoms {
         let line = lines.next().ok_or("Missing atom coordinate")?;
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         atoms_skipped += 1;
     }
 
     let mut grid_dims = [0usize; 3];
     let mut found_grid = false;
-    
+
     for line in &mut lines {
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        
+        if trimmed.is_empty() {
+            continue;
+        }
+
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         if parts.len() == 3 {
             if let (Ok(nx), Ok(ny), Ok(nz)) = (
                 parts[0].parse::<usize>(),
                 parts[1].parse::<usize>(),
-                parts[2].parse::<usize>()
+                parts[2].parse::<usize>(),
             ) {
                 grid_dims = [nx, ny, nz];
                 found_grid = true;
@@ -86,14 +111,20 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
         .iter()
         .try_fold(1_usize, |count, dimension| count.checked_mul(*dimension))
         .ok_or_else(|| "Volumetric grid dimensions overflow".to_string())?;
-    
+
     if n_voxels > 150 * 150 * 150 {
-        return Err(format!("Grid size {}x{}x{} exceeds Phase A limit of 150^3", grid_dims[0], grid_dims[1], grid_dims[2]));
+        return Err(format!(
+            "Grid size {}x{}x{} exceeds Phase A limit of 150^3",
+            grid_dims[0], grid_dims[1], grid_dims[2]
+        ));
     }
 
-    let det = lattice_vecs[0][0] * (lattice_vecs[1][1] * lattice_vecs[2][2] - lattice_vecs[1][2] * lattice_vecs[2][1])
-            - lattice_vecs[0][1] * (lattice_vecs[1][0] * lattice_vecs[2][2] - lattice_vecs[1][2] * lattice_vecs[2][0])
-            + lattice_vecs[0][2] * (lattice_vecs[1][0] * lattice_vecs[2][1] - lattice_vecs[1][1] * lattice_vecs[2][0]);
+    let det = lattice_vecs[0][0]
+        * (lattice_vecs[1][1] * lattice_vecs[2][2] - lattice_vecs[1][2] * lattice_vecs[2][1])
+        - lattice_vecs[0][1]
+            * (lattice_vecs[1][0] * lattice_vecs[2][2] - lattice_vecs[1][2] * lattice_vecs[2][0])
+        + lattice_vecs[0][2]
+            * (lattice_vecs[1][0] * lattice_vecs[2][1] - lattice_vecs[1][1] * lattice_vecs[2][0]);
     let v_cell = det.abs();
 
     if v_cell < 1e-12 {
@@ -114,8 +145,12 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
         for token in line.split_whitespace() {
             if let Ok(mut val) = token.parse::<f32>() {
                 val *= normalization;
-                if val < data_min { data_min = val; }
-                if val > data_max { data_max = val; }
+                if val < data_min {
+                    data_min = val;
+                }
+                if val > data_max {
+                    data_max = val;
+                }
                 data.push(val);
                 if data.len() == n_voxels {
                     break;
@@ -128,10 +163,17 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
     }
 
     if data.len() != n_voxels {
-        return Err(format!("Expected {} voxels, but only parsed {}", n_voxels, data.len()));
+        return Err(format!(
+            "Expected {} voxels, but only parsed {}",
+            n_voxels,
+            data.len()
+        ));
     }
     if lines.any(is_chgcar_grid_header) {
-        return Err("CHGCAR contains multiple scalar datasets; explicit dataset selection is required".to_string());
+        return Err(
+            "CHGCAR contains multiple scalar datasets; explicit dataset selection is required"
+                .to_string(),
+        );
     }
 
     let scalar_metadata = if matches!(format, VolumetricFormat::VaspChgcar) {
@@ -140,6 +182,7 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
             scalar_unit_scale: 1.0,
             normalization: FieldNormalization::VaspCellIntegratedToDensity,
             metadata_declared: true,
+            source_origin_angstrom: None,
         }
     } else {
         FieldSourceMetadata::UNDECLARED
@@ -161,9 +204,15 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
 
 fn is_chgcar_grid_header(line: &str) -> bool {
     let mut values = line.split_whitespace();
-    let Some(nx) = values.next().and_then(|value| value.parse::<usize>().ok()) else { return false; };
-    let Some(ny) = values.next().and_then(|value| value.parse::<usize>().ok()) else { return false; };
-    let Some(nz) = values.next().and_then(|value| value.parse::<usize>().ok()) else { return false; };
+    let Some(nx) = values.next().and_then(|value| value.parse::<usize>().ok()) else {
+        return false;
+    };
+    let Some(ny) = values.next().and_then(|value| value.parse::<usize>().ok()) else {
+        return false;
+    };
+    let Some(nz) = values.next().and_then(|value| value.parse::<usize>().ok()) else {
+        return false;
+    };
     values.next().is_none() && nx > 0 && ny > 0 && nz > 0
 }
 
@@ -204,10 +253,7 @@ mod tests {
     }
 
     fn write_tmp(content: &str, suffix: &str) -> NamedTempFile {
-        let mut f = tempfile::Builder::new()
-            .suffix(suffix)
-            .tempfile()
-            .unwrap();
+        let mut f = tempfile::Builder::new().suffix(suffix).tempfile().unwrap();
         write!(f, "{}", content).unwrap();
         f
     }
@@ -216,8 +262,8 @@ mod tests {
     fn test_10x10x10_grid_dims() {
         let content = make_chgcar_10x10x10(1.0, 1.0);
         let tmp = write_tmp(&content, "CHGCAR");
-        let state = parse_chgcar(tmp.path().to_str().unwrap())
-            .expect("10x10x10 fixture must parse");
+        let state =
+            parse_chgcar(tmp.path().to_str().unwrap()).expect("10x10x10 fixture must parse");
         let vol = state.volumetric_data.expect("volumetric_data must be Some");
         assert_eq!(vol.grid_dims, [10, 10, 10]);
     }
@@ -226,13 +272,25 @@ mod tests {
     fn test_10x10x10_lattice_matches_poscar_header() {
         let content = make_chgcar_10x10x10(1.0, 1.0);
         let tmp = write_tmp(&content, "CHGCAR");
-        let state = parse_chgcar(tmp.path().to_str().unwrap())
-            .expect("10x10x10 fixture must parse");
+        let state =
+            parse_chgcar(tmp.path().to_str().unwrap()).expect("10x10x10 fixture must parse");
         let vol = state.volumetric_data.expect("volumetric_data must be Some");
         // ColMajor layout: a_x = lattice[0], b_x = lattice[3], c_x = lattice[6]
-        assert!((vol.lattice[0] - 5.4307).abs() < 1e-4, "a_x mismatch: {}", vol.lattice[0]);
-        assert!((vol.lattice[4] - 5.4307).abs() < 1e-4, "b_y mismatch: {}", vol.lattice[4]);
-        assert!((vol.lattice[8] - 5.4307).abs() < 1e-4, "c_z mismatch: {}", vol.lattice[8]);
+        assert!(
+            (vol.lattice[0] - 5.4307).abs() < 1e-4,
+            "a_x mismatch: {}",
+            vol.lattice[0]
+        );
+        assert!(
+            (vol.lattice[4] - 5.4307).abs() < 1e-4,
+            "b_y mismatch: {}",
+            vol.lattice[4]
+        );
+        assert!(
+            (vol.lattice[8] - 5.4307).abs() < 1e-4,
+            "c_z mismatch: {}",
+            vol.lattice[8]
+        );
         assert!(vol.lattice[1].abs() < 1e-10, "off-diagonal a_y must be 0");
         assert!(vol.lattice[2].abs() < 1e-10, "off-diagonal a_z must be 0");
     }
@@ -244,8 +302,8 @@ mod tests {
         let raw_value = 160.098_f64;
         let content = make_chgcar_10x10x10(raw_value, 1.0);
         let tmp = write_tmp(&content, "CHGCAR");
-        let state = parse_chgcar(tmp.path().to_str().unwrap())
-            .expect("10x10x10 fixture must parse");
+        let state =
+            parse_chgcar(tmp.path().to_str().unwrap()).expect("10x10x10 fixture must parse");
         let vol = state.volumetric_data.expect("volumetric_data must be Some");
         let v_cell = 5.4307_f64.powi(3);
         let n_voxels = 1000_f64;
@@ -267,7 +325,10 @@ mod tests {
         let tmp = write_tmp(&content, "CHGCAR");
         let result = parse_chgcar(tmp.path().to_str().unwrap());
         let err = result.err().expect("truncated data must return Err");
-        assert!(err.contains("voxels"), "error must cite voxel count: got '{err}'");
+        assert!(
+            err.contains("voxels"),
+            "error must cite voxel count: got '{err}'"
+        );
     }
 
     #[test]
@@ -279,7 +340,10 @@ mod tests {
         let tmp = write_tmp(&content, "CHGCAR");
         let result = parse_chgcar(tmp.path().to_str().unwrap());
         let err = result.err().expect("oversized grid must be rejected");
-        assert!(err.contains("150"), "error must cite the 150^3 limit: got '{err}'");
+        assert!(
+            err.contains("150"),
+            "error must cite the 150^3 limit: got '{err}'"
+        );
     }
 
     #[test]
@@ -289,9 +353,12 @@ mod tests {
         // Coplanar: a = b = c = (1, 0, 0) \u2192 det = 0
         let l = [[1.0_f64, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let det = l[0][0] * (l[1][1] * l[2][2] - l[1][2] * l[2][1])
-                - l[0][1] * (l[1][0] * l[2][2] - l[1][2] * l[2][0])
-                + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0]);
-        assert!(det.abs() < 1e-12, "coplanar lattice det must be < 1e-12: got {det}");
+            - l[0][1] * (l[1][0] * l[2][2] - l[1][2] * l[2][0])
+            + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0]);
+        assert!(
+            det.abs() < 1e-12,
+            "coplanar lattice det must be < 1e-12: got {det}"
+        );
     }
 
     #[test]
@@ -307,9 +374,15 @@ mod tests {
         drop(tmp);
         let vol = state.volumetric_data.expect("volumetric_data must be Some");
         // For LOCPOT: normalization = 1.0, raw value = 1.0 → stored = 1.0
-        assert!((vol.data[0] - 1.0_f32).abs() < 1e-5,
-            "LOCPOT values must not be divided by V_cell: got {}", vol.data[0]);
-        assert!(matches!(vol.source_format, crate::volumetric::VolumetricFormat::VaspLocpot));
+        assert!(
+            (vol.data[0] - 1.0_f32).abs() < 1e-5,
+            "LOCPOT values must not be divided by V_cell: got {}",
+            vol.data[0]
+        );
+        assert!(matches!(
+            vol.source_format,
+            crate::volumetric::VolumetricFormat::VaspLocpot
+        ));
     }
 
     #[test]
@@ -317,11 +390,13 @@ mod tests {
         // Scale = 2.0 → actual lattice vectors are 2.0 × 5.4307 = 10.8614 Å
         let content = make_chgcar_10x10x10(1.0, 2.0);
         let tmp = write_tmp(&content, "CHGCAR");
-        let state = parse_chgcar(tmp.path().to_str().unwrap())
-            .expect("scaled fixture must parse");
+        let state = parse_chgcar(tmp.path().to_str().unwrap()).expect("scaled fixture must parse");
         let vol = state.volumetric_data.expect("volumetric_data must be Some");
-        assert!((vol.lattice[0] - 5.4307 * 2.0).abs() < 1e-4,
-            "scaled a_x must be 10.8614, got {}", vol.lattice[0]);
+        assert!(
+            (vol.lattice[0] - 5.4307 * 2.0).abs() < 1e-4,
+            "scaled a_x must be 10.8614, got {}",
+            vol.lattice[0]
+        );
     }
 
     #[test]
@@ -333,6 +408,9 @@ mod tests {
         let tmp = write_tmp(&content, "CHGCAR");
         let result = parse_chgcar(tmp.path().to_str().unwrap());
         let err = result.err().expect("missing grid dims must return Err");
-        assert!(err.contains("NGX"), "error must cite NGX NGY NGZ: got '{err}'");
+        assert!(
+            err.contains("NGX"),
+            "error must cite NGX NGY NGZ: got '{err}'"
+        );
     }
 }

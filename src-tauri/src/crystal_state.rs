@@ -97,7 +97,11 @@ impl CrystalState {
             self.cell_gamma,
         )?;
         for index in 0..atom_count {
-            validate_fractional_position([self.fract_x[index], self.fract_y[index], self.fract_z[index]])?;
+            validate_fractional_position([
+                self.fract_x[index],
+                self.fract_y[index],
+                self.fract_z[index],
+            ])?;
             if !self.occupancies[index].is_finite()
                 || !(0.0..=1.0).contains(&self.occupancies[index])
             {
@@ -154,11 +158,7 @@ pub fn validate_lattice_parameters(
         return Err("lattice parameters do not define a three-dimensional cell");
     }
     let cz = cz_squared.sqrt();
-    let matrix = [
-        a, 0.0, 0.0,
-        b * gamma.cos(), b * sin_gamma, 0.0,
-        cx, cy, cz,
-    ];
+    let matrix = [a, 0.0, 0.0, b * gamma.cos(), b * sin_gamma, 0.0, cx, cy, cz];
     if !matrix.iter().all(|value| value.is_finite()) {
         return Err("lattice basis must be finite");
     }
@@ -234,9 +234,7 @@ fn lattice_parameters_from_col_major(lattice: &[f64; 9]) -> Result<[f64; 6], &'s
     Ok([norms[0], norms[1], norms[2], alpha, beta, gamma])
 }
 
-fn atomic_number_sources(
-    atomic_numbers: &[u8],
-) -> Result<[Option<usize>; 256], &'static str> {
+fn atomic_number_sources(atomic_numbers: &[u8]) -> Result<[Option<usize>; 256], &'static str> {
     let mut sources = [None; 256];
     for (index, atomic_number) in atomic_numbers.iter().copied().enumerate() {
         if atomic_number == 0 {
@@ -301,9 +299,18 @@ pub fn validate_supercell_request(
         left.checked_add(right)
             .ok_or("supercell determinant overflow")
     };
-    let minor_00 = subtract(product(matrix[4], matrix[8])?, product(matrix[5], matrix[7])?)?;
-    let minor_01 = subtract(product(matrix[3], matrix[8])?, product(matrix[5], matrix[6])?)?;
-    let minor_02 = subtract(product(matrix[3], matrix[7])?, product(matrix[4], matrix[6])?)?;
+    let minor_00 = subtract(
+        product(matrix[4], matrix[8])?,
+        product(matrix[5], matrix[7])?,
+    )?;
+    let minor_01 = subtract(
+        product(matrix[3], matrix[8])?,
+        product(matrix[5], matrix[6])?,
+    )?;
+    let minor_02 = subtract(
+        product(matrix[3], matrix[7])?,
+        product(matrix[4], matrix[6])?,
+    )?;
     let determinant = add(
         subtract(product(matrix[0], minor_00)?, product(matrix[1], minor_01)?)?,
         product(matrix[2], minor_02)?,
@@ -555,7 +562,9 @@ impl CrystalState {
             .volumetric_data
             .take()
             .ok_or_else(|| "no volumetric data found in file".to_string())?;
-        let layer = self.field_scene.replace_with_source(label, volumetric, source_sha256)?;
+        let layer = self
+            .field_scene
+            .replace_with_source(label, volumetric, source_sha256)?;
         Ok(FieldAdmission {
             layer_id: layer.id,
             layer_revision: layer.revision,
@@ -761,7 +770,7 @@ impl CrystalState {
         self.cell_gamma = (dot_ab / (a * b)).clamp(-1.0, 1.0).acos().to_degrees();
         self.cell_alpha = (dot_bc / (b * c)).clamp(-1.0, 1.0).acos().to_degrees();
         self.cell_beta = (dot_ca / (c * a)).clamp(-1.0, 1.0).acos().to_degrees();
-        
+
         self.cell_a = a;
         self.cell_b = b;
         self.cell_c = c;
@@ -802,8 +811,8 @@ impl CrystalState {
     fn transform_fractional_coords(&mut self, old_lat: &[f64; 9], new_lat: &[f64; 9]) {
         // L_new^{-1} via Cramer's rule (3x3 ColMajor)
         let det = new_lat[0] * (new_lat[4] * new_lat[8] - new_lat[5] * new_lat[7])
-                - new_lat[3] * (new_lat[1] * new_lat[8] - new_lat[2] * new_lat[7])
-                + new_lat[6] * (new_lat[1] * new_lat[5] - new_lat[2] * new_lat[4]);
+            - new_lat[3] * (new_lat[1] * new_lat[8] - new_lat[2] * new_lat[7])
+            + new_lat[6] * (new_lat[1] * new_lat[5] - new_lat[2] * new_lat[4]);
 
         if det.abs() < 1e-15 {
             return; // degenerate lattice, bail
@@ -812,15 +821,15 @@ impl CrystalState {
 
         // Cofactor matrix of new_lat (ColMajor), transposed = adjugate
         let inv = [
-            (new_lat[4] * new_lat[8] - new_lat[5] * new_lat[7]) * inv_det,  // [0]
-            (new_lat[2] * new_lat[7] - new_lat[1] * new_lat[8]) * inv_det,  // [1]
-            (new_lat[1] * new_lat[5] - new_lat[2] * new_lat[4]) * inv_det,  // [2]
-            (new_lat[5] * new_lat[6] - new_lat[3] * new_lat[8]) * inv_det,  // [3]
-            (new_lat[0] * new_lat[8] - new_lat[2] * new_lat[6]) * inv_det,  // [4]
-            (new_lat[2] * new_lat[3] - new_lat[0] * new_lat[5]) * inv_det,  // [5]
-            (new_lat[3] * new_lat[7] - new_lat[4] * new_lat[6]) * inv_det,  // [6]
-            (new_lat[1] * new_lat[6] - new_lat[0] * new_lat[7]) * inv_det,  // [7]
-            (new_lat[0] * new_lat[4] - new_lat[1] * new_lat[3]) * inv_det,  // [8]
+            (new_lat[4] * new_lat[8] - new_lat[5] * new_lat[7]) * inv_det, // [0]
+            (new_lat[2] * new_lat[7] - new_lat[1] * new_lat[8]) * inv_det, // [1]
+            (new_lat[1] * new_lat[5] - new_lat[2] * new_lat[4]) * inv_det, // [2]
+            (new_lat[5] * new_lat[6] - new_lat[3] * new_lat[8]) * inv_det, // [3]
+            (new_lat[0] * new_lat[8] - new_lat[2] * new_lat[6]) * inv_det, // [4]
+            (new_lat[2] * new_lat[3] - new_lat[0] * new_lat[5]) * inv_det, // [5]
+            (new_lat[3] * new_lat[7] - new_lat[4] * new_lat[6]) * inv_det, // [6]
+            (new_lat[1] * new_lat[6] - new_lat[0] * new_lat[7]) * inv_det, // [7]
+            (new_lat[0] * new_lat[4] - new_lat[1] * new_lat[3]) * inv_det, // [8]
         ];
 
         // M = L_new^{-1} * L_old  (both ColMajor, result ColMajor)
@@ -873,8 +882,8 @@ impl CrystalState {
 
         let mut lattice = self.get_lattice_col_major();
         // Spglib may need up to 4x atoms when converting primitive -> face-centered conventional
-        let capacity = n_atoms * 4; 
-        
+        let capacity = n_atoms * 4;
+
         let mut flat_positions = Vec::with_capacity(capacity * 3);
         let mut types = Vec::with_capacity(capacity);
 
@@ -884,7 +893,7 @@ impl CrystalState {
             flat_positions.push(self.fract_z[i]);
             types.push(self.atomic_numbers[i] as i32);
         }
-        
+
         // Resize to capacity padding with zeros so C++ can write safely
         flat_positions.resize(capacity * 3, 0.0);
         types.resize(capacity, 0);
@@ -904,10 +913,10 @@ impl CrystalState {
         if new_size <= 0 {
             return Err("Spglib standardize_cell failed".to_string());
         }
-        
+
         let new_size = new_size as usize;
         self.set_lattice_col_major(&lattice);
-        
+
         // Rebuild atom lists
         let mut new_labels = Vec::with_capacity(new_size);
         let mut new_elements = Vec::with_capacity(new_size);
@@ -954,7 +963,7 @@ impl CrystalState {
         self.atomic_numbers = new_atomic_numbers;
         self.occupancies = new_occupancies;
         self.intrinsic_sites = new_size;
-        
+
         self.fractional_to_cartesian();
         self.detect_spacegroup();
 
@@ -1000,6 +1009,35 @@ impl CrystalState {
         }
     }
 
+    /// Renderer-space cell columns used by `fractional_to_cartesian`.
+    #[must_use]
+    pub fn renderer_lattice_col_major(&self) -> [f64; 9] {
+        let alpha = self.cell_alpha.to_radians();
+        let beta = self.cell_beta.to_radians();
+        let gamma = self.cell_gamma.to_radians();
+        let cos_alpha = alpha.cos();
+        let cos_beta = beta.cos();
+        let cos_gamma = gamma.cos();
+        let sin_gamma = gamma.sin();
+        let c_y = self.cell_c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
+        let c_z = self.cell_c
+            * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma
+                + 2.0 * cos_alpha * cos_beta * cos_gamma)
+                .sqrt())
+            / sin_gamma;
+        [
+            self.cell_a,
+            0.0,
+            0.0,
+            self.cell_b * cos_gamma,
+            self.cell_b * sin_gamma,
+            0.0,
+            self.cell_c * cos_beta,
+            c_y,
+            c_z,
+        ]
+    }
+
     /// Calculate the geometric center of the unit cell.
     pub fn unit_cell_center(&self) -> [f32; 3] {
         let alpha = self.cell_alpha.to_radians();
@@ -1030,12 +1068,12 @@ impl CrystalState {
         let alpha_rad = self.cell_alpha.to_radians() as f32;
         let beta_rad = self.cell_beta.to_radians() as f32;
         let gamma_rad = self.cell_gamma.to_radians() as f32;
-        
+
         let cos_alpha = alpha_rad.cos();
         let cos_beta = beta_rad.cos();
         let cos_gamma = gamma_rad.cos();
         let sin_gamma = gamma_rad.sin();
-        
+
         let m00 = a;
         let m01 = b * cos_gamma;
         let m02 = c * cos_beta;
@@ -1047,11 +1085,11 @@ impl CrystalState {
                 .max(0.0)
                 .sqrt())
             / sin_gamma;
-        
+
         let d_frac_z = translation.z / m22;
         let d_frac_y = (translation.y - m12 * d_frac_z) / m11;
         let d_frac_x = (translation.x - m01 * d_frac_y - m02 * d_frac_z) / m00;
-        
+
         let mut atoms = Vec::new();
         atoms.try_reserve_exact(indices.len())?;
         for &idx in indices {
@@ -1166,8 +1204,8 @@ impl CrystalState {
 
         let [new_a, new_b, new_c, new_alpha, new_beta, new_gamma] =
             lattice_parameters_from_col_major(&out_lattice).map_err(str::to_string)?;
-        let type_sources = atomic_number_sources(&self.atomic_numbers[..n_atoms])
-            .map_err(str::to_string)?;
+        let type_sources =
+            atomic_number_sources(&self.atomic_numbers[..n_atoms]).map_err(str::to_string)?;
 
         let mut new_state = CrystalState {
             name: format!(
@@ -1379,8 +1417,8 @@ impl CrystalState {
 
         let [new_a, new_b, new_c, new_alpha, new_beta, new_gamma] =
             lattice_parameters_from_col_major(&out_lattice).map_err(str::to_string)?;
-        let type_sources = atomic_number_sources(&self.atomic_numbers[..n_atoms])
-            .map_err(str::to_string)?;
+        let type_sources =
+            atomic_number_sources(&self.atomic_numbers[..n_atoms]).map_err(str::to_string)?;
 
         let mut new_state = CrystalState {
             name: format!("{}_supercell", self.name),
@@ -1575,7 +1613,7 @@ impl CrystalState {
             flat_frac.push(self.fract_x[i]);
             flat_frac.push(self.fract_y[i]);
             flat_frac.push(self.fract_z[i]);
-            
+
             covalent_radii.push(covalent_radius(self.atomic_numbers[i]) as f64);
         }
 
@@ -1668,10 +1706,10 @@ impl CrystalState {
         let mut best_axis = None;
         let mut max_gap = 0.0;
         let mut best_ratio = 0.0;
-        
+
         let axes = [0, 1, 2];
         let lengths = [self.cell_a, self.cell_b, self.cell_c];
-        
+
         for &axis in &axes {
             let mut coords = Vec::with_capacity(self.intrinsic_sites);
             for i in 0..self.intrinsic_sites {
@@ -1684,26 +1722,26 @@ impl CrystalState {
                 v = v - v.floor();
                 coords.push(v);
             }
-            
+
             if coords.is_empty() {
                 continue;
             }
             coords.sort_by(|a, b| a.total_cmp(b));
-            
+
             let mut current_max_gap = 0.0;
             let n = coords.len();
-            for i in 0..(n-1) {
-                let gap = coords[i+1] - coords[i];
+            for i in 0..(n - 1) {
+                let gap = coords[i + 1] - coords[i];
                 if gap > current_max_gap {
                     current_max_gap = gap;
                 }
             }
             // wraparound gap
-            let wrap_gap = 1.0 - coords[n-1] + coords[0];
+            let wrap_gap = 1.0 - coords[n - 1] + coords[0];
             if wrap_gap > current_max_gap {
                 current_max_gap = wrap_gap;
             }
-            
+
             let other_len = (lengths[(axis + 1) % 3] + lengths[(axis + 2) % 3]) / 2.0;
             if other_len > 0.0 {
                 let ratio = lengths[axis] / other_len;
@@ -1716,7 +1754,7 @@ impl CrystalState {
                 }
             }
         }
-        
+
         if let Some(axis) = best_axis {
             self.is_2d = true;
             self.vacuum_axis = Some(axis);
@@ -1724,7 +1762,7 @@ impl CrystalState {
             self.is_2d = false;
             self.vacuum_axis = None;
         }
-        
+
         log::info!(
             "[detect_2d] is_2d={}, vacuum_axis={:?}, max_gap={:.3}, ratio={:.2}",
             self.is_2d,
@@ -1733,14 +1771,14 @@ impl CrystalState {
             best_ratio
         );
     }
-    
+
     /// Get the two real-space lattice vectors spanning the periodic plane.
     pub fn get_inplane_lattice(&self) -> ([f64; 3], [f64; 3]) {
-        let lattice = self.get_lattice_col_major(); 
+        let lattice = self.get_lattice_col_major();
         let v1 = [lattice[0], lattice[1], lattice[2]];
         let v2 = [lattice[3], lattice[4], lattice[5]];
         let v3 = [lattice[6], lattice[7], lattice[8]];
-        
+
         if let Some(axis) = self.vacuum_axis {
             match axis {
                 0 => (v2, v3),
@@ -1774,7 +1812,7 @@ impl CrystalState {
         let pi = self.cart_positions[i];
         let pj = self.cart_positions[j];
         let pk = self.cart_positions[k];
-        
+
         let v1 = glam::DVec3::new(
             (pi[0] as f64) - (pj[0] as f64),
             (pi[1] as f64) - (pj[1] as f64),
@@ -1787,7 +1825,7 @@ impl CrystalState {
             (pk[2] as f64) - (pj[2] as f64),
         )
         .normalize_or_zero();
-        
+
         let dot = v1.dot(v2).clamp(-1.0, 1.0);
         Ok(dot.acos().to_degrees())
     }
@@ -1804,7 +1842,7 @@ impl CrystalState {
         let pj = self.cart_positions[j];
         let pk = self.cart_positions[k];
         let pl = self.cart_positions[l];
-        
+
         let b1 = glam::DVec3::new(
             (pj[0] as f64) - (pi[0] as f64),
             (pj[1] as f64) - (pi[1] as f64),
@@ -1820,11 +1858,11 @@ impl CrystalState {
             (pl[1] as f64) - (pk[1] as f64),
             (pl[2] as f64) - (pk[2] as f64),
         );
-        
+
         let n1 = b1.cross(b2).normalize_or_zero();
         let n2 = b2.cross(b3).normalize_or_zero();
         let m = n1.cross(b2.normalize_or_zero());
-        
+
         let x = n1.dot(n2);
         let y = m.dot(n2);
         Ok(y.atan2(x).to_degrees())
@@ -2033,8 +2071,7 @@ mod tests {
         assert_eq!(c.elements[2], "C", "Element should be C");
         assert_eq!(c.atomic_numbers[2], 6, "Atomic number should be 6");
         assert_eq!(
-            c.version,
-            initial_version,
+            c.version, initial_version,
             "Low-level mutation must not commit the state version"
         );
         assert_eq!(
@@ -2052,8 +2089,7 @@ mod tests {
         assert_eq!(c.num_atoms(), 1, "Should have 1 atom remaining");
         assert_eq!(c.labels[0], "O1", "Remaining atom should be O1");
         assert_eq!(
-            c.version,
-            initial_version,
+            c.version, initial_version,
             "Low-level mutation must not commit the state version"
         );
         assert_eq!(
@@ -2077,8 +2113,7 @@ mod tests {
         assert_eq!(c.elements[1], "S", "Element should be S");
         assert_eq!(c.atomic_numbers[1], 16, "Atomic number should be 16");
         assert_eq!(
-            c.version,
-            initial_version,
+            c.version, initial_version,
             "Low-level mutation must not commit the state version"
         );
     }
@@ -2094,12 +2129,12 @@ mod tests {
         c.fract_y = vec![0.0, 0.0];
         c.fract_z = vec![0.0, 0.0];
         c.fractional_to_cartesian();
-        
+
         c.compute_bond_analysis(1.2);
         let analysis = c.bond_analysis.as_ref().unwrap();
         // Since H and O are close, there should be 1 bond
         assert_eq!(analysis.bonds.len(), 1, "Should detect 1 bond");
-        
+
         assert_eq!(
             analysis.coordination.len(),
             2,
@@ -2119,7 +2154,7 @@ mod tests {
             neighbor_distances: vec![2.0, 2.0, 2.0, 2.0, 2.0, 2.0], // Perfect octahedron
             polyhedron_type: "Octahedron".to_string(),
         };
-        
+
         let delta = BondAnalysis::distortion_index(&coord);
         assert!(
             (delta - 0.0).abs() < 1e-10,
@@ -2134,7 +2169,7 @@ mod tests {
             neighbor_distances: vec![1.9, 2.1, 1.9, 2.1, 1.9, 2.1], // Distorted
             polyhedron_type: "Octahedron".to_string(),
         };
-        
+
         let delta_distorted = BondAnalysis::distortion_index(&distorted_coord);
         // mean is 2.0, |d - d_mean| is 0.1 for all
         // Delta = (1/6) * (6 * 0.1 / 2.0) = 0.05
@@ -2149,7 +2184,7 @@ mod tests {
         let mut cs = CrystalState::default();
         // T-1 & T-6: Exactly representable f32 coordinates and tight precision
         cs.cart_positions = vec![[1.0, 2.0, 3.0], [4.5, -0.5, 1.5]];
-        
+
         let dist = cs.measure_distance(0, 1).unwrap();
         // dx=3.5, dy=-2.5, dz=-1.5. sum_sq = 12.25 + 6.25 + 2.25 = 20.75
         let expected = 20.75f64.sqrt();
@@ -2157,7 +2192,7 @@ mod tests {
             (dist - expected).abs() < 1e-12,
             "Distance precision failure on bit-exact coords"
         );
-        
+
         // Zero distance
         let dist0 = cs.measure_distance(0, 0).unwrap();
         assert!(dist0.abs() < f64::EPSILON);
@@ -2169,18 +2204,18 @@ mod tests {
         // T-2: Non-special angle (60 degrees)
         let sqrt3_2 = (3.0f32.sqrt() / 2.0) as f32;
         cs.cart_positions = vec![
-            [1.0, 0.0, 0.0],       // 0: i
-            [0.0, 0.0, 0.0],       // 1: j (vertex)
-            [0.5, sqrt3_2, 0.0],   // 2: k (60 deg from i)
-            [0.0, 0.0, 0.0],       // 3: degenerate overlapping vertex
+            [1.0, 0.0, 0.0],     // 0: i
+            [0.0, 0.0, 0.0],     // 1: j (vertex)
+            [0.5, sqrt3_2, 0.0], // 2: k (60 deg from i)
+            [0.0, 0.0, 0.0],     // 3: degenerate overlapping vertex
         ];
-        
+
         let angle60 = cs.measure_angle(0, 1, 2).unwrap();
         assert!(
             (angle60 - 60.0).abs() < 1e-5,
             "Angle precision failure on 60 degree case"
         );
-        
+
         // Collinear 180
         cs.cart_positions.push([-1.0, 0.0, 0.0]);
         let angle180 = cs.measure_angle(0, 1, 4).unwrap();
@@ -2203,7 +2238,7 @@ mod tests {
             [0.0, 0.0, 1.0], // 2: k
             [1.0, 0.0, 1.0], // 3: l
         ];
-        
+
         let dh = cs.measure_dihedral(0, 1, 2, 3).unwrap();
         // Hand calculate: b1=(-1,-1,0), b2=(0,0,1), b3=(1,0,0)
         // n1 = b1 x b2 = (-1, 1, 0), n2 = b2 x b3 = (0, 1, 0)
@@ -2214,7 +2249,7 @@ mod tests {
             "Dihedral sign or value failure: expected +45.0, got {}",
             dh
         );
-        
+
         // Breaker: Collinear backbone (j, k, l collinear)
         cs.cart_positions.push([0.0, 0.0, 2.0]); // 4: k'
         cs.cart_positions.push([0.0, 0.0, 3.0]); // 5: l'

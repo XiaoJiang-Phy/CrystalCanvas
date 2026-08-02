@@ -1,10 +1,12 @@
 //! Breaker Tests for Marching Cubes (Node 11.4a)
-//! 
+//!
 //! [Breaker Mode] Tests zero matrices, empty grids, pathological condition numbers,
 //! and strict 1e-3 epsilon tolerances.
 
-use crystal_canvas::renderer::isosurface::{marching_cubes_cpu, euler_characteristic_for_test};
-use crystal_canvas::volumetric::{FieldSourceMetadata, VolumetricData, VolumetricFormat};
+use crystal_canvas::renderer::isosurface::{euler_characteristic_for_test, marching_cubes_cpu};
+use crystal_canvas::volumetric::{
+    FieldGridMappingError, FieldSourceMetadata, VolumetricData, VolumetricFormat,
+};
 
 #[test]
 fn test_breaker_strict_epsilon_sphere() {
@@ -23,7 +25,8 @@ fn test_breaker_strict_epsilon_sphere() {
                 let x = ix as f64 / (n - 1) as f64 * cell_len;
                 let y = iy as f64 / (n - 1) as f64 * cell_len;
                 let z = iz as f64 / (n - 1) as f64 * cell_len;
-                data[ix + iy * n + iz * n * n] = ((x - half).powi(2) + (y - half).powi(2) + (z - half).powi(2) - r * r) as f32;
+                data[ix + iy * n + iz * n * n] =
+                    ((x - half).powi(2) + (y - half).powi(2) + (z - half).powi(2) - r * r) as f32;
             }
         }
     }
@@ -42,20 +45,32 @@ fn test_breaker_strict_epsilon_sphere() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts = marching_cubes_cpu(&vol, 0.0);
+    let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
     assert!(!verts.is_empty(), "Mesh should be non-empty");
 
     let chi = euler_characteristic_for_test(&verts);
-    assert_eq!(chi, 2, "Euler characteristic must be 2 for a closed sphere, got {}", chi);
+    assert_eq!(
+        chi, 2,
+        "Euler characteristic must be 2 for a closed sphere, got {}",
+        chi
+    );
 
     let mut max_err = 0.0f32;
     for v in &verts {
         let [x, y, z] = v.position;
-        let dist = ((x - half as f32).powi(2) + (y - half as f32).powi(2) + (z - half as f32).powi(2)).sqrt();
+        let dist =
+            ((x - half as f32).powi(2) + (y - half as f32).powi(2) + (z - half as f32).powi(2))
+                .sqrt();
         let err = (dist - r as f32).abs();
-        if err > max_err { max_err = err; }
+        if err > max_err {
+            max_err = err;
+        }
     }
-    assert!(max_err <= 1e-3, "Vertex error {} exceeded strict 1e-3 epsilon", max_err);
+    assert!(
+        max_err <= 1e-3,
+        "Vertex error {} exceeded strict 1e-3 epsilon",
+        max_err
+    );
 }
 
 #[test]
@@ -71,8 +86,12 @@ fn test_breaker_empty_grid() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts = marching_cubes_cpu(&vol, 0.0);
-    assert!(verts.is_empty(), "Empty grid should return 0 vertices without panic");
+    let verts =
+        marching_cubes_cpu(&vol, 0.0).expect("empty grid does not require mapping inversion");
+    assert!(
+        verts.is_empty(),
+        "Empty grid should return 0 vertices without panic"
+    );
 }
 
 #[test]
@@ -88,8 +107,12 @@ fn test_breaker_single_voxel() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts = marching_cubes_cpu(&vol, 0.0);
-    assert!(verts.is_empty(), "Single element grid should return 0 vertices without panic");
+    let verts =
+        marching_cubes_cpu(&vol, 0.0).expect("single voxel does not require mapping inversion");
+    assert!(
+        verts.is_empty(),
+        "Single element grid should return 0 vertices without panic"
+    );
 }
 
 #[test]
@@ -107,10 +130,13 @@ fn test_breaker_non_cubic_dims() {
         scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };
-    
+
     // Test that extreme aspect ratios don't cause an out-of-bounds flat array access
-    let verts = marching_cubes_cpu(&vol, -1.0);
-    assert!(verts.is_empty(), "Non-cubic dims should be processed without panic");
+    let verts = marching_cubes_cpu(&vol, -1.0).expect("valid non-cubic field mapping");
+    assert!(
+        verts.is_empty(),
+        "Non-cubic dims should be processed without panic"
+    );
 }
 
 #[test]
@@ -127,9 +153,12 @@ fn test_breaker_zero_field() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts = marching_cubes_cpu(&vol, 0.0);
+    let verts = marching_cubes_cpu(&vol, 0.0).expect("valid zero field mapping");
     for v in &verts {
-        assert!(v.normal.iter().all(|n| n.is_finite()), "Zero field gradient should not cause NaN normal");
+        assert!(
+            v.normal.iter().all(|n| n.is_finite()),
+            "Zero field gradient should not cause NaN normal"
+        );
     }
 }
 
@@ -151,12 +180,13 @@ fn test_breaker_zero_matrix() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts = marching_cubes_cpu(&vol, 0.0);
-    assert!(!verts.is_empty(), "Mixed data should yield triangles");
-    for v in &verts {
-        assert_eq!(v.position, [0.0, 0.0, 0.0], "Zero lattice must collapse all positions to origin");
-        assert!(v.normal.iter().all(|n| n.is_finite()), "Collapsed vertices must still have finite normals");
-    }
+    assert!(
+        matches!(
+            marching_cubes_cpu(&vol, 0.0),
+            Err(FieldGridMappingError::Unsolvable)
+        ),
+        "zero lattice must be rejected before mesh generation"
+    );
 }
 
 #[test]
@@ -173,22 +203,34 @@ fn test_breaker_nan_and_infinity_threshold() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts_nan = marching_cubes_cpu(&vol, f32::NAN);
-    assert!(verts_nan.is_empty(), "NaN threshold should yield no vertices without panic");
+    let verts_nan =
+        marching_cubes_cpu(&vol, f32::NAN).expect("valid threshold does not affect mapping");
+    assert!(
+        verts_nan.is_empty(),
+        "NaN threshold should yield no vertices without panic"
+    );
 
-    let verts_inf = marching_cubes_cpu(&vol, f32::INFINITY);
-    assert!(verts_inf.is_empty(), "Infinity threshold should yield no vertices without panic");
-    
-    let verts_neg_inf = marching_cubes_cpu(&vol, f32::NEG_INFINITY);
+    let verts_inf =
+        marching_cubes_cpu(&vol, f32::INFINITY).expect("valid threshold does not affect mapping");
+    assert!(
+        verts_inf.is_empty(),
+        "Infinity threshold should yield no vertices without panic"
+    );
+
+    let verts_neg_inf = marching_cubes_cpu(&vol, f32::NEG_INFINITY)
+        .expect("valid threshold does not affect mapping");
     // NEG_INFINITY means all > threshold, so it might emit. Either way it shouldn't panic.
-    assert!(verts_neg_inf.is_empty(), "NEG_INFINITY threshold means all > threshold, so it yields case 0xFF (empty)");
+    assert!(
+        verts_neg_inf.is_empty(),
+        "NEG_INFINITY threshold means all > threshold, so it yields case 0xFF (empty)"
+    );
 }
 
 #[test]
 fn test_breaker_pathological_lattice() {
     let n = 10;
     let mut data = vec![0.0f32; n * n * n];
-    for i in 0..n*n*n {
+    for i in 0..n * n * n {
         data[i] = (i as f32) - 500.0; // Mix of positive and negative
     }
 
@@ -205,9 +247,12 @@ fn test_breaker_pathological_lattice() {
         origin: [0.0, 0.0, 0.0],
     };
 
-    let verts = marching_cubes_cpu(&vol, 0.0);
-    // Should complete without panic and not output NaN vertices despite terrible lattice
+    let verts = marching_cubes_cpu(&vol, 0.0).expect("pathological lattice remains solvable");
+    // A solvable but ill-conditioned lattice must still produce finite vertices.
     for v in &verts {
-        assert!(v.position.iter().all(|p| p.is_finite()), "Pathological lattice output NaN position");
+        assert!(
+            v.position.iter().all(|p| p.is_finite()),
+            "pathological lattice output NaN position"
+        );
     }
 }

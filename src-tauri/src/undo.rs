@@ -15,14 +15,14 @@ pub struct StructuralSnapshot {
     pub vacuum_axis: Option<usize>,
     pub intrinsic_sites: usize,
     pub version: u32,
-    
+
     pub cell_a: f64,
     pub cell_b: f64,
     pub cell_c: f64,
     pub cell_alpha: f64,
     pub cell_beta: f64,
     pub cell_gamma: f64,
-    
+
     pub labels: Vec<String>,
     pub elements: Vec<String>,
     pub fract_x: Vec<f64>,
@@ -31,7 +31,7 @@ pub struct StructuralSnapshot {
     pub occupancies: Vec<f64>,
     pub atomic_numbers: Vec<u8>,
     pub cart_positions: Vec<[f32; 3]>,
-    
+
     pub selected_atoms: Vec<usize>,
     pub measurements: Vec<crate::crystal_state::MeasurementOverlay>,
 }
@@ -46,14 +46,14 @@ impl StructuralSnapshot {
             vacuum_axis: cs.vacuum_axis,
             intrinsic_sites: cs.intrinsic_sites,
             version: cs.version,
-            
+
             cell_a: cs.cell_a,
             cell_b: cs.cell_b,
             cell_c: cs.cell_c,
             cell_alpha: cs.cell_alpha,
             cell_beta: cs.cell_beta,
             cell_gamma: cs.cell_gamma,
-            
+
             labels: cs.labels.clone(),
             elements: cs.elements.clone(),
             fract_x: cs.fract_x.clone(),
@@ -62,7 +62,7 @@ impl StructuralSnapshot {
             occupancies: cs.occupancies.clone(),
             atomic_numbers: cs.atomic_numbers.clone(),
             cart_positions: cs.cart_positions.clone(),
-            
+
             selected_atoms: cs.selected_atoms.clone(),
             measurements: cs.measurements.clone(),
         }
@@ -234,41 +234,41 @@ mod tests {
     #[test]
     fn test_undo_redo() {
         let mut stack = UndoStack::new(2);
-        
+
         assert!(!stack.can_undo());
         assert!(!stack.can_redo());
-        
+
         // Push 3 states into depth 2 (testing ejection of oldest for extreme dimension limits)
         stack.push(create_dummy_state(1));
         stack.push(create_dummy_state(2));
         stack.push(create_dummy_state(3));
-        
+
         assert!(stack.can_undo());
         assert!(!stack.can_redo());
         assert_eq!(stack.past.len(), 2);
         assert_eq!(stack.past[0].version, 2);
         assert_eq!(stack.past[1].version, 3);
-        
+
         // Undo
         let prev = stack.undo(create_dummy_state(4)).unwrap();
         assert_eq!(prev.version, 3);
         assert!(stack.can_undo());
         assert!(stack.can_redo());
-        
+
         let prev2 = stack.undo(prev).unwrap();
         assert_eq!(prev2.version, 2);
         assert!(!stack.can_undo()); // Depth 2 means we only remember 2 past states
         assert!(stack.can_redo());
-        
+
         // Undo over limit (empty) - testing extreme index out of bound conditions
         assert!(stack.undo(prev2.clone()).is_none());
-        
+
         // Redo
         let next = stack.redo(prev2).unwrap();
         assert_eq!(next.version, 3);
         let next2 = stack.redo(next).unwrap();
         assert_eq!(next2.version, 4);
-        
+
         // Redo over limit - testing bounds
         assert!(stack.redo(next2).is_none());
     }
@@ -278,11 +278,11 @@ mod tests {
         let mut stack = UndoStack::new(10);
         stack.push(create_dummy_state(1));
         stack.push(create_dummy_state(2));
-        
+
         // Move back
         stack.undo(create_dummy_state(3)).unwrap();
         assert!(stack.can_redo());
-        
+
         // Push should obliterate future states
         stack.push(create_dummy_state(4));
         assert!(!stack.can_redo());
@@ -292,13 +292,13 @@ mod tests {
     fn test_undo_excludes_volumetric() {
         let mut cs = CrystalState::default();
         cs.cart_positions.push([0.0, 0.0, 0.0]); // Add some pseudo data
-        
+
         let ls = StructuralSnapshot::from_crystal_state(&cs);
         // By definition, StructuralSnapshot does NOT mirror the full memory map of CrystalState.
         // We assert its structural memory size is deterministic and ignores large allocs.
         let ls_size = std::mem::size_of::<StructuralSnapshot>();
         assert!(ls_size < 500); // Expecting ~350 bytes for pointers
-        
+
         // The properties requested (atom count) must align
         assert_eq!(ls.cart_positions.len(), 1);
     }

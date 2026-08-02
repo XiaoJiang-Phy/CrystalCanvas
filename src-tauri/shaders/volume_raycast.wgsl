@@ -25,11 +25,22 @@ struct VolumeRaycastUniforms {
     colormap_mode: u32,
     is_orthographic: u32,
     use_signed_mapping: u32,
+    unlit: u32,
+    _pad_after_unlit_a: u32,
+    _pad_after_unlit_b: u32,
+    _pad_after_unlit_c: u32,
     camera_forward: vec4<f32>,
     volume_clip_threshold: f32,
     volume_density_cutoff: f32,
     _pad1_b: f32,
     _pad1_c: f32,
+    clip_planes: array<vec4<f32>, 6>,
+    clip_keep_positive: array<vec4<u32>, 2>,
+    transfer_negative_positions: array<vec4<f32>, 16>,
+    transfer_positive_positions: array<vec4<f32>, 16>,
+    transfer_negative_colors: array<vec4<f32>, 16>,
+    transfer_positive_colors: array<vec4<f32>, 16>,
+    transfer_point_counts: vec4<u32>,
 }
 
 @group(1) @binding(0) var<uniform> params: VolumeRaycastUniforms;
@@ -77,6 +88,19 @@ fn intersect_unit_cube(ray_origin: vec3<f32>, ray_dir: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(t_enter, t_exit);
 }
 
+fn kept_by_clip_planes(world_position: vec3<f32>) -> bool {
+    let count = min(params.clip_keep_positive[1].z, 6u);
+    for (var index = 0u; index < count; index += 1u) {
+        let plane = params.clip_planes[index];
+        let signed_distance = dot(plane.xyz, world_position) - plane.w;
+        let keep_positive = params.clip_keep_positive[index / 4u][index % 4u] != 0u;
+        if select(signed_distance > 0.0, signed_distance < 0.0, keep_positive) {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn flat_idx(ix: u32, iy: u32, iz: u32) -> u32 {
     let nx = params.grid_dims.x;
     let ny = params.grid_dims.y;
@@ -87,16 +111,16 @@ fn sample_field_index(ix: u32, iy: u32, iz: u32) -> f32 {
     let nx = params.grid_dims.x;
     let ny = params.grid_dims.y;
     let nz = params.grid_dims.z;
-    let cx = clamp(ix, 0u, nx - 1u);
-    let cy = clamp(iy, 0u, ny - 1u);
-    let cz = clamp(iz, 0u, nz - 1u);
+    let cx = select(clamp(ix, 0u, nx - 1u), ix % nx, (params.grid_dims.w & 1u) != 0u);
+    let cy = select(clamp(iy, 0u, ny - 1u), iy % ny, (params.grid_dims.w & 2u) != 0u);
+    let cz = select(clamp(iz, 0u, nz - 1u), iz % nz, (params.grid_dims.w & 4u) != 0u);
     return scalar_field[flat_idx(cx, cy, cz)];
 }
 
 fn sample_field_frac(frac: vec3<f32>) -> f32 {
-    let nx = f32(params.grid_dims.x - 1u);
-    let ny = f32(params.grid_dims.y - 1u);
-    let nz = f32(params.grid_dims.z - 1u);
+    let nx = f32(select(params.grid_dims.x - 1u, params.grid_dims.x, (params.grid_dims.w & 1u) != 0u));
+    let ny = f32(select(params.grid_dims.y - 1u, params.grid_dims.y, (params.grid_dims.w & 2u) != 0u));
+    let nz = f32(select(params.grid_dims.z - 1u, params.grid_dims.z, (params.grid_dims.w & 4u) != 0u));
     
     let p = frac * vec3<f32>(nx, ny, nz);
     let p0 = vec3<u32>(floor(p));
@@ -224,6 +248,64 @@ fn colormap_rdylbu(t: f32) -> vec3<f32> {
 
 fn apply_transfer_function(value: f32) -> vec4<f32> {
     let abs_max = max(abs(params.transfer_range.x), abs(params.transfer_range.y));
+
+    if params.transfer_point_counts.z != 0u {
+        let magnitude = abs(value);
+        if params.volume_density_cutoff > 0.0 && magnitude < params.volume_density_cutoff {
+            return vec4<f32>(0.0);
+        }
+        var clip_fade = 1.0;
+        if params.volume_clip_threshold > 0.0 {
+            let iso_t = params.volume_clip_threshold;
+            if magnitude < iso_t {
+                return vec4<f32>(0.0);
+            }
+            clip_fade = smoothstep(iso_t, iso_t * 2.0, magnitude);
+        }
+        let branch_positive = value >= 0.0;
+        let point_count = select(
+            params.transfer_point_counts.x,
+            params.transfer_point_counts.y,
+            branch_positive,
+        );
+        let normalized = clamp(abs(value) / max(abs_max, 1.0e-10), 0.0, 1.0);
+        var lower_index = 0u;
+        for (var index = 1u; index < point_count; index += 1u) {
+            let position = select(
+                params.transfer_negative_positions[index].x,
+                params.transfer_positive_positions[index].x,
+                branch_positive,
+            );
+            if normalized >= position {
+                lower_index = index;
+            }
+        }
+        let upper_index = min(lower_index + 1u, point_count - 1u);
+        let lower_position = select(
+            params.transfer_negative_positions[lower_index].x,
+            params.transfer_positive_positions[lower_index].x,
+            branch_positive,
+        );
+        let upper_position = select(
+            params.transfer_negative_positions[upper_index].x,
+            params.transfer_positive_positions[upper_index].x,
+            branch_positive,
+        );
+        let lower_color = select(
+            params.transfer_negative_colors[lower_index],
+            params.transfer_positive_colors[lower_index],
+            branch_positive,
+        );
+        let upper_color = select(
+            params.transfer_negative_colors[upper_index],
+            params.transfer_positive_colors[upper_index],
+            branch_positive,
+        );
+        let weight = select(0.0, clamp((normalized - lower_position) / (upper_position - lower_position), 0.0, 1.0), upper_index != lower_index);
+        let color = mix(lower_color, upper_color, weight);
+        let alpha = color.a * params.opacity_scale * clip_fade;
+        return vec4<f32>(color.rgb, alpha);
+    }
 
     // ── Density cutoff: discard voxels below user-specified minimum |density| ──
     if params.volume_density_cutoff > 0.0 {
@@ -420,6 +502,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             break;
         }
         
+        if !kept_by_clip_planes(world_pos) {
+            pos_frac = pos_frac + step_frac;
+            clip_pos = clip_pos + clip_delta;
+            t_current = t_current + step_world;
+            continue;
+        }
         let val = sample_field_frac(pos_frac);
         var sample_color = apply_transfer_function(val);
         
@@ -438,16 +526,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     normal = -normal;
                 }
                 
-                let light_dir = normalize(vec3<f32>(0.3, 0.6, 0.8));
-                let view_dir = -ray_dir_world;
-                let half_vec = normalize(light_dir + view_dir);
-                
-                let diffuse = max(dot(normal, light_dir), 0.0);
-                let specular = pow(max(dot(normal, half_vec), 0.0), 32.0);
-                let ambient = 0.2;
-                
-                let light_intensity = ambient + 0.6 * diffuse + 0.2 * specular;
-                sample_color = vec4<f32>(sample_color.rgb * light_intensity, sample_color.a);
+                if !params.unlit {
+                    let light_dir = normalize(vec3<f32>(0.3, 0.6, 0.8));
+                    let view_dir = -ray_dir_world;
+                    let half_vec = normalize(light_dir + view_dir);
+                    let diffuse = max(dot(normal, light_dir), 0.0);
+                    let specular = pow(max(dot(normal, half_vec), 0.0), 32.0);
+                    let ambient = 0.2;
+                    let light_intensity = ambient + 0.6 * diffuse + 0.2 * specular;
+                    sample_color = vec4<f32>(sample_color.rgb * light_intensity, sample_color.a);
+                }
             }
         
             // Front-to-back compositing (pre-multiplied alpha output)

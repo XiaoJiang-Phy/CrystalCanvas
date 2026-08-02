@@ -76,6 +76,48 @@ export interface FieldLinearCombinationTerm {
     coefficient: number;
 }
 
+export type FieldSliceInterpolation = 'trilinear';
+export type FieldTransparencyMethod = 'weighted_blended_oit' | 'premultiplied_alpha_fallback';
+
+export interface FieldClipPlane {
+    normal: [number, number, number];
+    signed_offset_angstrom: number;
+    keep_positive: boolean;
+}
+
+export interface FieldSlicePlane {
+    normal: [number, number, number];
+    signed_offset_angstrom: number;
+    interpolation: FieldSliceInterpolation;
+}
+
+export interface FieldSliceRequest {
+    plane: FieldSlicePlane;
+    dimensions: [number, number];
+    contour_levels: number[];
+}
+
+export interface FieldTransferControlPoint {
+    position: number;
+    color_linear_rgba: [number, number, number, number];
+}
+
+export interface FieldTransferFunction {
+    color_space: string;
+    negative_control_points: FieldTransferControlPoint[];
+    positive_control_points: FieldTransferControlPoint[];
+}
+
+export interface FieldPresentationSettings {
+    clip_planes: FieldClipPlane[];
+    slices: FieldSliceRequest[];
+    transfer_function: FieldTransferFunction;
+    display_range: [number, number] | null;
+    opacity_scale: number;
+    density_cutoff: number;
+    transparency_method: FieldTransparencyMethod;
+}
+
 export interface TauriDragPayload {
     paths: string[];
     position: { x: number; y: number };
@@ -171,6 +213,7 @@ export interface IpcCommandContract {
     remove_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
     rename_field_layer: { args: { layerId: number; label: string; expectedRevision: number }; result: FieldSceneInfo };
     set_field_layer_visibility: { args: { layerId: number; visible: boolean; expectedRevision: number }; result: FieldSceneInfo };
+    set_field_layer_presentation: { args: { layerId: number; presentationSettings: FieldPresentationSettings; expectedRevision: number }; result: FieldSceneInfo };
     reorder_field_layer: { args: { layerId: number; targetIndex: number; expectedRevision: number }; result: FieldSceneInfo };
     pan_camera: { args: { dx: number; dy: number }; result: null };
     pick_atom: { args: { x: number; y: number; screenW: number; screenH: number }; result: number | null };
@@ -187,6 +230,7 @@ export interface IpcCommandContract {
     set_isosurface_opacity: { args: { opacity: number }; result: null };
     set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode }; result: null };
     set_isovalue: { args: { value: number; layerId: number; expectedRevision: number }; result: null };
+    set_signed_isovalues: { args: { positiveValue: number; negativeValue: number; layerId: number; expectedRevision: number }; result: null };
     select_active_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
     set_phonon_mode: { args: { modeIndex?: number | null }; result: null };
     set_phonon_phase: { args: { phase: number; amplitude?: number | null }; result: null };
@@ -510,7 +554,9 @@ const IPC_RESULT_VALIDATORS: {
     set_isosurface_opacity: is_null,
     set_isosurface_sign_mode: is_null,
     set_isovalue: is_null,
+    set_signed_isovalues: is_null,
     set_field_layer_visibility: is_field_scene_info,
+    set_field_layer_presentation: is_field_scene_info,
     select_active_field_layer: is_field_scene_info,
     set_phonon_mode: is_null,
     set_phonon_phase: is_null,

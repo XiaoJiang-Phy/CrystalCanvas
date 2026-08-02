@@ -177,37 +177,37 @@ mod tests {
     }
 
     const LATTICE: [f64; 9] = [2.46, 0.0, 0.0, -1.23, 2.13, 0.0, 0.0, 0.0, 10.0];
-    
+
     const ATOMS: [[f32; 3]; 2] = [[0.0, 0.0, 0.0], [1.23, 0.71, 0.0]];
 
     #[test]
     fn test_wannier_filter_magnitude() {
         let hr_data = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
         let mut overlay = WannierOverlay::new(hr_data, &LATTICE, &ATOMS).unwrap();
-        
+
         // Total 7 hoppings. 1 is on-site -> 6 inter-site default visible.
         assert_eq!(overlay.visible_hoppings.len(), 6);
-        
+
         // Filter out everything but nearest neighbor (~2.7)
         overlay.t_min_threshold = 2.0;
         overlay.filter_and_rebuild(&LATTICE, &ATOMS).unwrap();
-        
+
         // Graphene has 3 nearest neighbors for each carbon atom
         assert_eq!(overlay.visible_hoppings.len(), 3);
     }
-    
+
     #[test]
     fn test_wannier_filter_r_shell() {
         let hr_data = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
         let mut overlay = WannierOverlay::new(hr_data, &LATTICE, &ATOMS).unwrap();
-        
+
         // Turn off R-shell 1 (which refers to one of the length-1 R-shells, e.g. R=[1,0,0])
         overlay.active_r_shells[1] = false;
         overlay.filter_and_rebuild(&LATTICE, &ATOMS).unwrap();
-        
+
         // Out of the 6 visible hoppings, disabling one length-1 R-vector removes exactly 1 hopping.
         assert_eq!(overlay.visible_hoppings.len(), 5);
-        
+
         // Turn everything back on, change orbital filter
         overlay.active_r_shells[1] = true;
         overlay.active_orbitals[0] = false;
@@ -219,17 +219,17 @@ mod tests {
     fn test_wannier_overlay_cartesian() {
         let hr_data = parse_wannier_hr(&get_graphene_hr_path()).unwrap();
         let overlay = WannierOverlay::new(hr_data, &LATTICE, &ATOMS).unwrap();
-        
+
         // Find hopping with R = [1, 0, 0] which translates x by +2.46
         let h = overlay
             .visible_hoppings
             .iter()
             .find(|x| x.end_cart[0] > 2.0 && x.magnitude > 2.0)
             .unwrap();
-        
+
         // Atom 0 is at [0,0,0], so start_cart is [0,0,0]
         assert_eq!(h.start_cart, [0.0, 0.0, 0.0]);
-        // R=[1,0,0] means translation by `a` = 2.46. 
+        // R=[1,0,0] means translation by `a` = 2.46.
         // We defined atom_n = m = 0, so end_cart = [2.46, 0.0, 0.0]
         assert!((h.end_cart[0] - 2.46).abs() < 1e-4);
         assert!((h.end_cart[1] - 0.0).abs() < 1e-4);
@@ -331,7 +331,7 @@ fn build_atoms_with_ghosts_displaced_with_overlay(
         instances
             .try_reserve_exact(ghosts.len())
             .map_err(|_| IpcError::render("unable to allocate Wannier ghost scene"))?;
-        
+
         let lattice_col_major = cs.get_lattice_col_major();
         for (atom_idx, r_vec) in &ghosts {
             let pos = cart_positions.get(*atom_idx).copied().ok_or_else(|| {
@@ -348,11 +348,9 @@ fn build_atoms_with_ghosts_displaced_with_overlay(
                 rx * lattice_col_major[1] + ry * lattice_col_major[4] + rz * lattice_col_major[7];
             let tz =
                 rx * lattice_col_major[2] + ry * lattice_col_major[5] + rz * lattice_col_major[8];
-            
+
             let mut atom = *intrinsic_atoms.get(*atom_idx).ok_or_else(|| {
-                IpcError::invalid_argument(
-                    "Wannier ghost has no matching intrinsic atom",
-                )
+                IpcError::invalid_argument("Wannier ghost has no matching intrinsic atom")
             })?;
             atom.position = [pos[0] + tx as f32, pos[1] + ty as f32, pos[2] + tz as f32];
             atom.radius *= 0.50;
@@ -369,7 +367,7 @@ fn build_atoms_with_ghosts_displaced_with_overlay(
             });
         }
     }
-    
+
     Ok(instances)
 }
 

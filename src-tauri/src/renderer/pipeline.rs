@@ -8,8 +8,6 @@ use super::camera::CameraUniform;
 use super::instance::{AtomInstance, BondInstance, LineVertex};
 use super::publication_look::PublicationLookUniform;
 
-const INTERACTIVE_SAMPLE_COUNT: u32 = 1;
-
 pub struct PublicationPipelineSet {
     pub render: wgpu::RenderPipeline,
     pub transparent: wgpu::RenderPipeline,
@@ -225,6 +223,69 @@ pub fn create_line_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
             depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: sample_count,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// Render CPU-realized field slice triangles.  Slice colors are already
+/// linear-space scalar mappings; this pass only applies camera projection and
+/// straight-alpha blending.
+pub fn create_field_slice_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Field Slice Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/field_slice.wgsl").into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Field Slice Pipeline Layout"),
+        bind_group_layouts: &[camera_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Field Slice Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("field_slice_vertex"),
+            buffers: &[LineVertex::buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("field_slice_fragment"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
@@ -540,6 +601,7 @@ pub fn create_isosurface_render_pipeline(
     surface_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     iso_params_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     let shader_source = include_str!("../../shaders/isosurface_render.wgsl");
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -589,7 +651,7 @@ pub fn create_isosurface_render_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: INTERACTIVE_SAMPLE_COUNT,
+            count: sample_count,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },
@@ -629,6 +691,7 @@ pub fn create_volume_raycast_pipeline(
     surface_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     volume_bind_group_layout: &wgpu::BindGroupLayout,
+    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Volume Raycast Shader"),
@@ -691,7 +754,7 @@ pub fn create_volume_raycast_pipeline(
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState {
-            count: INTERACTIVE_SAMPLE_COUNT,
+            count: sample_count,
             mask: !0,
             alpha_to_coverage_enabled: false,
         },

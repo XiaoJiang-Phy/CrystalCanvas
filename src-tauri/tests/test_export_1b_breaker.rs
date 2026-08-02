@@ -125,8 +125,7 @@ fn export_camera_and_background_are_snapshot_owned_not_interactive_renderer_muta
         "all four backgrounds and the export camera snapshot must be resolved before target allocation"
     );
     assert!(
-        offscreen.contains("config.camera")
-            && offscreen.contains("config.background"),
+        offscreen.contains("config.camera") && offscreen.contains("config.background"),
         "the offscreen pass must consume the frozen export camera and background, not read mutable interactive values during rendering"
     );
     for forbidden_interactive_mutation in [

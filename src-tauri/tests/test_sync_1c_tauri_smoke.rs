@@ -89,7 +89,10 @@ fn run_sync_smoke() {
     let event_versions = state_event_versions.clone();
     let listener = app.listen("state_changed", move |event| {
         let payload: serde_json::Value = serde_json::from_str(event.payload()).unwrap();
-        let version = payload["version"].as_u64().and_then(|value| u32::try_from(value).ok()).unwrap();
+        let version = payload["version"]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap();
         event_versions.lock().unwrap().push(version);
     });
 
@@ -243,7 +246,10 @@ fn run_sync_smoke() {
     viewport::pan_camera(1.0, -1.0, app.state()).unwrap();
     viewport::zoom_camera(1.0, app.state()).unwrap();
     assert_eq!(version(&app), before_camera_version);
-    assert_eq!(state_event_versions.lock().unwrap().len(), before_camera_events);
+    assert_eq!(
+        state_event_versions.lock().unwrap().len(),
+        before_camera_events
+    );
 
     let before_duplicate_version = version(&app);
     let before_duplicate_events = state_event_versions.lock().unwrap().len();
@@ -257,7 +263,10 @@ fn run_sync_smoke() {
     assert_eq!(version(&app), before_duplicate_version);
     let state_event_versions = state_event_versions.lock().unwrap();
     assert_eq!(state_event_versions.len(), before_duplicate_events + 1);
-    assert_eq!(state_event_versions[before_duplicate_events], before_duplicate_version);
+    assert_eq!(
+        state_event_versions[before_duplicate_events],
+        before_duplicate_version
+    );
 
     app.unlisten(listener);
 }

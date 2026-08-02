@@ -7,6 +7,9 @@ struct MCParams {
     lattice_b: vec4<f32>, // col 1
     lattice_c: vec4<f32>, // col 2
     origin: vec4<f32>,    // grid origin offset (Å)
+    gradient_a: vec4<f32>, // col 0 of sample-step inverse transpose
+    gradient_b: vec4<f32>, // col 1 of sample-step inverse transpose
+    gradient_c: vec4<f32>, // col 2 of sample-step inverse transpose
     threshold: f32,
     sign_mode: u32,       // 0=positive, 1=negative, 2=both
     _pad0: f32,
@@ -31,6 +34,8 @@ struct IsoVertex {
 
 @group(0) @binding(4) var<storage, read_write> vertices: array<IsoVertex>;
 @group(0) @binding(5) var<storage, read_write> counter: atomic<u32>;
+// [attempted vertices, generated vertices, completed writes, reserved]
+@group(0) @binding(6) var<storage, read_write> accounting: array<atomic<u32>>;
 
 const corner_offsets = array<vec3<u32>, 8>(
     vec3<u32>(0u,0u,0u), vec3<u32>(1u,0u,0u), vec3<u32>(1u,1u,0u), vec3<u32>(0u,1u,0u),
@@ -49,8 +54,31 @@ fn flat_idx(ix: u32, iy: u32, iz: u32) -> u32 {
     return ix + iy * nx + iz * nx * ny;
 }
 
+fn axis_periodic(axis: u32) -> bool {
+    return (params.grid_dims.w & (1u << axis)) != 0u;
+}
+
+fn axis_index(index: u32, dimension: u32, axis: u32) -> u32 {
+    return select(min(index, dimension - 1u), index % dimension, axis_periodic(axis));
+}
+
+fn cell_count(dimension: u32, axis: u32) -> u32 {
+    return select(dimension - 1u, dimension, axis_periodic(axis));
+}
+
+fn derivative_span(coordinate: u32, dimension: u32, axis: u32) -> f32 {
+    if axis_periodic(axis) {
+        return 2.0;
+    }
+    return select(1.0, 2.0, coordinate > 0u && coordinate + 1u < dimension);
+}
+
 fn sample_field(ix: u32, iy: u32, iz: u32) -> f32 {
-    return scalar_field[flat_idx(ix, iy, iz)];
+    return scalar_field[flat_idx(
+        axis_index(ix, params.grid_dims.x, 0u),
+        axis_index(iy, params.grid_dims.y, 1u),
+        axis_index(iz, params.grid_dims.z, 2u),
+    )];
 }
 
 fn interp_t(f0: f32, f1: f32, threshold: f32) -> f32 {
@@ -70,18 +98,18 @@ fn grad(x: u32, y: u32, z: u32) -> vec3<f32> {
     let ny = params.grid_dims.y;
     let nz = params.grid_dims.z;
 
-    let xm = select(x - 1u, 0u, x == 0u);
-    let xp = select(x + 1u, nx - 1u, x + 1u >= nx);
-    let ym = select(y - 1u, 0u, y == 0u);
-    let yp = select(y + 1u, ny - 1u, y + 1u >= ny);
-    let zm = select(z - 1u, 0u, z == 0u);
-    let zp = select(z + 1u, nz - 1u, z + 1u >= nz);
+    let xm = select(select(x - 1u, 0u, x == 0u), (x + nx - 1u) % nx, axis_periodic(0u));
+    let xp = select(min(x + 1u, nx - 1u), (x + 1u) % nx, axis_periodic(0u));
+    let ym = select(select(y - 1u, 0u, y == 0u), (y + ny - 1u) % ny, axis_periodic(1u));
+    let yp = select(min(y + 1u, ny - 1u), (y + 1u) % ny, axis_periodic(1u));
+    let zm = select(select(z - 1u, 0u, z == 0u), (z + nz - 1u) % nz, axis_periodic(2u));
+    let zp = select(min(z + 1u, nz - 1u), (z + 1u) % nz, axis_periodic(2u));
 
-    let dx = sample_field(xp, y, z) - sample_field(xm, y, z);
-    let dy = sample_field(x, yp, z) - sample_field(x, ym, z);
-    let dz = sample_field(x, y, zp) - sample_field(x, y, zm);
+    let dx = (sample_field(xp, y, z) - sample_field(xm, y, z)) / derivative_span(x, nx, 0u);
+    let dy = (sample_field(x, yp, z) - sample_field(x, ym, z)) / derivative_span(y, ny, 1u);
+    let dz = (sample_field(x, y, zp) - sample_field(x, y, zm)) / derivative_span(z, nz, 2u);
 
-    return vec3<f32>(dx, dy, dz);
+    return dx * params.gradient_a.xyz + dy * params.gradient_b.xyz + dz * params.gradient_c.xyz;
 }
 
 fn gradient_at(ix: u32, iy: u32, iz: u32, t: f32, edge_axis: u32) -> vec3<f32> {
@@ -123,7 +151,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let iy = global_id.y;
     let iz = global_id.z;
 
-    if ix >= nx - 1u || iy >= ny - 1u || iz >= nz - 1u {
+    let cells_x = cell_count(nx, 0u);
+    let cells_y = cell_count(ny, 1u);
+    let cells_z = cell_count(nz, 2u);
+    if ix >= cells_x || iy >= cells_y || iz >= cells_z {
         return;
     }
 
@@ -176,13 +207,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
             let t = interp_t(fa, fb, eff_threshold);
 
-            let ua = f32(ix + oa.x) / f32(nx - 1u);
-            let va = f32(iy + oa.y) / f32(ny - 1u);
-            let wa = f32(iz + oa.z) / f32(nz - 1u);
+            let ua = f32(ix + oa.x) / f32(cells_x);
+            let va = f32(iy + oa.y) / f32(cells_y);
+            let wa = f32(iz + oa.z) / f32(cells_z);
 
-            let ub = f32(ix + ob.x) / f32(nx - 1u);
-            let vb = f32(iy + ob.y) / f32(ny - 1u);
-            let wb = f32(iz + ob.z) / f32(nz - 1u);
+            let ub = f32(ix + ob.x) / f32(cells_x);
+            let vb = f32(iy + ob.y) / f32(cells_y);
+            let wb = f32(iz + ob.z) / f32(cells_z);
 
             let pa = frac_to_cart(ua, va, wa);
             let pb = frac_to_cart(ub, vb, wb);
@@ -207,11 +238,26 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         ti += 3u;
 
+        atomicAdd(&accounting[0], 3u);
+
         let max_vertices = arrayLength(&vertices);
         var start_idx: u32;
         loop {
             let observed = atomicLoad(&counter);
             if observed > max_vertices || max_vertices - observed < 3u {
+                // Account for every remaining triangle in this cube before
+                // terminating the invocation. Capacity telemetry must remain
+                // exact precisely when storage is exhausted.
+                var remaining_ti = ti;
+                var remaining_vertices = 0u;
+                while remaining_ti < 15u {
+                    if tri_table[cube_case * 16u + remaining_ti] < 0 {
+                        break;
+                    }
+                    remaining_vertices += 3u;
+                    remaining_ti += 3u;
+                }
+                atomicAdd(&accounting[0], remaining_vertices);
                 return;
             }
             let exchanged = atomicCompareExchangeWeak(&counter, observed, observed + 3u);
@@ -220,6 +266,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 break;
             }
         }
+        atomicAdd(&accounting[1], 3u);
         
         let e0 = u32(e0i);
         let e1 = u32(e1i);
@@ -239,5 +286,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let n2 = edge_norm[e2];
         let s2 = edge_sign[e2];
         vertices[start_idx + 2u] = IsoVertex(p2.x, p2.y, p2.z, n2.x, n2.y, n2.z, s2, 0.0);
+        atomicAdd(&accounting[2], 3u);
     }
 }

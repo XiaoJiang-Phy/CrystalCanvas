@@ -5,9 +5,14 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::io::Read;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 pub(crate) const MAX_RESIDENT_FIELD_LAYERS: usize = 6;
+/// Retained as FIELD-1 contract metadata; FIGURE-2 uses its own visible-layer cap.
+#[allow(dead_code)]
 pub(crate) const MAX_VISIBLE_FIELD_LAYERS_FIELD_1: usize = 1;
 pub(crate) const MAX_FIELD_SCALAR_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const MAX_TOTAL_FIELD_SCALAR_BYTES: usize = 96 * 1024 * 1024;
@@ -23,7 +28,9 @@ static NEXT_FIELD_TOKEN: AtomicU64 = AtomicU64::new(0);
 
 fn next_field_token(kind: &str) -> Result<u64, String> {
     NEXT_FIELD_TOKEN
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_add(1))
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current.checked_add(1)
+        })
         .map(|current| current + 1)
         .map_err(|_| format!("field {kind} exhausted"))
 }
@@ -50,6 +57,130 @@ pub enum FieldGridOrdering {
     ColMajor,
 }
 
+/// Endpoint convention declared by the format adapter for each grid axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum AxisSampling {
+    /// VASP-style periodic samples cover [0, 1) and use cell / N.
+    PeriodicExclusive,
+    /// Cube and registered XSF grids include both declared endpoints.
+    InclusiveBoundary,
+}
+
+/// The sole conversion between integer scalar indices and renderer-world Å.
+/// `sample_steps_col_major` stores the three step vectors as matrix columns.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct FieldGridMapping {
+    pub origin_angstrom: [f64; 3],
+    pub sample_steps_col_major: [f64; 9],
+    pub dimensions: [usize; 3],
+    pub axis_sampling: [AxisSampling; 3],
+}
+
+impl FieldGridMapping {
+    #[must_use]
+    pub fn cell_counts(&self) -> [usize; 3] {
+        std::array::from_fn(|axis| match self.axis_sampling[axis] {
+            AxisSampling::PeriodicExclusive => self.dimensions[axis],
+            AxisSampling::InclusiveBoundary => self.dimensions[axis].saturating_sub(1),
+        })
+    }
+
+    #[must_use]
+    pub fn domain_lattice_col_major(&self) -> [f64; 9] {
+        let counts = self.cell_counts();
+        std::array::from_fn(|index| self.sample_steps_col_major[index] * counts[index / 3] as f64)
+    }
+
+    pub fn index_to_world(&self, index: [usize; 3]) -> [f64; 3] {
+        let index = [index[0] as f64, index[1] as f64, index[2] as f64];
+        [
+            self.origin_angstrom[0]
+                + self.sample_steps_col_major[0] * index[0]
+                + self.sample_steps_col_major[3] * index[1]
+                + self.sample_steps_col_major[6] * index[2],
+            self.origin_angstrom[1]
+                + self.sample_steps_col_major[1] * index[0]
+                + self.sample_steps_col_major[4] * index[1]
+                + self.sample_steps_col_major[7] * index[2],
+            self.origin_angstrom[2]
+                + self.sample_steps_col_major[2] * index[0]
+                + self.sample_steps_col_major[5] * index[1]
+                + self.sample_steps_col_major[8] * index[2],
+        ]
+    }
+
+    pub fn world_to_grid(&self, world: [f64; 3]) -> Option<[f64; 3]> {
+        let delta = [
+            world[0] - self.origin_angstrom[0],
+            world[1] - self.origin_angstrom[1],
+            world[2] - self.origin_angstrom[2],
+        ];
+        solve_col_major_3x3(&self.sample_steps_col_major, delta)
+    }
+
+    pub fn sample_trilinear(&self, data: &[f32], world: [f64; 3]) -> Option<f32> {
+        let coordinate = self.world_to_grid(world)?;
+        let dims = self.dimensions;
+        if dims.iter().any(|&n| n < 2)
+            || coordinate.iter().enumerate().any(|(axis, &value)| {
+                !value.is_finite()
+                    || value < 0.0
+                    || match self.axis_sampling[axis] {
+                        AxisSampling::PeriodicExclusive => value >= dims[axis] as f64,
+                        AxisSampling::InclusiveBoundary => value > (dims[axis] - 1) as f64,
+                    }
+            })
+        {
+            return None;
+        }
+        let base = [
+            coordinate[0].floor() as usize,
+            coordinate[1].floor() as usize,
+            coordinate[2].floor() as usize,
+        ];
+        let next: [usize; 3] = std::array::from_fn(|axis| match self.axis_sampling[axis] {
+            AxisSampling::PeriodicExclusive => (base[axis] + 1) % dims[axis],
+            AxisSampling::InclusiveBoundary => (base[axis] + 1).min(dims[axis] - 1),
+        });
+        let weight = [
+            coordinate[0] - base[0] as f64,
+            coordinate[1] - base[1] as f64,
+            coordinate[2] - base[2] as f64,
+        ];
+        let at = |x, y, z| {
+            data.get(x + dims[0] * (y + dims[1] * z))
+                .copied()
+                .map(f64::from)
+        };
+        let mix = |a: f64, b: f64, t: f64| a.mul_add(1.0 - t, b * t);
+        let x00 = mix(
+            at(base[0], base[1], base[2])?,
+            at(next[0], base[1], base[2])?,
+            weight[0],
+        );
+        let x10 = mix(
+            at(base[0], next[1], base[2])?,
+            at(next[0], next[1], base[2])?,
+            weight[0],
+        );
+        let x01 = mix(
+            at(base[0], base[1], next[2])?,
+            at(next[0], base[1], next[2])?,
+            weight[0],
+        );
+        let x11 = mix(
+            at(base[0], next[1], next[2])?,
+            at(next[0], next[1], next[2])?,
+            weight[0],
+        );
+        Some(mix(
+            mix(x00, x10, weight[1]),
+            mix(x01, x11, weight[1]),
+            weight[2],
+        ) as f32)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum ScalarUnit {
     ElectronPerCubicAngstrom,
@@ -72,6 +203,8 @@ pub struct FieldSourceMetadata {
     pub scalar_unit_scale: f64,
     pub normalization: FieldNormalization,
     pub metadata_declared: bool,
+    /// Source-frame origin retained separately from renderer coordinates.
+    pub source_origin_angstrom: Option<[f64; 3]>,
 }
 
 impl FieldSourceMetadata {
@@ -80,6 +213,7 @@ impl FieldSourceMetadata {
         scalar_unit_scale: 1.0,
         normalization: FieldNormalization::Raw,
         metadata_declared: false,
+        source_origin_angstrom: None,
     };
 }
 
@@ -108,7 +242,10 @@ pub enum FieldRenderMode {
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct FieldRenderSettings {
     pub visible: bool,
+    /// Legacy linked threshold. New FIGURE-2 callers set the signed thresholds explicitly.
     pub isovalue: f32,
+    pub positive_isovalue: f32,
+    pub negative_isovalue: f32,
     pub sign_mode: FieldSignMode,
     pub color: [f32; 4],
     pub color_negative: [f32; 4],
@@ -122,6 +259,8 @@ impl Default for FieldRenderSettings {
         Self {
             visible: true,
             isovalue: 0.0,
+            positive_isovalue: 0.0,
+            negative_isovalue: 0.0,
             sign_mode: FieldSignMode::Positive,
             color: [0.0, 0.722, 0.831, 0.5],
             color_negative: [0.0, 0.722, 0.831, 0.5],
@@ -136,6 +275,7 @@ impl Default for FieldRenderSettings {
 pub enum FieldGridMappingError {
     Degenerate,
     BufferLength,
+    Unsolvable,
     Undeclared,
 }
 
@@ -176,6 +316,9 @@ pub struct FieldLayer {
     /// ColMajor lattice matrix in Angstrom.
     pub lattice_angstrom: [f64; 9],
     pub origin_angstrom: [f64; 3],
+    /// Source-file origin retained independently from renderer-space mapping.
+    pub source_origin_angstrom: Option<[f64; 3]>,
+    pub grid_mapping: FieldGridMapping,
     pub periodic_axes: [bool; 3],
     pub attachment: FieldAttachment,
     pub ordering: FieldGridOrdering,
@@ -190,6 +333,7 @@ pub struct FieldLayer {
     pub normalized_sha256: String,
     pub lineage: Option<Vec<FieldLineageTerm>>,
     pub render_settings: FieldRenderSettings,
+    pub presentation_settings: crate::renderer::field_scene::FieldPresentationSettings,
 }
 
 #[derive(Clone, Default)]
@@ -201,26 +345,69 @@ pub(crate) struct FieldScene {
 
 pub trait ScalarFieldView {
     fn grid_dims(&self) -> [usize; 3];
+    fn grid_ordering(&self) -> FieldGridOrdering;
     fn lattice_angstrom(&self) -> &[f64; 9];
     fn origin_angstrom(&self) -> &[f64; 3];
+    fn source_origin_angstrom(&self) -> Option<[f64; 3]> {
+        None
+    }
+    fn grid_mapping(&self) -> FieldGridMapping;
     fn scalar_data(&self) -> &[f32];
     fn scalar_range(&self) -> (f32, f32);
 }
 
 impl ScalarFieldView for VolumetricData {
-    fn grid_dims(&self) -> [usize; 3] { self.grid_dims }
-    fn lattice_angstrom(&self) -> &[f64; 9] { &self.lattice }
-    fn origin_angstrom(&self) -> &[f64; 3] { &self.origin }
-    fn scalar_data(&self) -> &[f32] { &self.data }
-    fn scalar_range(&self) -> (f32, f32) { (self.data_min, self.data_max) }
+    fn grid_dims(&self) -> [usize; 3] {
+        self.grid_dims
+    }
+    fn grid_ordering(&self) -> FieldGridOrdering {
+        FieldGridOrdering::ColMajor
+    }
+    fn lattice_angstrom(&self) -> &[f64; 9] {
+        &self.lattice
+    }
+    fn origin_angstrom(&self) -> &[f64; 3] {
+        &self.origin
+    }
+    fn source_origin_angstrom(&self) -> Option<[f64; 3]> {
+        self.scalar_metadata.source_origin_angstrom
+    }
+    fn grid_mapping(&self) -> FieldGridMapping {
+        self.grid_mapping()
+    }
+    fn scalar_data(&self) -> &[f32] {
+        &self.data
+    }
+    fn scalar_range(&self) -> (f32, f32) {
+        (self.data_min, self.data_max)
+    }
 }
 
 impl ScalarFieldView for FieldLayer {
-    fn grid_dims(&self) -> [usize; 3] { self.grid_dims }
-    fn lattice_angstrom(&self) -> &[f64; 9] { &self.lattice_angstrom }
-    fn origin_angstrom(&self) -> &[f64; 3] { &self.origin_angstrom }
-    fn scalar_data(&self) -> &[f32] { &self.data }
-    fn scalar_range(&self) -> (f32, f32) { (self.data_min, self.data_max) }
+    fn grid_dims(&self) -> [usize; 3] {
+        self.grid_dims
+    }
+    fn grid_ordering(&self) -> FieldGridOrdering {
+        self.ordering
+    }
+    fn lattice_angstrom(&self) -> &[f64; 9] {
+        &self.lattice_angstrom
+    }
+    fn origin_angstrom(&self) -> &[f64; 3] {
+        &self.origin_angstrom
+    }
+    fn source_origin_angstrom(&self) -> Option<[f64; 3]> {
+        self.source_origin_angstrom
+    }
+    fn grid_mapping(&self) -> FieldGridMapping {
+        self.grid_mapping
+    }
+    fn scalar_data(&self) -> &[f32] {
+        &self.data
+    }
+    fn scalar_range(&self) -> (f32, f32) {
+        (self.data_min, self.data_max)
+    }
 }
 
 impl FieldLayer {
@@ -239,6 +426,9 @@ impl FieldLayer {
         let scalar_metadata = volumetric.scalar_metadata;
         let mut render_settings = FieldRenderSettings::default();
         render_settings.isovalue = default_field_isovalue(data_min, data_max);
+        render_settings.positive_isovalue = render_settings.isovalue;
+        render_settings.negative_isovalue = render_settings.isovalue;
+        let grid_mapping = volumetric.grid_mapping();
         let layer = Self {
             id,
             revision,
@@ -246,7 +436,11 @@ impl FieldLayer {
             grid_dims: volumetric.grid_dims,
             lattice_angstrom: volumetric.lattice,
             origin_angstrom: volumetric.origin,
-            periodic_axes: [true, true, true],
+            source_origin_angstrom: scalar_metadata.source_origin_angstrom,
+            grid_mapping,
+            periodic_axes: grid_mapping
+                .axis_sampling
+                .map(|axis| matches!(axis, AxisSampling::PeriodicExclusive)),
             attachment: FieldAttachment::Cell,
             ordering: FieldGridOrdering::ColMajor,
             scalar_unit: scalar_metadata.scalar_unit,
@@ -260,6 +454,7 @@ impl FieldLayer {
             source_sha256: normalized_sha256,
             lineage: None,
             render_settings,
+            presentation_settings: Default::default(),
         };
         layer.validate()?;
         Ok(layer)
@@ -271,9 +466,19 @@ impl FieldLayer {
             Some(FieldCompatibilityFailure::Undeclared)
         } else if self.grid_dims != other.grid_dims {
             Some(FieldCompatibilityFailure::GridDimensions)
-        } else if !self.lattice_angstrom.iter().zip(other.lattice_angstrom.iter()).all(|(a, b)| (a - b).abs() <= LATTICE_TOLERANCE_ANGSTROM) {
+        } else if !self
+            .lattice_angstrom
+            .iter()
+            .zip(other.lattice_angstrom.iter())
+            .all(|(a, b)| (a - b).abs() <= LATTICE_TOLERANCE_ANGSTROM)
+        {
             Some(FieldCompatibilityFailure::Lattice)
-        } else if !self.origin_angstrom.iter().zip(other.origin_angstrom.iter()).all(|(a, b)| (a - b).abs() <= LATTICE_TOLERANCE_ANGSTROM) {
+        } else if !self
+            .origin_angstrom
+            .iter()
+            .zip(other.origin_angstrom.iter())
+            .all(|(a, b)| (a - b).abs() <= LATTICE_TOLERANCE_ANGSTROM)
+        {
             Some(FieldCompatibilityFailure::Origin)
         } else if self.ordering != other.ordering {
             Some(FieldCompatibilityFailure::Ordering)
@@ -290,40 +495,91 @@ impl FieldLayer {
         } else {
             None
         };
-        FieldCompatibilityReceipt { compatible: failure.is_none(), failure }
+        FieldCompatibilityReceipt {
+            compatible: failure.is_none(),
+            failure,
+        }
     }
 
     fn validate(&self) -> Result<(), String> {
-        let voxel_count = self.grid_dims.iter().try_fold(1_usize, |count, dimension| {
-            if *dimension == 0 { return None; }
-            count.checked_mul(*dimension)
-        }).ok_or_else(|| "field grid dimensions overflow or contain zero".to_string())?;
-        let scalar_bytes = voxel_count.checked_mul(std::mem::size_of::<f32>())
+        let voxel_count = self
+            .grid_dims
+            .iter()
+            .try_fold(1_usize, |count, dimension| {
+                if *dimension == 0 {
+                    return None;
+                }
+                count.checked_mul(*dimension)
+            })
+            .ok_or_else(|| "field grid dimensions overflow or contain zero".to_string())?;
+        let scalar_bytes = voxel_count
+            .checked_mul(std::mem::size_of::<f32>())
             .ok_or_else(|| "field scalar byte count overflow".to_string())?;
-        if scalar_bytes > MAX_FIELD_SCALAR_BYTES { return Err("field scalar data exceeds per-layer byte limit".into()); }
-        if self.data.len() != voxel_count { return Err(format!("{:?}: field scalar buffer length does not match grid dimensions", FieldGridMappingError::BufferLength)); }
-        if !self.data.iter().all(|value| value.is_finite()) { return Err("field scalar buffer must be finite".into()); }
-        if !self.lattice_angstrom.iter().chain(self.origin_angstrom.iter()).all(|value| value.is_finite()) { return Err("field grid mapping must be finite".into()); }
+        if scalar_bytes > MAX_FIELD_SCALAR_BYTES {
+            return Err("field scalar data exceeds per-layer byte limit".into());
+        }
+        if self.data.len() != voxel_count {
+            return Err(format!(
+                "{:?}: field scalar buffer length does not match grid dimensions",
+                FieldGridMappingError::BufferLength
+            ));
+        }
+        if !self.data.iter().all(|value| value.is_finite()) {
+            return Err("field scalar buffer must be finite".into());
+        }
+        if !self
+            .lattice_angstrom
+            .iter()
+            .chain(self.origin_angstrom.iter())
+            .all(|value| value.is_finite())
+        {
+            return Err("field grid mapping must be finite".into());
+        }
         let l = &self.lattice_angstrom;
-        let determinant = l[0] * (l[4] * l[8] - l[5] * l[7]) - l[1] * (l[3] * l[8] - l[5] * l[6]) + l[2] * (l[3] * l[7] - l[4] * l[6]);
-        if !determinant.is_finite() || determinant.abs() <= f64::EPSILON { return Err(format!("{:?} field lattice", FieldGridMappingError::Degenerate)); }
-        if !self.scalar_unit_scale.is_finite() || self.scalar_unit_scale <= 0.0 { return Err(format!("{:?} field scalar unit scale", FieldGridMappingError::Undeclared)); }
-        if !self.data_min.is_finite() || !self.data_max.is_finite() || self.data_min > self.data_max { return Err("field scalar range must be finite and ordered".into()); }
+        let determinant = l[0] * (l[4] * l[8] - l[5] * l[7]) - l[1] * (l[3] * l[8] - l[5] * l[6])
+            + l[2] * (l[3] * l[7] - l[4] * l[6]);
+        if !determinant.is_finite() || determinant.abs() <= f64::EPSILON {
+            return Err(format!(
+                "{:?} field lattice",
+                FieldGridMappingError::Degenerate
+            ));
+        }
+        if !self.scalar_unit_scale.is_finite() || self.scalar_unit_scale <= 0.0 {
+            return Err(format!(
+                "{:?} field scalar unit scale",
+                FieldGridMappingError::Undeclared
+            ));
+        }
+        if !self.data_min.is_finite() || !self.data_max.is_finite() || self.data_min > self.data_max
+        {
+            return Err("field scalar range must be finite and ordered".into());
+        }
+        self.presentation_settings.validate()?;
         Ok(())
     }
 }
 
 fn validate_volumetric_input(input: &VolumetricData) -> Result<(), String> {
-    let voxel_count = input.grid_dims.iter().try_fold(1_usize, |count, dimension| {
-        (*dimension != 0).then(|| count.checked_mul(*dimension)).flatten()
-    }).ok_or_else(|| "field grid dimensions overflow or contain zero".to_string())?;
-    let scalar_bytes = voxel_count.checked_mul(std::mem::size_of::<f32>())
+    let voxel_count = input
+        .grid_dims
+        .iter()
+        .try_fold(1_usize, |count, dimension| {
+            (*dimension != 0)
+                .then(|| count.checked_mul(*dimension))
+                .flatten()
+        })
+        .ok_or_else(|| "field grid dimensions overflow or contain zero".to_string())?;
+    let scalar_bytes = voxel_count
+        .checked_mul(std::mem::size_of::<f32>())
         .ok_or_else(|| "field scalar byte count overflow".to_string())?;
     if scalar_bytes > MAX_FIELD_SCALAR_BYTES {
         return Err("field scalar data exceeds per-layer byte limit".into());
     }
     if input.data.len() != voxel_count {
-        return Err(format!("{:?}: field scalar buffer length does not match grid dimensions", FieldGridMappingError::BufferLength));
+        return Err(format!(
+            "{:?}: field scalar buffer length does not match grid dimensions",
+            FieldGridMappingError::BufferLength
+        ));
     }
     if !input.data.iter().all(|value| value.is_finite()) {
         return Err("field scalar buffer must be finite".into());
@@ -347,29 +603,36 @@ fn validate_volumetric_input(input: &VolumetricData) -> Result<(), String> {
         return Err("declared field metadata requires a physical scalar unit".into());
     }
     let l = &input.lattice;
-    let determinant = l[0] * (l[4] * l[8] - l[5] * l[7])
-        - l[1] * (l[3] * l[8] - l[5] * l[6])
+    let determinant = l[0] * (l[4] * l[8] - l[5] * l[7]) - l[1] * (l[3] * l[8] - l[5] * l[6])
         + l[2] * (l[3] * l[7] - l[4] * l[6]);
     if !determinant.is_finite() || determinant.abs() <= f64::EPSILON {
-        return Err(format!("{:?} field lattice", FieldGridMappingError::Degenerate));
+        return Err(format!(
+            "{:?} field lattice",
+            FieldGridMappingError::Degenerate
+        ));
     }
     Ok(())
 }
 
 impl FieldScene {
     pub fn active_layer(&self) -> Option<&FieldLayer> {
-        self.active_layer.and_then(|id| self.layers.iter().find(|layer| layer.id == id))
+        self.active_layer
+            .and_then(|id| self.layers.iter().find(|layer| layer.id == id))
     }
 
     pub fn active_layer_mut(&mut self) -> Option<&mut FieldLayer> {
-        self.active_layer.and_then(|id| self.layers.iter_mut().find(|layer| layer.id == id))
+        self.active_layer
+            .and_then(|id| self.layers.iter_mut().find(|layer| layer.id == id))
     }
 
     pub fn rename_layer(&mut self, id: FieldLayerId, label: String) -> Result<(), String> {
         if label.is_empty() || label.len() > MAX_FIELD_LABEL_BYTES {
             return Err("field label is invalid".into());
         }
-        let layer = self.layers.iter_mut().find(|layer| layer.id == id)
+        let layer = self
+            .layers
+            .iter_mut()
+            .find(|layer| layer.id == id)
             .ok_or_else(|| "field layer does not exist".to_string())?;
         layer.label = label;
         self.revision = next_field_token("scene revision")?;
@@ -377,14 +640,37 @@ impl FieldScene {
     }
 
     pub fn set_layer_visibility(&mut self, id: FieldLayerId, visible: bool) -> Result<(), String> {
-        let layer = self.layers.iter_mut().find(|layer| layer.id == id)
+        let layer = self
+            .layers
+            .iter_mut()
+            .find(|layer| layer.id == id)
             .ok_or_else(|| "field layer does not exist".to_string())?;
         layer.render_settings.visible = visible;
         self.revision = next_field_token("scene revision")?;
         Ok(())
     }
 
-    pub fn replace_with(&mut self, label: String, volumetric: VolumetricData) -> Result<&FieldLayer, String> {
+    pub fn set_layer_presentation(
+        &mut self,
+        id: FieldLayerId,
+        presentation_settings: crate::renderer::field_scene::FieldPresentationSettings,
+    ) -> Result<(), String> {
+        presentation_settings.validate()?;
+        let layer = self
+            .layers
+            .iter_mut()
+            .find(|layer| layer.id == id)
+            .ok_or_else(|| "field layer does not exist".to_string())?;
+        layer.presentation_settings = presentation_settings;
+        self.revision = next_field_token("scene revision")?;
+        Ok(())
+    }
+
+    pub fn replace_with(
+        &mut self,
+        label: String,
+        volumetric: VolumetricData,
+    ) -> Result<&FieldLayer, String> {
         let mut replacement = Self::default();
         replacement.add_layer(label, volumetric)?;
         *self = replacement;
@@ -403,16 +689,47 @@ impl FieldScene {
         Ok(layer)
     }
 
-    pub fn add_layer(&mut self, label: String, volumetric: VolumetricData) -> Result<&FieldLayer, String> {
-        if self.layers.len() >= MAX_RESIDENT_FIELD_LAYERS { return Err("field scene has reached MAX_RESIDENT_FIELD_LAYERS".into()); }
+    pub fn add_layer(
+        &mut self,
+        label: String,
+        volumetric: VolumetricData,
+    ) -> Result<&FieldLayer, String> {
+        if self.layers.len() >= MAX_RESIDENT_FIELD_LAYERS {
+            return Err("field scene has reached MAX_RESIDENT_FIELD_LAYERS".into());
+        }
         let revision = next_field_token("scene revision")?;
         let id = next_field_token("layer identifier")?;
         let layer = FieldLayer::from_volumetric(id, revision, label, volumetric)?;
-        let resident_bytes = self.layers.iter().try_fold(0_usize, |total, candidate| total.checked_add(candidate.data.len().checked_mul(std::mem::size_of::<f32>())?)).ok_or_else(|| "field scene byte count overflow".to_string())?;
-        let layer_bytes = layer.data.len().checked_mul(std::mem::size_of::<f32>()).ok_or_else(|| "field layer byte count overflow".to_string())?;
-        if resident_bytes.checked_add(layer_bytes).ok_or_else(|| "field scene byte count overflow".to_string())? > MAX_TOTAL_FIELD_SCALAR_BYTES { return Err("field scene exceeds MAX_TOTAL_FIELD_SCALAR_BYTES".into()); }
+        let resident_bytes = self
+            .layers
+            .iter()
+            .try_fold(0_usize, |total, candidate| {
+                total.checked_add(
+                    candidate
+                        .data
+                        .len()
+                        .checked_mul(std::mem::size_of::<f32>())?,
+                )
+            })
+            .ok_or_else(|| "field scene byte count overflow".to_string())?;
+        let layer_bytes = layer
+            .data
+            .len()
+            .checked_mul(std::mem::size_of::<f32>())
+            .ok_or_else(|| "field layer byte count overflow".to_string())?;
         if resident_bytes
-            .checked_add(layer_bytes.checked_mul(2).ok_or_else(|| "field operation byte count overflow".to_string())?)
+            .checked_add(layer_bytes)
+            .ok_or_else(|| "field scene byte count overflow".to_string())?
+            > MAX_TOTAL_FIELD_SCALAR_BYTES
+        {
+            return Err("field scene exceeds MAX_TOTAL_FIELD_SCALAR_BYTES".into());
+        }
+        if resident_bytes
+            .checked_add(
+                layer_bytes
+                    .checked_mul(2)
+                    .ok_or_else(|| "field operation byte count overflow".to_string())?,
+            )
             .ok_or_else(|| "field operation byte count overflow".to_string())?
             > MAX_FIELD_OPERATION_PEAK_BYTES
         {
@@ -420,7 +737,9 @@ impl FieldScene {
         }
         self.revision = revision;
         self.active_layer = Some(id);
-        self.layers.try_reserve(1).map_err(|_| "unable to reserve field layer slot")?;
+        self.layers
+            .try_reserve(1)
+            .map_err(|_| "unable to reserve field layer slot")?;
         self.layers.push(layer);
         Ok(self.layers.last().expect("pushed field layer"))
     }
@@ -438,7 +757,11 @@ impl FieldScene {
     }
 
     pub fn remove_layer(&mut self, id: FieldLayerId) -> Result<(), String> {
-        let position = self.layers.iter().position(|layer| layer.id == id).ok_or_else(|| "field layer does not exist".to_string())?;
+        let position = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == id)
+            .ok_or_else(|| "field layer does not exist".to_string())?;
         self.layers.remove(position);
         self.revision = next_field_token("scene revision")?;
         if self.active_layer == Some(id) {
@@ -448,8 +771,14 @@ impl FieldScene {
     }
 
     pub fn reorder_layer(&mut self, id: FieldLayerId, target_index: usize) -> Result<(), String> {
-        if target_index >= self.layers.len() { return Err("field target index is out of range".into()); }
-        let position = self.layers.iter().position(|layer| layer.id == id).ok_or_else(|| "field layer does not exist".to_string())?;
+        if target_index >= self.layers.len() {
+            return Err("field target index is out of range".into());
+        }
+        let position = self
+            .layers
+            .iter()
+            .position(|layer| layer.id == id)
+            .ok_or_else(|| "field layer does not exist".to_string())?;
         let layer = self.layers.remove(position);
         self.layers.insert(target_index, layer);
         self.revision = next_field_token("scene revision")?;
@@ -457,19 +786,37 @@ impl FieldScene {
     }
 
     pub fn select_active(&mut self, id: FieldLayerId) -> Result<(), String> {
-        if !self.layers.iter().any(|layer| layer.id == id) { return Err("field layer does not exist".into()); }
+        if !self.layers.iter().any(|layer| layer.id == id) {
+            return Err("field layer does not exist".into());
+        }
         self.active_layer = Some(id);
         self.revision = next_field_token("scene revision")?;
         Ok(())
     }
 
-    pub fn combine(&mut self, terms: &[(FieldLayerId, f64)], output_label: String) -> Result<&FieldLayer, String> {
-        if terms.is_empty() || terms.len() > MAX_LINEAR_COMBINATION_TERMS { return Err("linear combination term count is invalid".into()); }
-        if self.layers.len() >= MAX_RESIDENT_FIELD_LAYERS { return Err("field scene has reached MAX_RESIDENT_FIELD_LAYERS".into()); }
-        if output_label.len() > MAX_FIELD_LABEL_BYTES { return Err("field label exceeds byte limit".into()); }
+    pub fn combine(
+        &mut self,
+        terms: &[(FieldLayerId, f64)],
+        output_label: String,
+    ) -> Result<&FieldLayer, String> {
+        if terms.is_empty() || terms.len() > MAX_LINEAR_COMBINATION_TERMS {
+            return Err("linear combination term count is invalid".into());
+        }
+        if self.layers.len() >= MAX_RESIDENT_FIELD_LAYERS {
+            return Err("field scene has reached MAX_RESIDENT_FIELD_LAYERS".into());
+        }
+        if output_label.len() > MAX_FIELD_LABEL_BYTES {
+            return Err("field label exceeds byte limit".into());
+        }
         let (first_id, first_coefficient) = terms[0];
-        if !first_coefficient.is_finite() { return Err("linear combination coefficient must be finite".into()); }
-        let reference = self.layers.iter().find(|layer| layer.id == first_id).ok_or_else(|| "linear combination source layer does not exist".to_string())?;
+        if !first_coefficient.is_finite() {
+            return Err("linear combination coefficient must be finite".into());
+        }
+        let reference = self
+            .layers
+            .iter()
+            .find(|layer| layer.id == first_id)
+            .ok_or_else(|| "linear combination source layer does not exist".to_string())?;
         let mut sources: Vec<(&FieldLayer, f64)> = Vec::new();
         sources
             .try_reserve_exact(terms.len())
@@ -481,35 +828,62 @@ impl FieldScene {
             if sources.iter().any(|(source, _)| source.id == *id) {
                 return Err("linear combination contains a duplicate source layer".into());
             }
-            let source = self.layers.iter().find(|layer| layer.id == *id)
+            let source = self
+                .layers
+                .iter()
+                .find(|layer| layer.id == *id)
                 .ok_or_else(|| "linear combination source layer does not exist".to_string())?;
             let receipt = reference.compatibility_with(source);
             if !receipt.compatible {
-                return Err(format!("linear combination rejected: {:?}", receipt.failure));
+                return Err(format!(
+                    "linear combination rejected: {:?}",
+                    receipt.failure
+                ));
             }
             sources.push((source, *coefficient));
         }
-        let output_bytes = reference.data.len().checked_mul(std::mem::size_of::<f32>()).ok_or_else(|| "field scalar byte count overflow".to_string())?;
-        let resident_bytes = self.layers.iter().try_fold(0_usize, |total, layer| {
-            total.checked_add(layer.data.len().checked_mul(std::mem::size_of::<f32>())?)
-        }).ok_or_else(|| "field scene byte count overflow".to_string())?;
-        if resident_bytes.checked_add(output_bytes).ok_or_else(|| "field scene byte count overflow".to_string())? > MAX_TOTAL_FIELD_SCALAR_BYTES {
+        let output_bytes = reference
+            .data
+            .len()
+            .checked_mul(std::mem::size_of::<f32>())
+            .ok_or_else(|| "field scalar byte count overflow".to_string())?;
+        let resident_bytes = self
+            .layers
+            .iter()
+            .try_fold(0_usize, |total, layer| {
+                total.checked_add(layer.data.len().checked_mul(std::mem::size_of::<f32>())?)
+            })
+            .ok_or_else(|| "field scene byte count overflow".to_string())?;
+        if resident_bytes
+            .checked_add(output_bytes)
+            .ok_or_else(|| "field scene byte count overflow".to_string())?
+            > MAX_TOTAL_FIELD_SCALAR_BYTES
+        {
             return Err("field scene exceeds MAX_TOTAL_FIELD_SCALAR_BYTES".into());
         }
         if resident_bytes
-            .checked_add(output_bytes.checked_mul(2).ok_or_else(|| "field operation byte count overflow".to_string())?)
+            .checked_add(
+                output_bytes
+                    .checked_mul(2)
+                    .ok_or_else(|| "field operation byte count overflow".to_string())?,
+            )
             .ok_or_else(|| "field operation byte count overflow".to_string())?
             > MAX_FIELD_OPERATION_PEAK_BYTES
         {
             return Err("linear combination exceeds peak byte limit".into());
         }
         let mut output = Vec::new();
-        output.try_reserve_exact(reference.data.len()).map_err(|_| "unable to reserve linear-combination output")?;
+        output
+            .try_reserve_exact(reference.data.len())
+            .map_err(|_| "unable to reserve linear-combination output")?;
         for index in 0..reference.data.len() {
-            let combined = sources.iter().try_fold(0.0_f64, |accumulator, (source, coefficient)| {
-                let next = accumulator + coefficient * f64::from(source.data[index]);
-                next.is_finite().then_some(next)
-            }).ok_or_else(|| "linear combination produced a non-finite scalar".to_string())?;
+            let combined = sources
+                .iter()
+                .try_fold(0.0_f64, |accumulator, (source, coefficient)| {
+                    let next = accumulator + coefficient * f64::from(source.data[index]);
+                    next.is_finite().then_some(next)
+                })
+                .ok_or_else(|| "linear combination produced a non-finite scalar".to_string())?;
             if combined > f64::from(f32::MAX) || combined < f64::from(f32::MIN) {
                 return Err("linear combination exceeded f32 result range".into());
             }
@@ -520,7 +894,11 @@ impl FieldScene {
         let id = next_field_token("layer identifier")?;
         let revision = next_field_token("scene revision")?;
         // Canonicalize negative zero before hashing the derived source-free field.
-        for value in &mut output { if *value == 0.0 { *value = 0.0; } }
+        for value in &mut output {
+            if *value == 0.0 {
+                *value = 0.0;
+            }
+        }
         let normalized_sha256 = normalized_field_sha256_parts(
             reference.grid_dims,
             &reference.lattice_angstrom,
@@ -546,11 +924,39 @@ impl FieldScene {
         let source_sha256 = derived_source_sha256(&lineage, &normalized_sha256);
         let mut render_settings = FieldRenderSettings::default();
         render_settings.isovalue = default_field_isovalue(data_min, data_max);
-        let layer = FieldLayer { id, revision, label: output_label, grid_dims: reference.grid_dims, lattice_angstrom: reference.lattice_angstrom, origin_angstrom: reference.origin_angstrom, periodic_axes: reference.periodic_axes, attachment: reference.attachment, ordering: reference.ordering, scalar_unit: reference.scalar_unit, scalar_unit_scale: reference.scalar_unit_scale, normalization: reference.normalization, metadata_declared: reference.metadata_declared, data: Arc::from(output), data_min, data_max, source_sha256, normalized_sha256, lineage: Some(lineage), render_settings };
+        render_settings.positive_isovalue = render_settings.isovalue;
+        render_settings.negative_isovalue = render_settings.isovalue;
+        let layer = FieldLayer {
+            id,
+            revision,
+            label: output_label,
+            grid_dims: reference.grid_dims,
+            lattice_angstrom: reference.lattice_angstrom,
+            origin_angstrom: reference.origin_angstrom,
+            source_origin_angstrom: reference.source_origin_angstrom,
+            grid_mapping: reference.grid_mapping,
+            periodic_axes: reference.periodic_axes,
+            attachment: reference.attachment,
+            ordering: reference.ordering,
+            scalar_unit: reference.scalar_unit,
+            scalar_unit_scale: reference.scalar_unit_scale,
+            normalization: reference.normalization,
+            metadata_declared: reference.metadata_declared,
+            data: Arc::from(output),
+            data_min,
+            data_max,
+            source_sha256,
+            normalized_sha256,
+            lineage: Some(lineage),
+            render_settings,
+            presentation_settings: Default::default(),
+        };
         layer.validate()?;
         self.revision = revision;
         self.active_layer = Some(id);
-        self.layers.try_reserve(1).map_err(|_| "unable to reserve field layer slot")?;
+        self.layers
+            .try_reserve(1)
+            .map_err(|_| "unable to reserve field layer slot")?;
         self.layers.push(layer);
         Ok(self.layers.last().expect("pushed derived field layer"))
     }
@@ -637,13 +1043,21 @@ fn scalar_bounds(values: &[f32]) -> (f32, f32) {
 
 fn default_field_isovalue(data_min: f32, data_max: f32) -> f32 {
     let bound = data_min.abs().max(data_max.abs());
-    if !bound.is_finite() || bound <= 0.0 { return 0.0; }
-    if data_min < 0.0 { return bound * 0.1; }
+    if !bound.is_finite() || bound <= 0.0 {
+        return 0.0;
+    }
+    if data_min < 0.0 {
+        return bound * 0.1;
+    }
     let value = data_max * 0.1;
-    if value < data_min { data_min + (data_max - data_min) * 0.1 } else { value }
+    if value < data_min {
+        data_min + (data_max - data_min) * 0.1
+    } else {
+        value
+    }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Copy, Serialize)]
 pub enum VolumetricFormat {
     VaspChgcar,
     VaspLocpot,
@@ -681,6 +1095,96 @@ pub struct VolumetricData {
 
     /// Origin offset (relevant for .cube files and some .xsf; zero for CHGCAR)
     pub origin: [f64; 3],
+}
+
+impl VolumetricData {
+    /// Format adapters declare their endpoint convention here; renderers never infer it.
+    #[must_use]
+    pub fn grid_mapping(&self) -> FieldGridMapping {
+        let axis_sampling = match self.source_format {
+            VolumetricFormat::VaspChgcar | VolumetricFormat::VaspLocpot => {
+                [AxisSampling::PeriodicExclusive; 3]
+            }
+            VolumetricFormat::GaussianCube | VolumetricFormat::Xsf => {
+                [AxisSampling::InclusiveBoundary; 3]
+            }
+        };
+        let mut sample_steps_col_major = self.lattice;
+        for axis in 0..3 {
+            // Cube stores lattice as N * voxel step, XSF DATAGRID vectors are endpoint spans.
+            let divisor = match (self.source_format, axis_sampling[axis]) {
+                (VolumetricFormat::GaussianCube, _) | (_, AxisSampling::PeriodicExclusive) => {
+                    self.grid_dims[axis]
+                }
+                (_, AxisSampling::InclusiveBoundary) => self.grid_dims[axis].saturating_sub(1),
+            }
+            .max(1) as f64;
+            for row in 0..3 {
+                sample_steps_col_major[axis * 3 + row] /= divisor;
+            }
+        }
+        FieldGridMapping {
+            // Cube and XSF structures are converted from file coordinates into
+            // CrystalState's canonical renderer frame relative to the file origin.
+            // Keep `origin` on VolumetricData as adapter provenance.
+            origin_angstrom: self.origin,
+            sample_steps_col_major,
+            dimensions: self.grid_dims,
+            axis_sampling,
+        }
+    }
+}
+
+pub(crate) fn solve_col_major_3x3(matrix: &[f64; 9], rhs: [f64; 3]) -> Option<[f64; 3]> {
+    let mut augmented = [
+        [matrix[0], matrix[3], matrix[6], rhs[0]],
+        [matrix[1], matrix[4], matrix[7], rhs[1]],
+        [matrix[2], matrix[5], matrix[8], rhs[2]],
+    ];
+    let scale = augmented
+        .iter()
+        .flat_map(|row| row[..3].iter())
+        .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));
+    if !scale.is_finite() || scale <= f64::MIN_POSITIVE {
+        return None;
+    }
+    for column in 0..3 {
+        let pivot = (column..3).max_by(|&left, &right| {
+            augmented[left][column]
+                .abs()
+                .total_cmp(&augmented[right][column].abs())
+        })?;
+        if augmented[pivot][column].abs() <= scale * 1.0e-12 {
+            return None;
+        }
+        augmented.swap(column, pivot);
+        for row in column + 1..3 {
+            let factor = augmented[row][column] / augmented[column][column];
+            for component in column..4 {
+                augmented[row][component] -= factor * augmented[column][component];
+            }
+        }
+    }
+    let mut solution = [0.0; 3];
+    for row in (0..3).rev() {
+        let upper = ((row + 1)..3)
+            .map(|column| augmented[row][column] * solution[column])
+            .sum::<f64>();
+        solution[row] = (augmented[row][3] - upper) / augmented[row][row];
+    }
+    solution
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(solution)
+}
+
+#[inline]
+pub(crate) fn col_major_mat_vec(matrix: &[f64; 9], vector: [f64; 3]) -> [f64; 3] {
+    [
+        matrix[0] * vector[0] + matrix[3] * vector[1] + matrix[6] * vector[2],
+        matrix[1] * vector[0] + matrix[4] * vector[1] + matrix[7] * vector[2],
+        matrix[2] * vector[0] + matrix[5] * vector[1] + matrix[8] * vector[2],
+    ]
 }
 
 #[cfg(test)]
@@ -776,7 +1280,10 @@ mod tests {
         assert!(vol.data_max.is_finite());
         assert!(!vol.data_max.is_nan());
         let range = vol.data_max - vol.data_min;
-        assert!(range.is_finite() || range.is_infinite(), "range overflow is expected behavior; caller must handle");
+        assert!(
+            range.is_finite() || range.is_infinite(),
+            "range overflow is expected behavior; caller must handle"
+        );
     }
 
     #[test]
@@ -793,7 +1300,11 @@ mod tests {
         };
         let claimed = vol.grid_dims[0] * vol.grid_dims[1] * vol.grid_dims[2];
         // Mismatch must be detectable so parsers can return Err before handing to GPU
-        assert_ne!(claimed, vol.data.len(), "mismatch must be detectable by caller");
+        assert_ne!(
+            claimed,
+            vol.data.len(),
+            "mismatch must be detectable by caller"
+        );
     }
 
     #[test]
@@ -810,9 +1321,8 @@ mod tests {
         };
         // ColMajor 3×3 determinant: det = a_x*(b_y*c_z - b_z*c_y) - a_y*(...) + a_z*(...)
         let l = &vol.lattice;
-        let det = l[0] * (l[4] * l[8] - l[5] * l[7])
-                - l[1] * (l[3] * l[8] - l[5] * l[6])
-                + l[2] * (l[3] * l[7] - l[4] * l[6]);
+        let det = l[0] * (l[4] * l[8] - l[5] * l[7]) - l[1] * (l[3] * l[8] - l[5] * l[6])
+            + l[2] * (l[3] * l[7] - l[4] * l[6]);
         // Any lattice-based coordinate transform with det==0 must be rejected upstream
         assert_eq!(det, 0.0, "degenerate lattice must have zero determinant");
     }
@@ -832,7 +1342,10 @@ mod tests {
         };
         assert!(vol.data_min < 0.0);
         assert!(vol.data_max < 0.0);
-        assert!(vol.data_min < vol.data_max, "min must be strictly less than max");
+        assert!(
+            vol.data_min < vol.data_max,
+            "min must be strictly less than max"
+        );
     }
 
     #[test]
@@ -849,6 +1362,9 @@ mod tests {
         };
         // The struct accepts it (no runtime check) — parser must enforce ordering.
         let invariant_holds = vol.data_min <= vol.data_max;
-        assert!(!invariant_holds, "parser must enforce data_min <= data_max; this struct carries an invalid state");
+        assert!(
+            !invariant_holds,
+            "parser must enforce data_min <= data_max; this struct carries an invalid state"
+        );
     }
 }

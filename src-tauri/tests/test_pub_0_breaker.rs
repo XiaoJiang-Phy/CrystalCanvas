@@ -185,38 +185,59 @@ fn rejects_publication_exports_with_unrecorded_transient_or_nonstructural_state(
 }
 
 #[test]
-fn rejects_out_of_scope_overlays_before_offscreen_rendering() {
+fn field_domains_require_a_frozen_snapshot_while_legacy_publication_still_rejects_them() {
     let renderer = include_str!("../src/renderer/renderer.rs");
     let recipe = include_str!("../src/export_recipe.rs");
-    let gate = source_between(
+    let legacy_admission = source_between(
         renderer,
-        "pub(crate) fn publication_export_request(",
-        "\n}\n\n#[must_use]",
+        "pub fn evaluate_publication_export_admission(",
+        "\nfn evaluate_publication_export_admission_inner(",
+    );
+    let field_admission = source_between(
+        renderer,
+        "pub fn evaluate_field_publication_export_admission(",
+        "\npub fn evaluate_publication_export_admission(",
     );
     let recipe_builder = source_between(
         recipe,
         "pub fn from_current_scene(",
         "\n    pub fn validate(&self)",
     );
-    let admission_surface = format!("{gate}\n{renderer}");
 
-    for (active_condition, rejection) in [
-        (
-            "self.measurement_line_count > 0",
-            "publication export currently rejects measurement overlays",
-        ),
-        ("self.hopping_instance_count > 0", "has_hopping_overlays"),
-        ("self.isosurface_pipeline.is_some()", "has_isosurface"),
-        ("self.volume_raycast_pipeline.is_some()", "has_volume"),
-    ] {
-        assert!(
-            admission_surface.contains(active_condition) && admission_surface.contains(rejection),
-            "PUB-0 must actively reject the excluded export domain `{active_condition}`"
-        );
-    }
     assert!(
-        recipe_builder.contains("evaluate_publication_export_admission("),
-        "scope rejection must be reached from the public export path"
+        renderer.contains("reject_legacy_unadmitted_field(request)?"),
+        "legacy publication admission must not silently admit field layers"
+    );
+    assert!(
+        renderer.contains("if field_resources.is_none()"),
+        "field admission must fail closed when no frozen GPU-resource snapshot exists"
+    );
+    assert!(
+        renderer.contains("PublicationExportRejection::Isosurface"),
+        "unadmitted isosurfaces must remain explicit publication rejections"
+    );
+    assert!(
+        renderer.contains("PublicationExportRejection::Volume"),
+        "unadmitted volumes must remain explicit publication rejections"
+    );
+    assert!(
+        legacy_admission
+            .contains("evaluate_publication_export_admission_inner(request, limits, None)"),
+        "the legacy admission path must provide no field snapshot"
+    );
+    assert!(
+        field_admission.contains("field_publication_resources"),
+        "FIGURE-2 admission must consume the frozen field resource snapshot"
+    );
+    assert!(
+        !field_admission.contains("reject_legacy_unadmitted_field"),
+        "the explicit FIGURE-2 field path must not reuse the blanket legacy rejection"
+    );
+    assert!(
+        recipe_builder.contains("match field_snapshot.as_ref()")
+            && recipe_builder.contains("evaluate_field_publication_export_admission(")
+            && recipe_builder.contains("evaluate_publication_export_admission("),
+        "recipe generation must choose field admission only when it serializes the same snapshot"
     );
 }
 

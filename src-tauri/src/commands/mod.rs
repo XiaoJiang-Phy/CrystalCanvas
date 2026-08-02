@@ -48,9 +48,7 @@ impl PhononFrameWake {
                 }
             })
             .map_err(|error| {
-                crate::ipc::IpcError::render(format!(
-                    "unable to start phonon frame wake: {error}"
-                ))
+                crate::ipc::IpcError::render(format!("unable to start phonon frame wake: {error}"))
             })?;
         Ok(())
     }

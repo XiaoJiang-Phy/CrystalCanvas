@@ -100,7 +100,7 @@ fn recipe_v9_serializes_the_complete_validated_look_snapshot() {
     let recipe = source("src/export_recipe.rs");
 
     assert!(
-        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9"),
+        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 10"),
         "RELEASE-2 adds reproducible framing and cell-line contrast to the LOOK-2 recipe, so the combined baseline is schema v9"
     );
     for required in [

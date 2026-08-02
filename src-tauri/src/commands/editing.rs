@@ -119,15 +119,15 @@ pub fn update_lattice_params(
         |cs| {
             let mut prepared =
                 crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
-        prepared.cell_a = a;
-        prepared.cell_b = b;
-        prepared.cell_c = c;
-        prepared.cell_alpha = alpha;
-        prepared.cell_beta = beta;
-        prepared.cell_gamma = gamma;
-        prepared.fractional_to_cartesian();
-        prepared.detect_spacegroup();
-        Ok(prepared)
+            prepared.cell_a = a;
+            prepared.cell_b = b;
+            prepared.cell_c = c;
+            prepared.cell_alpha = alpha;
+            prepared.cell_beta = beta;
+            prepared.cell_gamma = gamma;
+            prepared.fractional_to_cartesian();
+            prepared.detect_spacegroup();
+            Ok(prepared)
         },
     )
 }
@@ -185,7 +185,9 @@ pub fn delete_atoms(
     undo_state: State<'_, std::sync::Mutex<crate::undo::UndoStack>>,
 ) -> IpcResult<()> {
     if indices.is_empty() {
-        return Err(IpcError::invalid_argument("delete requires at least one atom index"));
+        return Err(IpcError::invalid_argument(
+            "delete requires at least one atom index",
+        ));
     }
     indices.sort_unstable();
     indices.dedup();
@@ -222,10 +224,14 @@ pub fn translate_atoms_screen(
     settings_state: State<'_, std::sync::Mutex<crate::settings::AppSettings>>,
 ) -> IpcResult<()> {
     if indices.is_empty() {
-        return Err(IpcError::invalid_argument("translation requires at least one atom index"));
+        return Err(IpcError::invalid_argument(
+            "translation requires at least one atom index",
+        ));
     }
     if !dx.is_finite() || !dy.is_finite() {
-        return Err(IpcError::invalid_argument("translation delta must be finite"));
+        return Err(IpcError::invalid_argument(
+            "translation delta must be finite",
+        ));
     }
     if dx == 0.0 && dy == 0.0 {
         return Ok(());
@@ -509,7 +515,8 @@ pub fn substitute_atoms(
     indices.sort_unstable();
     indices.dedup();
     log::info!("substitute_atoms: {:?} -> {}", indices, new_element_symbol);
-    let (formatted_symbol, atomic_number) = resolve_element(&new_element_symbol, new_atomic_number)?;
+    let (formatted_symbol, atomic_number) =
+        resolve_element(&new_element_symbol, new_atomic_number)?;
     crate::transaction::with_structural_state_update(
         &app,
         &crystal_state,
@@ -553,8 +560,7 @@ pub fn update_selection(
             "selection contains an out-of-range atom index",
         ));
     }
-    let bond_instances =
-        crate::renderer::instance::build_bond_instances(&cs, &settings, &indices)?;
+    let bond_instances = crate::renderer::instance::build_bond_instances(&cs, &settings, &indices)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -597,17 +603,18 @@ pub fn undo(
         return Err(IpcError::invalid_argument(error));
     }
 
-    let atom_scene = match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
-        .and_then(crate::renderer::instance::prepare_atom_scene)
-    {
-        Ok(atom_scene) => atom_scene,
-        Err(error) => {
-            if let Some(candidate) = u_stack.undo_candidate_mut() {
-                candidate.swap_structural_fields(&mut cs);
+    let atom_scene =
+        match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
+            .and_then(crate::renderer::instance::prepare_atom_scene)
+        {
+            Ok(atom_scene) => atom_scene,
+            Err(error) => {
+                if let Some(candidate) = u_stack.undo_candidate_mut() {
+                    candidate.swap_structural_fields(&mut cs);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
     let line_scene = match crate::renderer::instance::build_line_scene(&cs, &settings) {
         Ok(line_scene) => line_scene,
         Err(error) => {
@@ -683,17 +690,18 @@ pub fn redo(
         return Err(IpcError::invalid_argument(error));
     }
 
-    let atom_scene = match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
-        .and_then(crate::renderer::instance::prepare_atom_scene)
-    {
-        Ok(atom_scene) => atom_scene,
-        Err(error) => {
-            if let Some(candidate) = u_stack.redo_candidate_mut() {
-                candidate.swap_structural_fields(&mut cs);
+    let atom_scene =
+        match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)
+            .and_then(crate::renderer::instance::prepare_atom_scene)
+        {
+            Ok(atom_scene) => atom_scene,
+            Err(error) => {
+                if let Some(candidate) = u_stack.redo_candidate_mut() {
+                    candidate.swap_structural_fields(&mut cs);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
     let line_scene = match crate::renderer::instance::build_line_scene(&cs, &settings) {
         Ok(line_scene) => line_scene,
         Err(error) => {

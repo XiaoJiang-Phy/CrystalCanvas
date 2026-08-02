@@ -26,15 +26,20 @@ pub fn load_cif_file(
     log::info!("[load_cif_file] File parsed: {} atoms", state.num_atoms());
 
     let admitted_field = if state.volumetric_data.is_some() {
-        let source_sha256 = crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
-        Some(state.admit_volumetric_import(
-            std::path::Path::new(&path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("field")
-                .to_owned(),
-            source_sha256,
-        ).map_err(IpcError::invalid_argument)?)
+        let source_sha256 =
+            crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
+        Some(
+            state
+                .admit_volumetric_import(
+                    std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("field")
+                        .to_owned(),
+                    source_sha256,
+                )
+                .map_err(IpcError::invalid_argument)?,
+        )
     } else {
         None
     };
@@ -83,7 +88,11 @@ pub fn load_cif_file(
     let prepared_volumetric = state
         .field_scene
         .active_layer()
-        .map(|layer| renderer.prepare_field_layer(layer).map(|prepared| (prepared, layer.id, layer.revision)))
+        .map(|layer| {
+            renderer
+                .prepare_field_layer(layer)
+                .map(|prepared| (prepared, layer.id, layer.revision))
+        })
         .transpose()
         .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
@@ -134,10 +143,7 @@ pub fn load_cif_file(
     if let Some(info) = vol_info {
         let _ = app.emit("volumetric_loaded", &info);
     }
-    let _ = app.emit(
-        "field_scene_changed",
-        field_payload,
-    );
+    let _ = app.emit("field_scene_changed", field_payload);
 
     Ok(())
 }

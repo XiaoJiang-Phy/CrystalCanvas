@@ -4,8 +4,8 @@
 //! GPU device.  It is RED until that seam is exported to integration tests.
 
 use crystal_canvas::renderer::renderer::{
-    evaluate_publication_export_admission, PublicationExportLimits, PublicationExportRejection,
-    PublicationExportRequest,
+    PublicationExportLimits, PublicationExportRejection, PublicationExportRequest,
+    evaluate_publication_export_admission,
 };
 
 const TEST_MAX_TEXTURE_DIMENSION: u32 = 8_192;

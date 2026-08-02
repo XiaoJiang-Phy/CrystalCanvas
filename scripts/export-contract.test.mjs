@@ -61,14 +61,43 @@ test('EXPORT-1A snapshots state in global lock order and writes the pair after u
     assert.ok(renderer_lock < renderer_drop && renderer_drop < pair_write);
 });
 
-test('RENDER-2, LOOK-2, and RELEASE-2 retain the v9 recipe envelope, admission receipt, and paired artifact hash', () => {
+test('FIGURE-2 requires the v10 field-publication recipe envelope and rejects the legacy v9 contract', () => {
     assert.match(recipe, /"crystalcanvas\.export-recipe"/);
-    assert.match(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*9/);
-    assert.doesNotMatch(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*[78]/);
+    assert.match(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*10/);
+    assert.doesNotMatch(recipe, /EXPORT_RECIPE_SCHEMA_VERSION:\s*u32\s*=\s*[789]/);
     assert.match(recipe, /PublicationRaster/);
     assert.match(recipe, /BlenderStructureScene/);
     assert.match(recipe, /sha256/);
     assert.match(recipe, /publication_sidecar_path/);
     assert.match(recipe, /publication_admission/);
     assert.match(renderer, /PublicationExportBudgets/);
+
+    // A field export is not reproducible if any visual or scalar-domain choice
+    // is absent from the sidecar. Keep this as a hostile source-contract gate:
+    // a later schema bump must deliberately update these requirements.
+    for (const requiredFieldState of [
+        'RecipeFieldPublicationScene',
+        'recipe_field_scene',
+        'validate_recipe_field_scene',
+        'scalar_unit',
+        'scalar_range',
+        'display_range',
+        'representations',
+        'positive_isovalue',
+        'negative_isovalue',
+        'clip_planes',
+        'slices',
+        'transfer_function',
+        'colormap',
+        'opacity_scale',
+        'density_cutoff',
+        'composition_method',
+        'composition_order',
+    ]) {
+        assert.match(
+            recipe,
+            new RegExp(requiredFieldState),
+            `v10 field sidecar omits reproducibility-critical state: ${requiredFieldState}`,
+        );
+    }
 });

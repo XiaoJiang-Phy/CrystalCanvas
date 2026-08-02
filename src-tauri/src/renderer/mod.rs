@@ -4,6 +4,8 @@
 
 pub mod bz_renderer;
 pub mod camera;
+pub mod field_scene;
+pub mod field_slice;
 pub mod gpu_context;
 pub mod instance;
 pub mod pipeline;

@@ -93,15 +93,26 @@ impl BenchmarkSnapshot {
     fn into_crystal_state(self) -> CrystalState {
         let mut state = CrystalState::default();
         state.name = self.name;
-        state.cell_a = self.cell_a; state.cell_b = self.cell_b; state.cell_c = self.cell_c;
-        state.cell_alpha = self.cell_alpha; state.cell_beta = self.cell_beta; state.cell_gamma = self.cell_gamma;
-        state.spacegroup_hm = self.spacegroup_hm; state.spacegroup_number = self.spacegroup_number;
-        state.labels = self.labels; state.elements = self.elements;
-        state.fract_x = self.fract_x; state.fract_y = self.fract_y; state.fract_z = self.fract_z;
-        state.occupancies = self.occupancies; state.atomic_numbers = self.atomic_numbers;
+        state.cell_a = self.cell_a;
+        state.cell_b = self.cell_b;
+        state.cell_c = self.cell_c;
+        state.cell_alpha = self.cell_alpha;
+        state.cell_beta = self.cell_beta;
+        state.cell_gamma = self.cell_gamma;
+        state.spacegroup_hm = self.spacegroup_hm;
+        state.spacegroup_number = self.spacegroup_number;
+        state.labels = self.labels;
+        state.elements = self.elements;
+        state.fract_x = self.fract_x;
+        state.fract_y = self.fract_y;
+        state.fract_z = self.fract_z;
+        state.occupancies = self.occupancies;
+        state.atomic_numbers = self.atomic_numbers;
         state.cart_positions = self.cart_positions;
-        state.version = self.version; state.is_2d = self.is_2d;
-        state.vacuum_axis = self.vacuum_axis; state.intrinsic_sites = self.intrinsic_sites;
+        state.version = self.version;
+        state.is_2d = self.is_2d;
+        state.vacuum_axis = self.vacuum_axis;
+        state.intrinsic_sites = self.intrinsic_sites;
         state.measurements = self.measurements;
         state
     }

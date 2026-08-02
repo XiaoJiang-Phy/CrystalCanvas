@@ -107,7 +107,11 @@ fn compatibility_receipt_checks_more_than_shape_before_linear_combination() {
 fn linear_combination_is_finite_source_preserving_and_failure_atomic() {
     let volumetric = include_str!("../src/volumetric.rs");
     let commands = include_str!("../src/commands/volumetric.rs");
-    let combine = source_between(commands, "pub fn combine_field_layers", "\n#[tauri::command]");
+    let combine = source_between(
+        commands,
+        "pub fn combine_field_layers",
+        "\n#[tauri::command]",
+    );
 
     for required in [
         "combine_field_layers",
@@ -156,7 +160,9 @@ fn active_renderer_resource_is_revision_bound_and_keeps_the_previous_resource_on
         );
     }
     assert!(
-        !renderer.contains("pub isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>"),
+        !renderer.contains(
+            "pub isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>"
+        ),
         "the global single-field renderer pipeline cannot remain the field authority"
     );
 }

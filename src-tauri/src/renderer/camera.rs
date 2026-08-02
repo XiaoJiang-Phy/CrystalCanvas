@@ -223,7 +223,8 @@ impl CameraUniform {
         let scale_x = full_width as f32 / tile_width as f32;
         let scale_y = full_height as f32 / tile_height as f32;
         let center_x = (2.0 * (tile_x as f32 + tile_width as f32 * 0.5) / full_width as f32) - 1.0;
-        let center_y = 1.0 - (2.0 * (tile_y as f32 + tile_height as f32 * 0.5) / full_height as f32);
+        let center_y =
+            1.0 - (2.0 * (tile_y as f32 + tile_height as f32 * 0.5) / full_height as f32);
         let tile_projection = Mat4::from_scale(Vec3::new(scale_x, scale_y, 1.0))
             * Mat4::from_translation(Vec3::new(-center_x, -center_y, 0.0));
         let proj = tile_projection * projection;

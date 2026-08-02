@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use wgpu::util::DeviceExt;
 use crate::brillouin_zone::BrillouinZone;
 use crate::kpath::KPath;
 use crate::renderer::camera::{Camera, CameraUniform};
 use crate::renderer::gpu_context::GpuContext;
 use crate::renderer::instance::{AtomInstance, LineVertex};
 use crate::renderer::pipeline;
+use wgpu::util::DeviceExt;
 
 pub(crate) fn camera_axes_2d(bz: &BrillouinZone) -> Option<(glam::Vec3, glam::Vec3)> {
     let normal = glam::Vec3::from_array(bz.recip_lattice[2].map(|value| value as f32));
@@ -27,7 +27,7 @@ pub struct BzSubViewport {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    
+
     pub color_texture: wgpu::Texture,
     pub color_view: wgpu::TextureView,
     pub depth_texture: wgpu::Texture,
@@ -36,14 +36,14 @@ pub struct BzSubViewport {
     line_pipeline: wgpu::RenderPipeline,
     edge_buffer: wgpu::Buffer,
     edge_count: u32,
-    
+
     point_pipeline: wgpu::RenderPipeline,
     point_buffer: wgpu::Buffer,
     point_count: u32,
-    
+
     pub width: u32,
     pub height: u32,
-    
+
     // Blit pass
     pub blit_pipeline: wgpu::RenderPipeline,
     pub blit_bind_group: wgpu::BindGroup,
@@ -58,7 +58,11 @@ impl BzSubViewport {
 
         let color_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BZ Offscreen Color Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -70,7 +74,11 @@ impl BzSubViewport {
 
         let depth_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BZ Offscreen Depth Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -86,14 +94,16 @@ impl BzSubViewport {
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_from_camera(&camera);
 
-        let camera_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BZ Camera Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let camera_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BZ Camera Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[camera_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let (point_pipeline, layout) = pipeline::create_render_pipeline(&gpu.device, format, 1);
-        
+
         let camera_bind_group_layout = layout;
         let camera_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("BZ Camera Bind Group"),
@@ -104,7 +114,8 @@ impl BzSubViewport {
             }],
         });
 
-        let line_pipeline = pipeline::create_line_pipeline(&gpu.device, format, &camera_bind_group_layout, 1);
+        let line_pipeline =
+            pipeline::create_line_pipeline(&gpu.device, format, &camera_bind_group_layout, 1);
 
         let edge_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BZ Empty Edge Buffer"),
@@ -131,72 +142,80 @@ impl BzSubViewport {
             ..Default::default()
         });
 
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("BZ Blit Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bz_blit.wgsl").into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("BZ Blit Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/bz_blit.wgsl").into()),
+            });
 
-        let blit_bind_group_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("BZ Blit Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
+        let blit_bind_group_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("BZ Blit Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+        let blit_pipeline_layout =
+            gpu.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("BZ Blit Pipeline Layout"),
+                    bind_group_layouts: &[&blit_bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+
+        let blit_pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("BZ Blit Pipeline"),
+                layout: Some(&blit_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
                 },
-            ],
-        });
-
-        let blit_pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("BZ Blit Pipeline Layout"),
-            bind_group_layouts: &[&blit_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let blit_pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("BZ Blit Pipeline"),
-            layout: Some(&blit_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         let blit_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("BZ Blit Bind Group"),
@@ -239,14 +258,20 @@ impl BzSubViewport {
     }
 
     pub fn resize(&mut self, gpu: &GpuContext, width: u32, height: u32) {
-        if width == 0 || height == 0 { return; }
+        if width == 0 || height == 0 {
+            return;
+        }
         self.width = width;
         self.height = height;
 
         let format = gpu.surface_format();
         self.color_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BZ Offscreen Color Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -254,11 +279,17 @@ impl BzSubViewport {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        self.color_view = self.color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.color_view = self
+            .color_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.depth_texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BZ Offscreen Depth Texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -266,7 +297,9 @@ impl BzSubViewport {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        self.depth_view = self.depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.depth_view = self
+            .depth_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         self.camera.set_aspect(width as f32, height as f32);
 
@@ -291,25 +324,41 @@ impl BzSubViewport {
         for edge in &bz.edges {
             let v1 = bz.vertices[edge[0]];
             let v2 = bz.vertices[edge[1]];
-            vertices.push(LineVertex { position: [v1[0] as f32, v1[1] as f32, v1[2] as f32], color: [0.8, 0.8, 0.8, 1.0] });
-            vertices.push(LineVertex { position: [v2[0] as f32, v2[1] as f32, v2[2] as f32], color: [0.8, 0.8, 0.8, 1.0] });
+            vertices.push(LineVertex {
+                position: [v1[0] as f32, v1[1] as f32, v1[2] as f32],
+                color: [0.8, 0.8, 0.8, 1.0],
+            });
+            vertices.push(LineVertex {
+                position: [v2[0] as f32, v2[1] as f32, v2[2] as f32],
+                color: [0.8, 0.8, 0.8, 1.0],
+            });
         }
-        
+
         let path_color = [1.0, 0.4, 0.0, 1.0];
         for segment in &kpath.path_segments {
             for i in 0..segment.len() {
                 if i < segment.len() - 1 {
                     let p1 = kpath.points.iter().find(|p| p.label == segment[i]);
-                    let p2 = kpath.points.iter().find(|p| p.label == segment[i+1]);
+                    let p2 = kpath.points.iter().find(|p| p.label == segment[i + 1]);
                     if let (Some(a), Some(b)) = (p1, p2) {
                         let mut ca = [0.0; 3];
                         let mut cb = [0.0; 3];
                         for j in 0..3 {
-                            ca[j] = a.coord_frac[0]*bz.recip_lattice[0][j] + a.coord_frac[1]*bz.recip_lattice[1][j] + a.coord_frac[2]*bz.recip_lattice[2][j];
-                            cb[j] = b.coord_frac[0]*bz.recip_lattice[0][j] + b.coord_frac[1]*bz.recip_lattice[1][j] + b.coord_frac[2]*bz.recip_lattice[2][j];
+                            ca[j] = a.coord_frac[0] * bz.recip_lattice[0][j]
+                                + a.coord_frac[1] * bz.recip_lattice[1][j]
+                                + a.coord_frac[2] * bz.recip_lattice[2][j];
+                            cb[j] = b.coord_frac[0] * bz.recip_lattice[0][j]
+                                + b.coord_frac[1] * bz.recip_lattice[1][j]
+                                + b.coord_frac[2] * bz.recip_lattice[2][j];
                         }
-                        vertices.push(LineVertex { position: [ca[0] as f32, ca[1] as f32, ca[2] as f32], color: path_color });
-                        vertices.push(LineVertex { position: [cb[0] as f32, cb[1] as f32, cb[2] as f32], color: path_color });
+                        vertices.push(LineVertex {
+                            position: [ca[0] as f32, ca[1] as f32, ca[2] as f32],
+                            color: path_color,
+                        });
+                        vertices.push(LineVertex {
+                            position: [cb[0] as f32, cb[1] as f32, cb[2] as f32],
+                            color: path_color,
+                        });
                     }
                 }
             }
@@ -317,25 +366,31 @@ impl BzSubViewport {
 
         self.edge_count = vertices.len() as u32;
         if self.edge_count > 0 {
-            self.edge_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("BZ Edge Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            self.edge_buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("BZ Edge Buffer"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
         }
 
         let mut points = Vec::with_capacity(kpath.points.len());
         let mut max_b = 0.0_f64;
         for r in &bz.recip_lattice {
-            let m = (r[0]*r[0] + r[1]*r[1] + r[2]*r[2]).sqrt();
-            if m > max_b { max_b = m; }
+            let m = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
+            if m > max_b {
+                max_b = m;
+            }
         }
         let radius = (max_b * 0.012) as f32;
-        
+
         for kp in &kpath.points {
             let mut c = [0.0; 3];
             for j in 0..3 {
-                c[j] = kp.coord_frac[0]*bz.recip_lattice[0][j] + kp.coord_frac[1]*bz.recip_lattice[1][j] + kp.coord_frac[2]*bz.recip_lattice[2][j];
+                c[j] = kp.coord_frac[0] * bz.recip_lattice[0][j]
+                    + kp.coord_frac[1] * bz.recip_lattice[1][j]
+                    + kp.coord_frac[2] * bz.recip_lattice[2][j];
             }
             points.push(AtomInstance {
                 position: [c[0] as f32, c[1] as f32, c[2] as f32],
@@ -346,28 +401,34 @@ impl BzSubViewport {
 
         self.point_count = points.len() as u32;
         if self.point_count > 0 {
-            self.point_buffer = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("BZ Point Buffer"),
-                contents: bytemuck::cast_slice(&points),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            });
+            self.point_buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("BZ Point Buffer"),
+                    contents: bytemuck::cast_slice(&points),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                });
         }
 
         // Auto-fit camera to BZ bounding sphere
         let mut max_r = 0.0_f64;
         for v in &bz.vertices {
-            let r = (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).sqrt();
-            if r > max_r { max_r = r; }
+            let r = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            if r > max_r {
+                max_r = r;
+            }
         }
-        if max_r < 1e-6 { max_r = max_b; }
+        if max_r < 1e-6 {
+            max_r = max_b;
+        }
         let fit_scale = (max_r * 2.8) as f32;
-        
+
         self.is_2d = bz.is_2d;
 
         self.camera.target = [0.0, 0.0, 0.0].into();
         self.camera.set_orthographic(fit_scale.max(1.0));
         let dist = fit_scale * 2.0;
-        
+
         if self.is_2d {
             let (eye_direction, up) =
                 camera_axes_2d(bz).unwrap_or((glam::Vec3::NEG_Z, glam::Vec3::Y));
@@ -380,7 +441,11 @@ impl BzSubViewport {
         }
 
         self.camera_uniform.update_from_camera(&self.camera);
-        gpu.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+        gpu.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
     }
 
     pub fn render_to_texture(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -390,7 +455,12 @@ impl BzSubViewport {
                 view: &self.color_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -421,16 +491,27 @@ impl BzSubViewport {
         }
     }
 
-    pub fn blit_to_main(&self, render_pass: &mut wgpu::RenderPass, x_offset: f32, y_offset: f32, w: f32, h: f32) {
+    pub fn blit_to_main(
+        &self,
+        render_pass: &mut wgpu::RenderPass,
+        x_offset: f32,
+        y_offset: f32,
+        w: f32,
+        h: f32,
+    ) {
         render_pass.set_viewport(x_offset, y_offset, w, h, 0.0, 1.0);
         render_pass.set_pipeline(&self.blit_pipeline);
         render_pass.set_bind_group(0, &self.blit_bind_group, &[]);
         render_pass.draw(0..6, 0..1);
     }
-    
+
     pub fn update_camera(&mut self, queue: &wgpu::Queue) {
         self.camera_uniform.update_from_camera(&self.camera);
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
     }
 
     /// Render BZ directly into the main framebuffer at full resolution.
@@ -446,7 +527,11 @@ impl BzSubViewport {
     ) {
         self.camera.set_aspect(width, height);
         self.camera_uniform.update_from_camera(&self.camera);
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("BZ Fullscreen Render Pass"),

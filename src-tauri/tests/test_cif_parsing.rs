@@ -28,10 +28,18 @@ fn test_parse_nacl_cif_correctness() {
     let data = ffi::parse_cif_file(&path).expect("Failed to parse nacl.cif");
 
     // NaCl CIF has 8 sites in the conventional cell after Gemmi symmetry expansion
-    assert_eq!(data.sites.len(), 8, "NaCl CIF should have 8 sites after symmetry expansion");
+    assert_eq!(
+        data.sites.len(),
+        8,
+        "NaCl CIF should have 8 sites after symmetry expansion"
+    );
 
     // Verify element symbols using raw data sites
-    let elements: Vec<String> = data.sites.iter().map(|s| s.element_symbol.clone()).collect();
+    let elements: Vec<String> = data
+        .sites
+        .iter()
+        .map(|s| s.element_symbol.clone())
+        .collect();
     assert!(elements.contains(&"Na".to_string()));
     assert!(elements.contains(&"Cl".to_string()));
 
@@ -94,23 +102,37 @@ fn test_fractional_to_cartesian_nacl() {
     assert_eq!(state.cart_positions.len(), state.num_atoms());
 
     // Find the Na at origin (or closest to it)
-    let na_idx = state.elements.iter().enumerate().find(|(i, e)| {
-        *e == "Na" && (state.fract_x[*i]).abs() < 0.01 
-            && (state.fract_y[*i]).abs() < 0.01 
-            && (state.fract_z[*i]).abs() < 0.01
-    }).map(|(i, _)| i).unwrap_or(state.elements.iter().position(|e| e == "Na").unwrap());
-    
+    let na_idx = state
+        .elements
+        .iter()
+        .enumerate()
+        .find(|(i, e)| {
+            *e == "Na"
+                && (state.fract_x[*i]).abs() < 0.01
+                && (state.fract_y[*i]).abs() < 0.01
+                && (state.fract_z[*i]).abs() < 0.01
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(state.elements.iter().position(|e| e == "Na").unwrap());
+
     let na_cart = state.cart_positions[na_idx];
     assert!((na_cart[0]).abs() < 0.01, "Na cart_x should be ~0");
     assert!((na_cart[1]).abs() < 0.01, "Na cart_y should be ~0");
     assert!((na_cart[2]).abs() < 0.01, "Na cart_z should be ~0");
 
     // Find a Cl atom. One of the Cl atoms should be at (0.5, 0.5, 0.5)
-    let cl_idx = state.elements.iter().enumerate().find(|(i, e)| {
-        *e == "Cl" && (state.fract_x[*i] - 0.5).abs() < 0.01
-            && (state.fract_y[*i] - 0.5).abs() < 0.01
-            && (state.fract_z[*i] - 0.5).abs() < 0.01
-    }).map(|(i, _)| i).unwrap_or(state.elements.iter().position(|e| e == "Cl").unwrap());
+    let cl_idx = state
+        .elements
+        .iter()
+        .enumerate()
+        .find(|(i, e)| {
+            *e == "Cl"
+                && (state.fract_x[*i] - 0.5).abs() < 0.01
+                && (state.fract_y[*i] - 0.5).abs() < 0.01
+                && (state.fract_z[*i] - 0.5).abs() < 0.01
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(state.elements.iter().position(|e| e == "Cl").unwrap());
 
     let cl_cart = state.cart_positions[cl_idx];
     let expected = 5.64 * 0.5;

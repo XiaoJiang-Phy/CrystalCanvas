@@ -124,6 +124,7 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
             max_storage_buffer_size: 128 * 1024 * 1024,
             supports_compute_shaders: true,
             publication_admission,
+            field_scene: None,
         },
         output: RecipeOutput {
             width,

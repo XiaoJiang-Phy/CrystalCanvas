@@ -166,8 +166,8 @@ fn apply_wannier_change(
                 .filter_and_rebuild(&lattice_col_major, cart_positions)
                 .map_err(|rollback_error| {
                     IpcError::from(format!(
-                    "Failed to restore Wannier state after renderer lock failure: {}",
-                    rollback_error
+                        "Failed to restore Wannier state after renderer lock failure: {}",
+                        rollback_error
                     ))
                 })?;
             return Err(IpcError::lock(error.to_string()));
@@ -203,7 +203,7 @@ pub fn load_wannier_hr(
     // WannierOverlay::new naturally populates visible_hoppings with defaults
     let overlay =
         crate::wannier::WannierOverlay::new(hr_data, &lattice_col_major, &cs.cart_positions)
-    .map_err(IpcError::invalid_argument)?;
+            .map_err(IpcError::invalid_argument)?;
     let settings = settings_state
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;
@@ -328,7 +328,8 @@ pub fn clear_wannier(
     let atom_scene = crate::renderer::instance::prepare_atom_scene(
         crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, None)?,
     )?;
-    let bonds = crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms)?;
+    let bonds =
+        crate::renderer::instance::build_bond_instances(&cs, &settings, &cs.selected_atoms)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|e| IpcError::lock(e.to_string()))?;

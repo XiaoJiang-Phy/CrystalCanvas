@@ -13,13 +13,21 @@
     "ExportFileFormat",
     "ExportImageBackground",
     "ExtraIpcContract",
+    "FieldClipPlane",
     "FieldLayerInfo",
     "FieldLineageTerm",
     "FieldLinearCombinationTerm",
+    "FieldPresentationSettings",
     "FieldRenderMode",
     "FieldSceneChangedPayload",
     "FieldSceneInfo",
     "FieldSignMode",
+    "FieldSliceInterpolation",
+    "FieldSlicePlane",
+    "FieldSliceRequest",
+    "FieldTransferControlPoint",
+    "FieldTransferFunction",
+    "FieldTransparencyMethod",
     "IpcArgs",
     "IpcCommandContract",
     "IpcError",
@@ -100,6 +108,7 @@
     "set_bz_scale",
     "set_camera_projection",
     "set_camera_view_axis",
+    "set_field_layer_presentation",
     "set_field_layer_visibility",
     "set_isosurface_color",
     "set_isosurface_opacity",
@@ -110,6 +119,7 @@
     "set_phonon_phase",
     "set_phonon_playing",
     "set_render_flags",
+    "set_signed_isovalues",
     "set_volume_colormap",
     "set_volume_density_cutoff",
     "set_volume_opacity_range",
@@ -300,6 +310,11 @@
     "set_camera_view_axis": [
       "axis"
     ],
+    "set_field_layer_presentation": [
+      "expectedRevision",
+      "layerId",
+      "presentationSettings"
+    ],
     "set_field_layer_visibility": [
       "expectedRevision",
       "layerId",
@@ -335,6 +350,12 @@
     "set_render_flags": [
       "showBonds",
       "showCell"
+    ],
+    "set_signed_isovalues": [
+      "expectedRevision",
+      "layerId",
+      "negativeValue",
+      "positiveValue"
     ],
     "set_volume_colormap": [
       "mode"
@@ -1166,6 +1187,30 @@
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
+    "set_field_layer_presentation": {
+      "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "presentationSettings",
+          "optional": false,
+          "rust_type": "crate::renderer::field_scene::FieldPresentationSettings",
+          "type": "FieldPresentationSettings"
+        }
+      ],
+      "result": "FieldSceneInfo",
+      "rust_result": "IpcResult<FieldSceneInfo>"
+    },
     "set_field_layer_visibility": {
       "args": [
         {
@@ -1317,6 +1362,36 @@
           "optional": false,
           "rust_type": "bool",
           "type": "boolean"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
+    "set_signed_isovalues": {
+      "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "negativeValue",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
+        },
+        {
+          "name": "positiveValue",
+          "optional": false,
+          "rust_type": "f32",
+          "type": "number"
         }
       ],
       "result": "null",
@@ -1692,6 +1767,7 @@
       "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/main.rs"
     ],
     "menu-action": [
@@ -1801,6 +1877,7 @@
     "set_bz_scale": "renderer_only",
     "set_camera_projection": "renderer_only",
     "set_camera_view_axis": "renderer_only",
+    "set_field_layer_presentation": "renderer_only",
     "set_field_layer_visibility": "renderer_only",
     "set_isosurface_color": "renderer_only",
     "set_isosurface_opacity": "renderer_only",
@@ -1811,6 +1888,7 @@
     "set_phonon_phase": "renderer_only",
     "set_phonon_playing": "renderer_only",
     "set_render_flags": "renderer_only",
+    "set_signed_isovalues": "renderer_only",
     "set_volume_colormap": "renderer_only",
     "set_volume_density_cutoff": "renderer_only",
     "set_volume_opacity_range": "renderer_only",

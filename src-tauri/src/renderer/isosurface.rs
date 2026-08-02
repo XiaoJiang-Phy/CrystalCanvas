@@ -1,12 +1,49 @@
 //! CPU Marching Cubes reference implementation.
-//! Produces `Vec<IsoVertex>` from a scalar field on a regular grid.
+//! Produces `Result<Vec<IsoVertex>, FieldGridMappingError>` from a scalar field
+//! on a regular grid.
 //! Used as correctness baseline and Intel Mac fallback.
 // [Lorensen87] Lorensen, W. E. & Cline, H. E. SIGGRAPH 1987, 21, 163–169.
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::renderer::mc_lut::{EDGE_TABLE, TRI_TABLE};
-use crate::volumetric::ScalarFieldView;
+use crate::volumetric::{AxisSampling, FieldGridMapping, FieldGridMappingError, ScalarFieldView};
+
+/// Exact allocation accounting for one signed isosurface branch. `sign_identity`,
+/// `layer_id`, `layer_revision`, `clip_planes`, and the finite clip-plane `normal`
+/// belong to the immutable FIGURE-2 render snapshot that owns this allocation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IsosurfaceVertexAccounting {
+    pub attempted_vertices: u32,
+    pub generated_vertices: u32,
+    pub written_vertices: u32,
+}
+
+impl IsosurfaceVertexAccounting {
+    pub const fn from_gpu_counters(
+        attempted_vertices: u32,
+        generated_vertices: u32,
+        written_vertices: u32,
+    ) -> Self {
+        Self {
+            attempted_vertices,
+            generated_vertices,
+            written_vertices,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ()> {
+        (self.written_vertices <= self.generated_vertices
+            && self.generated_vertices <= self.attempted_vertices)
+            .then_some(())
+            .ok_or(())
+    }
+
+    pub fn is_lossless(&self) -> bool {
+        self.attempted_vertices == self.generated_vertices
+            && self.generated_vertices == self.written_vertices
+    }
+}
 
 // ─── Vertex type ─────────────────────────────────────────────────────────────
 
@@ -17,7 +54,7 @@ use crate::volumetric::ScalarFieldView;
 #[repr(C)]
 pub struct IsoVertex {
     pub position: [f32; 3],
-    pub normal:   [f32; 3],
+    pub normal: [f32; 3],
     pub sign_flag: f32, // +1.0 = positive lobe, -1.0 = negative lobe
     pub _pad: f32,
 }
@@ -50,25 +87,6 @@ impl IsoVertex {
     }
 }
 
-// ─── Grid-to-Cartesian transform ─────────────────────────────────────────────
-
-/// Map fractional grid coordinates $(u, v, w) \in [0,1)^3$ to Cartesian (Å).
-/// Uses the ColMajor lattice matrix from `VolumetricData`:
-/// $\mathbf{r} = u\,\mathbf{a} + v\,\mathbf{b} + w\,\mathbf{c}$
-/// where columns of `lattice` are $\mathbf{a}, \mathbf{b}, \mathbf{c}$.
-#[inline(always)]
-fn frac_to_cart(u: f64, v: f64, w: f64, lattice: &[f64; 9], origin: &[f64; 3]) -> [f32; 3] {
-    // ColMajor layout: col 0 = a, col 1 = b, col 2 = c
-    // lattice[0..3] = a_x, a_y, a_z
-    // lattice[3..6] = b_x, b_y, b_z
-    // lattice[6..9] = c_x, c_y, c_z
-    [
-        (origin[0] + u * lattice[0] + v * lattice[3] + w * lattice[6]) as f32,
-        (origin[1] + u * lattice[1] + v * lattice[4] + w * lattice[7]) as f32,
-        (origin[2] + u * lattice[2] + v * lattice[5] + w * lattice[8]) as f32,
-    ]
-}
-
 // ─── Scalar field access ──────────────────────────────────────────────────────
 
 /// Fortran-order (x-fastest) flat index.
@@ -81,6 +99,20 @@ fn flat(ix: usize, iy: usize, iz: usize, nx: usize, ny: usize) -> usize {
 #[inline(always)]
 fn sample(data: &[f32], ix: usize, iy: usize, iz: usize, nx: usize, ny: usize) -> f32 {
     data[flat(ix, iy, iz, nx, ny)]
+}
+
+#[inline(always)]
+fn mapped_index(mapping: &FieldGridMapping, coordinate: [usize; 3]) -> [usize; 3] {
+    std::array::from_fn(|axis| match mapping.axis_sampling[axis] {
+        AxisSampling::PeriodicExclusive => coordinate[axis] % mapping.dimensions[axis],
+        AxisSampling::InclusiveBoundary => coordinate[axis].min(mapping.dimensions[axis] - 1),
+    })
+}
+
+#[inline(always)]
+fn sample_mapped(data: &[f32], mapping: &FieldGridMapping, coordinate: [usize; 3]) -> f32 {
+    let [x, y, z] = mapped_index(mapping, coordinate);
+    sample(data, x, y, z, mapping.dimensions[0], mapping.dimensions[1])
 }
 
 // ─── Edge interpolation ───────────────────────────────────────────────────────
@@ -107,54 +139,135 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
 
 // ─── Normal estimation ────────────────────────────────────────────────────────
 
+#[inline]
+fn index_to_world_gradient_transform(mapping: &FieldGridMapping) -> Option<[f32; 9]> {
+    let steps = &mapping.sample_steps_col_major;
+    let transpose = [
+        steps[0], steps[3], steps[6], steps[1], steps[4], steps[7], steps[2], steps[5], steps[8],
+    ];
+    let mut transform = [0.0_f32; 9];
+    for column in 0..3 {
+        let mut rhs = [0.0_f64; 3];
+        rhs[column] = 1.0;
+        let Some(solution) = crate::volumetric::solve_col_major_3x3(&transpose, rhs) else {
+            return None;
+        };
+        for row in 0..3 {
+            let value = solution[row] as f32;
+            if !value.is_finite() {
+                return None;
+            }
+            transform[column * 3 + row] = value;
+        }
+    }
+    Some(transform)
+}
+
 /// Central-difference gradient at an interpolated edge position.
 /// Returns a unit-length normal pointing toward decreasing scalar field ($-\nabla f / |\nabla f|$).
 fn gradient_at(
     data: &[f32],
+    mapping: &FieldGridMapping,
     nx: usize,
     ny: usize,
-    nz: usize,
     ix: usize,
     iy: usize,
     iz: usize,
     t: f32,
     edge_axis: u8,
+    gradient_transform: &[f32; 9],
 ) -> [f32; 3] {
     // Compute gradient at both endpoints via central differences in voxel-index space.
     let g = |x: usize, y: usize, z: usize| -> [f32; 3] {
-        let xm = if x == 0    { 0 }    else { x - 1 };
-        let xp = if x + 1 >= nx { nx - 1 } else { x + 1 };
-        let ym = if y == 0    { 0 }    else { y - 1 };
-        let yp = if y + 1 >= ny { ny - 1 } else { y + 1 };
-        let zm = if z == 0    { 0 }    else { z - 1 };
-        let zp = if z + 1 >= nz { nz - 1 } else { z + 1 };
+        let [x, y, z] = mapped_index(mapping, [x, y, z]);
+        let neighbor =
+            |axis: usize, coordinate: usize, forward: bool| match mapping.axis_sampling[axis] {
+                AxisSampling::PeriodicExclusive => {
+                    let dimension = mapping.dimensions[axis];
+                    if forward {
+                        (coordinate + 1) % dimension
+                    } else {
+                        (coordinate + dimension - 1) % dimension
+                    }
+                }
+                AxisSampling::InclusiveBoundary => {
+                    if forward {
+                        (coordinate + 1).min(mapping.dimensions[axis] - 1)
+                    } else {
+                        coordinate.saturating_sub(1)
+                    }
+                }
+            };
+        let xm = neighbor(0, x, false);
+        let xp = neighbor(0, x, true);
+        let ym = neighbor(1, y, false);
+        let yp = neighbor(1, y, true);
+        let zm = neighbor(2, z, false);
+        let zp = neighbor(2, z, true);
+        let derivative =
+            |axis: usize, plus: usize, minus: usize, plus_value: f32, minus_value: f32| {
+                let span = match mapping.axis_sampling[axis] {
+                    AxisSampling::PeriodicExclusive => 2.0,
+                    AxisSampling::InclusiveBoundary => plus.abs_diff(minus).max(1) as f32,
+                };
+                (plus_value - minus_value) / span
+            };
         [
-            sample(data, xp, y,  z,  nx, ny) - sample(data, xm, y,  z,  nx, ny),
-            sample(data, x,  yp, z,  nx, ny) - sample(data, x,  ym, z,  nx, ny),
-            sample(data, x,  y,  zp, nx, ny) - sample(data, x,  y,  zm, nx, ny),
+            derivative(
+                0,
+                xp,
+                xm,
+                sample(data, xp, y, z, nx, ny),
+                sample(data, xm, y, z, nx, ny),
+            ),
+            derivative(
+                1,
+                yp,
+                ym,
+                sample(data, x, yp, z, nx, ny),
+                sample(data, x, ym, z, nx, ny),
+            ),
+            derivative(
+                2,
+                zp,
+                zm,
+                sample(data, x, y, zp, nx, ny),
+                sample(data, x, y, zm, nx, ny),
+            ),
         ]
     };
 
     // Endpoint offsets for each of the 12 edges (defined by [Lorensen87] ordering).
     // edge_axis encodes which endpoint pair to use.
     let (g0, g1) = match edge_axis {
-        0  => (g(ix,   iy,   iz),   g(ix+1, iy,   iz)),
-        1  => (g(ix+1, iy,   iz),   g(ix+1, iy+1, iz)),
-        2  => (g(ix,   iy+1, iz),   g(ix+1, iy+1, iz)),
-        3  => (g(ix,   iy,   iz),   g(ix,   iy+1, iz)),
-        4  => (g(ix,   iy,   iz+1), g(ix+1, iy,   iz+1)),
-        5  => (g(ix+1, iy,   iz+1), g(ix+1, iy+1, iz+1)),
-        6  => (g(ix,   iy+1, iz+1), g(ix+1, iy+1, iz+1)),
-        7  => (g(ix,   iy,   iz+1), g(ix,   iy+1, iz+1)),
-        8  => (g(ix,   iy,   iz),   g(ix,   iy,   iz+1)),
-        9  => (g(ix+1, iy,   iz),   g(ix+1, iy,   iz+1)),
-        10 => (g(ix+1, iy+1, iz),   g(ix+1, iy+1, iz+1)),
-        _  => (g(ix,   iy+1, iz),   g(ix,   iy+1, iz+1)),
+        0 => (g(ix, iy, iz), g(ix + 1, iy, iz)),
+        1 => (g(ix + 1, iy, iz), g(ix + 1, iy + 1, iz)),
+        2 => (g(ix, iy + 1, iz), g(ix + 1, iy + 1, iz)),
+        3 => (g(ix, iy, iz), g(ix, iy + 1, iz)),
+        4 => (g(ix, iy, iz + 1), g(ix + 1, iy, iz + 1)),
+        5 => (g(ix + 1, iy, iz + 1), g(ix + 1, iy + 1, iz + 1)),
+        6 => (g(ix, iy + 1, iz + 1), g(ix + 1, iy + 1, iz + 1)),
+        7 => (g(ix, iy, iz + 1), g(ix, iy + 1, iz + 1)),
+        8 => (g(ix, iy, iz), g(ix, iy, iz + 1)),
+        9 => (g(ix + 1, iy, iz), g(ix + 1, iy, iz + 1)),
+        10 => (g(ix + 1, iy + 1, iz), g(ix + 1, iy + 1, iz + 1)),
+        _ => (g(ix, iy + 1, iz), g(ix, iy + 1, iz + 1)),
     };
 
-    let gx = g0[0] + t * (g1[0] - g0[0]);
-    let gy = g0[1] + t * (g1[1] - g0[1]);
-    let gz = g0[2] + t * (g1[2] - g0[2]);
+    let index_gradient = [
+        g0[0] + t * (g1[0] - g0[0]),
+        g0[1] + t * (g1[1] - g0[1]),
+        g0[2] + t * (g1[2] - g0[2]),
+    ];
+    let gx = gradient_transform[0] * index_gradient[0]
+        + gradient_transform[3] * index_gradient[1]
+        + gradient_transform[6] * index_gradient[2];
+    let gy = gradient_transform[1] * index_gradient[0]
+        + gradient_transform[4] * index_gradient[1]
+        + gradient_transform[7] * index_gradient[2];
+    let gz = gradient_transform[2] * index_gradient[0]
+        + gradient_transform[5] * index_gradient[1]
+        + gradient_transform[8] * index_gradient[2];
 
     let len = (gx * gx + gy * gy + gz * gz).sqrt();
     if len < 1e-7 {
@@ -170,15 +283,30 @@ fn gradient_at(
 /// Corner indices: 0=(ix,iy,iz), 1=(ix+1,iy,iz), 2=(ix+1,iy+1,iz), 3=(ix,iy+1,iz),
 ///                 4=(ix,iy,iz+1), 5=(ix+1,iy,iz+1), 6=(ix+1,iy+1,iz+1), 7=(ix,iy+1,iz+1).
 const EDGE_CORNERS: [(u8, u8, u8); 12] = [
-    (0, 1, 0), (1, 2, 1), (3, 2, 2), (0, 3, 3),
-    (4, 5, 4), (5, 6, 5), (7, 6, 6), (4, 7, 7),
-    (0, 4, 8), (1, 5, 9), (2, 6,10), (3, 7,11),
+    (0, 1, 0),
+    (1, 2, 1),
+    (3, 2, 2),
+    (0, 3, 3),
+    (4, 5, 4),
+    (5, 6, 5),
+    (7, 6, 6),
+    (4, 7, 7),
+    (0, 4, 8),
+    (1, 5, 9),
+    (2, 6, 10),
+    (3, 7, 11),
 ];
 
 /// Offsets for the 8 corners of a voxel cell relative to (ix, iy, iz).
 const CORNER_OFFSETS: [(usize, usize, usize); 8] = [
-    (0,0,0),(1,0,0),(1,1,0),(0,1,0),
-    (0,0,1),(1,0,1),(1,1,1),(0,1,1),
+    (0, 0, 0),
+    (1, 0, 0),
+    (1, 1, 0),
+    (0, 1, 0),
+    (0, 0, 1),
+    (1, 0, 1),
+    (1, 1, 1),
+    (0, 1, 1),
 ];
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -193,26 +321,37 @@ const CORNER_OFFSETS: [(usize, usize, usize); 8] = [
 /// A flat list of `IsoVertex` triples (one triangle = 3 consecutive vertices).
 /// Positions are in Cartesian coordinates (Å); normals point toward decreasing field.
 ///
+/// # Errors
+/// Returns [`FieldGridMappingError::Unsolvable`] when the field's sample-step
+/// matrix cannot be inverted for Cartesian normal construction.
+///
 /// # Complexity
 /// $O(N_x N_y N_z)$ time and $O(T)$ space, where $T$ is the output triangle count.
-pub fn marching_cubes_cpu(vol: &impl ScalarFieldView, threshold: f32) -> Vec<IsoVertex> {
-    let [nx, ny, nz] = vol.grid_dims();
+#[must_use]
+pub fn marching_cubes_cpu(
+    vol: &impl ScalarFieldView,
+    threshold: f32,
+) -> Result<Vec<IsoVertex>, FieldGridMappingError> {
+    let mapping = vol.grid_mapping();
+    let [nx, ny, nz] = mapping.dimensions;
     let data = vol.scalar_data();
-    let lattice = vol.lattice_angstrom();
-    let origin = vol.origin_angstrom();
     if nx < 2 || ny < 2 || nz < 2 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    let Some(gradient_transform) = index_to_world_gradient_transform(&mapping) else {
+        return Err(FieldGridMappingError::Unsolvable);
+    };
 
     let mut vertices: Vec<IsoVertex> = Vec::with_capacity(nx * ny * nz / 2);
 
-    for iz in 0..nz - 1 {
-        for iy in 0..ny - 1 {
-            for ix in 0..nx - 1 {
+    let [cells_x, cells_y, cells_z] = mapping.cell_counts();
+    for iz in 0..cells_z {
+        for iy in 0..cells_y {
+            for ix in 0..cells_x {
                 // ── Build cube_case (8-bit sign configuration) ──────────────
                 let mut cube_case: u8 = 0;
                 for (ci, &(ox, oy, oz)) in CORNER_OFFSETS.iter().enumerate() {
-                    let v = sample(data, ix + ox, iy + oy, iz + oz, nx, ny);
+                    let v = sample_mapped(data, &mapping, [ix + ox, iy + oy, iz + oz]);
                     if v >= threshold {
                         cube_case |= 1 << ci;
                     }
@@ -234,23 +373,28 @@ pub fn marching_cubes_cpu(vol: &impl ScalarFieldView, threshold: f32) -> Vec<Iso
                     let (oax, oay, oaz) = CORNER_OFFSETS[ca as usize];
                     let (obx, oby, obz) = CORNER_OFFSETS[cb as usize];
 
-                    let fa = sample(data, ix + oax, iy + oay, iz + oaz, nx, ny);
-                    let fb = sample(data, ix + obx, iy + oby, iz + obz, nx, ny);
-                    let t  = interp_t(fa, fb, threshold);
+                    let a_index = [ix + oax, iy + oay, iz + oaz];
+                    let b_index = [ix + obx, iy + oby, iz + obz];
+                    let fa = sample_mapped(data, &mapping, a_index);
+                    let fb = sample_mapped(data, &mapping, b_index);
+                    let t = interp_t(fa, fb, threshold);
 
-                    // Fractional grid coordinates of the two endpoints
-                    let ua = (ix + oax) as f64 / (nx - 1) as f64;
-                    let va = (iy + oay) as f64 / (ny - 1) as f64;
-                    let wa = (iz + oaz) as f64 / (nz - 1) as f64;
-                    let ub = (ix + obx) as f64 / (nx - 1) as f64;
-                    let vb = (iy + oby) as f64 / (ny - 1) as f64;
-                    let wb = (iz + obz) as f64 / (nz - 1) as f64;
-
-                    let pa = frac_to_cart(ua, va, wa, lattice, origin);
-                    let pb = frac_to_cart(ub, vb, wb, lattice, origin);
+                    let pa = mapping.index_to_world(a_index).map(|value| value as f32);
+                    let pb = mapping.index_to_world(b_index).map(|value| value as f32);
                     let pos = lerp3(pa, pb, t);
 
-                    let normal = gradient_at(data, nx, ny, nz, ix, iy, iz, t, axis);
+                    let normal = gradient_at(
+                        data,
+                        &mapping,
+                        nx,
+                        ny,
+                        ix,
+                        iy,
+                        iz,
+                        t,
+                        axis,
+                        &gradient_transform,
+                    );
 
                     edge_verts[eidx] = Some(IsoVertex {
                         position: pos,
@@ -285,7 +429,7 @@ pub fn marching_cubes_cpu(vol: &impl ScalarFieldView, threshold: f32) -> Vec<Iso
         }
     }
 
-    vertices
+    Ok(vertices)
 }
 
 pub(crate) fn marching_cubes_vertex_count(
@@ -293,18 +437,32 @@ pub(crate) fn marching_cubes_vertex_count(
     threshold: f32,
     sign_mode: crate::volumetric::FieldSignMode,
 ) -> Result<u32, ()> {
-    let [nx, ny, nz] = vol.grid_dims();
+    let mapping = vol.grid_mapping();
+    let [nx, ny, nz] = mapping.dimensions;
     if nx < 2 || ny < 2 || nz < 2 {
         return Ok(0);
     }
     let data = vol.scalar_data();
+    let [cells_x, cells_y, cells_z] = mapping.cell_counts();
+    let sample_mapped = |x: usize, y: usize, z: usize| {
+        let coordinate = [x, y, z];
+        let index: [usize; 3] = std::array::from_fn(|axis| match mapping.axis_sampling[axis] {
+            crate::volumetric::AxisSampling::PeriodicExclusive => {
+                coordinate[axis] % mapping.dimensions[axis]
+            }
+            crate::volumetric::AxisSampling::InclusiveBoundary => {
+                coordinate[axis].min(mapping.dimensions[axis] - 1)
+            }
+        });
+        sample(data, index[0], index[1], index[2], nx, ny)
+    };
     let mut count = 0_u32;
-    for iz in 0..nz - 1 {
-        for iy in 0..ny - 1 {
-            for ix in 0..nx - 1 {
+    for iz in 0..cells_z {
+        for iy in 0..cells_y {
+            for ix in 0..cells_x {
                 let mut cube_case = 0_usize;
                 for (corner, &(ox, oy, oz)) in CORNER_OFFSETS.iter().enumerate() {
-                    let value = sample(data, ix + ox, iy + oy, iz + oz, nx, ny);
+                    let value = sample_mapped(ix + ox, iy + oy, iz + oz);
                     let inside = match sign_mode {
                         crate::volumetric::FieldSignMode::Positive => value >= threshold,
                         crate::volumetric::FieldSignMode::Negative => value <= -threshold,
@@ -336,6 +494,9 @@ struct MCParams {
     lattice_b: [f32; 4],
     lattice_c: [f32; 4],
     origin: [f32; 4],
+    gradient_a: [f32; 4],
+    gradient_b: [f32; 4],
+    gradient_c: [f32; 4],
     threshold: f32,
     sign_mode: u32,
     _pad0: [f32; 2],
@@ -346,35 +507,63 @@ struct MCParams {
 struct IsosurfaceUniforms {
     color: [f32; 4],
     color_negative: [f32; 4],
+    clip_planes: [[f32; 4]; crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES],
+    clip_keep_positive: [[u32; 4]; 2],
+    field_material: [u32; 4],
 }
 
 /// GPU-accelerated isosurface rendering pipeline.
 pub struct IsosurfacePipeline {
     compute_pipeline: wgpu::ComputePipeline,
     render_pipeline: wgpu::RenderPipeline,
-    
+
     compute_bind_group: wgpu::BindGroup,
     render_bind_group: wgpu::BindGroup,
-    
+    iso_params_bind_group_layout: wgpu::BindGroupLayout,
+
     mc_params_buffer: wgpu::Buffer,
     iso_params_buffer: wgpu::Buffer,
     vertices_buffer: wgpu::Buffer,
     indirect_buffer: wgpu::Buffer,
-    vertex_capacity: u32,
-    
+    accounting_buffer: wgpu::Buffer,
+    accounting_readback: wgpu::Buffer,
+
     // Kept to allow potential dynamic re-computation without re-uploading
-    scalar_buffer: wgpu::Buffer, 
+    scalar_buffer: wgpu::Buffer,
     _edge_table_buffer: wgpu::Buffer,
     _tri_table_buffer: wgpu::Buffer,
 
     pub cur_color: [f32; 4],
     pub cur_color_negative: [f32; 4],
     pub cur_threshold: f32,
+    clip_planes: [[f32; 4]; crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES],
+    clip_keep_positive: [[u32; 4]; 2],
+    material_unlit: bool,
+    cell_counts: [usize; 3],
 }
 
 impl IsosurfacePipeline {
     pub fn scalar_buffer(&self) -> &wgpu::Buffer {
         &self.scalar_buffer
+    }
+
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.mc_params_buffer
+            .size()
+            .saturating_add(self.iso_params_buffer.size())
+            .saturating_add(self.vertices_buffer.size())
+            .saturating_add(self.indirect_buffer.size())
+            .saturating_add(self.accounting_buffer.size())
+            .saturating_add(self.accounting_readback.size())
+            .saturating_add(self.scalar_buffer.size())
+            .saturating_add(self._edge_table_buffer.size())
+            .saturating_add(self._tri_table_buffer.size())
+    }
+
+    #[must_use]
+    pub fn vertex_buffer_bytes(&self) -> u64 {
+        self.vertices_buffer.size()
     }
     pub fn new(
         device: &wgpu::Device,
@@ -383,11 +572,9 @@ impl IsosurfacePipeline {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         vol: &impl ScalarFieldView,
     ) -> Self {
-        let vertex_capacity = marching_cubes_vertex_count(
-            vol,
-            0.0,
-            crate::volumetric::FieldSignMode::Positive,
-        ).expect("validated scalar field must have a countable isosurface");
+        let vertex_capacity =
+            marching_cubes_vertex_count(vol, 0.0, crate::volumetric::FieldSignMode::Positive)
+                .expect("validated scalar field must have a countable isosurface");
         Self::new_with_vertex_capacity(
             device,
             _queue,
@@ -395,7 +582,9 @@ impl IsosurfacePipeline {
             camera_bind_group_layout,
             vol,
             vertex_capacity,
+            &[],
         )
+        .expect("default isosurface configuration is valid")
     }
 
     pub fn new_with_vertex_capacity(
@@ -405,23 +594,65 @@ impl IsosurfacePipeline {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         vol: &impl ScalarFieldView,
         vertex_capacity: u32,
-    ) -> Self {
+        clip_planes: &[crate::renderer::field_scene::FieldClipPlane],
+    ) -> Result<Self, ()> {
+        if clip_planes.len() > crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES
+            || clip_planes.iter().any(|plane| {
+                !plane.normal.iter().all(|value| (*value as f32).is_finite())
+                    || !(plane.signed_offset_angstrom as f32).is_finite()
+            })
+        {
+            return Err(());
+        }
         // Compile the compute shader
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Marching Cubes Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/marching_cubes.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/marching_cubes.wgsl").into(),
+            ),
         });
 
         // 1. Set up Uniforms and parameters
-        let [nx, ny, nz] = vol.grid_dims();
-        let lattice = vol.lattice_angstrom();
-        let origin = vol.origin_angstrom();
+        let mapping = vol.grid_mapping();
+        let [nx, ny, nz] = mapping.dimensions;
+        let lattice = mapping.domain_lattice_col_major();
+        let origin = mapping.origin_angstrom;
+        let gradient_transform = index_to_world_gradient_transform(&mapping).ok_or(())?;
+        let periodic_mask =
+            mapping
+                .axis_sampling
+                .iter()
+                .enumerate()
+                .fold(0_u32, |mask, (axis, sampling)| {
+                    mask | (u32::from(matches!(
+                        sampling,
+                        crate::volumetric::AxisSampling::PeriodicExclusive
+                    )) << axis)
+                });
         let mc_params = MCParams {
-            grid_dims: [nx as u32, ny as u32, nz as u32, 0],
+            grid_dims: [nx as u32, ny as u32, nz as u32, periodic_mask],
             lattice_a: [lattice[0] as f32, lattice[1] as f32, lattice[2] as f32, 0.0],
             lattice_b: [lattice[3] as f32, lattice[4] as f32, lattice[5] as f32, 0.0],
             lattice_c: [lattice[6] as f32, lattice[7] as f32, lattice[8] as f32, 0.0],
             origin: [origin[0] as f32, origin[1] as f32, origin[2] as f32, 0.0],
+            gradient_a: [
+                gradient_transform[0],
+                gradient_transform[1],
+                gradient_transform[2],
+                0.0,
+            ],
+            gradient_b: [
+                gradient_transform[3],
+                gradient_transform[4],
+                gradient_transform[5],
+                0.0,
+            ],
+            gradient_c: [
+                gradient_transform[6],
+                gradient_transform[7],
+                gradient_transform[8],
+                0.0,
+            ],
             threshold: 0.0,
             sign_mode: 0,
             _pad0: [0.0; 2],
@@ -436,9 +667,26 @@ impl IsosurfacePipeline {
         });
 
         // Initial surface color (can be modified later via set_color commands)
+        let mut uniform_clip_planes =
+            [[0.0_f32; 4]; crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES];
+        let mut clip_keep_positive = [[0_u32; 4]; 2];
+        for (index, plane) in clip_planes.iter().enumerate() {
+            uniform_clip_planes[index] = [
+                plane.normal[0] as f32,
+                plane.normal[1] as f32,
+                plane.normal[2] as f32,
+                plane.signed_offset_angstrom as f32,
+            ];
+            clip_keep_positive[index / 4][index % 4] = u32::from(plane.keep_positive);
+        }
+        clip_keep_positive[1][2] =
+            u32::try_from(clip_planes.len()).expect("bounded clip-plane count");
         let iso_params = IsosurfaceUniforms {
             color: [0.0, 0.722, 0.831, 0.5],
             color_negative: [0.0, 0.722, 0.831, 0.5],
+            clip_planes: uniform_clip_planes,
+            clip_keep_positive,
+            field_material: [0; 4],
         };
         let iso_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Isosurface Uniforms Buffer"),
@@ -450,7 +698,10 @@ impl IsosurfacePipeline {
         // WGSL sizes requires arrays to be aligned and element sizes match.
         // We cast 16-bit edge_table / 8-bit tri_table elements to i32.
         let edge_table_i32: Vec<i32> = EDGE_TABLE.iter().map(|&x| x as i32).collect();
-        let tri_table_i32: Vec<i32> = TRI_TABLE.iter().flat_map(|row| row.iter().map(|&x| x as i32)).collect();
+        let tri_table_i32: Vec<i32> = TRI_TABLE
+            .iter()
+            .flat_map(|row| row.iter().map(|&x| x as i32))
+            .collect();
 
         let edge_table_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("MC Edge Table Buffer"),
@@ -472,7 +723,7 @@ impl IsosurfacePipeline {
         });
 
         let max_vertices = vertex_capacity.max(3);
-        
+
         let vertices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("MC Vertices Buffer"),
             size: (max_vertices as u64 * std::mem::size_of::<IsoVertex>() as u64),
@@ -486,45 +737,116 @@ impl IsosurfacePipeline {
         let indirect_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("MC Indirect Buffer"),
             contents: bytemuck::cast_slice(&indirect_data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        });
+        let accounting_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("MC Vertex Accounting Buffer"),
+            contents: bytemuck::cast_slice(&[0_u32; 4]),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+        });
+        let accounting_readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("MC Vertex Accounting Readback"),
+            size: 16,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
         });
 
         // 5. Create pipelines and bind groups
-        let compute_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("MC Compute Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry { // Uniform
-                    binding: 0, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry { // Scalar Field
-                    binding: 1, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry { // Edge Table
-                    binding: 2, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry { // Tri Table
-                    binding: 3, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry { // Vertices
-                    binding: 4, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry { // Indirect Buffer (counter inside)
-                    binding: 5, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-            ],
-        });
+        let compute_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("MC Compute Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        // Uniform
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // Actual attempted/generated/written vertex counters.
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // Scalar Field
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // Edge Table
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // Tri Table
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // Vertices
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        // Indirect Buffer (counter inside)
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
-        let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("MC Compute Pipeline Layout"),
-            bind_group_layouts: &[&compute_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let compute_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("MC Compute Pipeline Layout"),
+                bind_group_layouts: &[&compute_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("MC Compute Pipeline"),
@@ -539,71 +861,122 @@ impl IsosurfacePipeline {
             label: Some("MC Compute Bind Group"),
             layout: &compute_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: mc_params_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: scalar_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: edge_table_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: tri_table_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: vertices_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: indirect_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: mc_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: scalar_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: edge_table_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: tri_table_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: vertices_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: indirect_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: accounting_buffer.as_entire_binding(),
+                },
             ],
         });
 
-        let iso_params_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Isosurface Params Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0, visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                }
-            ],
-        });
+        let iso_params_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Isosurface Params Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let render_pipeline = crate::renderer::pipeline::create_isosurface_render_pipeline(
-            device, surface_format, camera_bind_group_layout, &iso_params_bind_group_layout
+            device,
+            surface_format,
+            camera_bind_group_layout,
+            &iso_params_bind_group_layout,
+            1,
         );
 
         let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Isosurface Render Bind Group"),
             layout: &iso_params_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: iso_params_buffer.as_entire_binding() },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: iso_params_buffer.as_entire_binding(),
+            }],
         });
 
-        Self {
+        Ok(Self {
             compute_pipeline,
             render_pipeline,
             compute_bind_group,
             render_bind_group,
+            iso_params_bind_group_layout,
             mc_params_buffer,
             iso_params_buffer,
             vertices_buffer,
             indirect_buffer,
-            vertex_capacity: max_vertices,
+            accounting_buffer,
+            accounting_readback,
             scalar_buffer,
             _edge_table_buffer: edge_table_buffer,
             _tri_table_buffer: tri_table_buffer,
             cur_color: [0.0, 0.722, 0.831, 0.5],
             cur_color_negative: [0.0, 0.722, 0.831, 0.5],
             cur_threshold: 0.0,
-        }
+            clip_planes: uniform_clip_planes,
+            clip_keep_positive,
+            material_unlit: false,
+            cell_counts: mapping.cell_counts(),
+        })
     }
 
-    #[inline]
-    pub(crate) fn vertex_capacity(&self) -> u32 {
-        self.vertex_capacity
-    }
-
-    pub fn update_threshold(&mut self, queue: &wgpu::Queue, grid_dims: [usize; 3], threshold: f32) -> [u32; 3] {
+    pub fn update_threshold(
+        &mut self,
+        queue: &wgpu::Queue,
+        _grid_dims: [usize; 3],
+        threshold: f32,
+    ) -> [u32; 3] {
         self.cur_threshold = threshold;
         // Clear indirect argument's `vertex_count` back to 0. (Instance count stays 1)
         let indirect_data: [u32; 4] = [0, 1, 0, 0];
-        queue.write_buffer(&self.indirect_buffer, 0, bytemuck::cast_slice(&indirect_data));
+        queue.write_buffer(
+            &self.indirect_buffer,
+            0,
+            bytemuck::cast_slice(&indirect_data),
+        );
+        queue.write_buffer(
+            &self.accounting_buffer,
+            0,
+            bytemuck::cast_slice(&[0_u32; 4]),
+        );
 
         // Update threshold parameter: offset = 4*vec4(grid_dims) + 4*vec4(a) + 4*vec4(b) + 4*vec4(c) + 4*vec4(origin) = 80
-        queue.write_buffer(&self.mc_params_buffer, 80, bytemuck::cast_slice(&[threshold]));
+        queue.write_buffer(
+            &self.mc_params_buffer,
+            80,
+            bytemuck::cast_slice(&[threshold]),
+        );
 
-        let [nx, ny, nz] = grid_dims;
+        let [nx, ny, nz] = self.cell_counts;
         // Compute wg size based on @workgroup_size(4, 4, 4)
         [
             (nx as u32 + 3) / 4,
@@ -613,7 +986,11 @@ impl IsosurfacePipeline {
     }
 
     /// Dispatch compute pipeline to generate the isosurface mesh based on current parameters.
-    pub fn dispatch_compute(&self, encoder: &mut wgpu::CommandEncoder, dispatch_size: [u32; 3]) {
+    pub fn dispatch_compute(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        dispatch_size: [u32; 3],
+    ) {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("MC Compute Pass"),
             timestamp_writes: None,
@@ -621,6 +998,40 @@ impl IsosurfacePipeline {
         cpass.set_pipeline(&self.compute_pipeline);
         cpass.set_bind_group(0, &self.compute_bind_group, &[]);
         cpass.dispatch_workgroups(dispatch_size[0], dispatch_size[1], dispatch_size[2]);
+        drop(cpass);
+        encoder.copy_buffer_to_buffer(&self.accounting_buffer, 0, &self.accounting_readback, 0, 16);
+    }
+
+    /// Read the counters copied by the latest compute dispatch.  Call only
+    /// after submitting its encoder.
+    pub fn read_vertex_accounting(
+        &self,
+        device: &wgpu::Device,
+    ) -> Result<IsosurfaceVertexAccounting, String> {
+        let slice = self.accounting_readback.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        device.poll(wgpu::Maintain::Wait);
+        receiver
+            .recv()
+            .map_err(|_| "isosurface accounting readback channel closed".to_owned())?
+            .map_err(|error| format!("isosurface accounting readback failed: {error:?}"))?;
+        let mapped = slice.get_mapped_range();
+        let counters: &[u32] = bytemuck::cast_slice(&mapped);
+        let accounting = counters
+            .get(0..3)
+            .map(|values| {
+                IsosurfaceVertexAccounting::from_gpu_counters(values[0], values[1], values[2])
+            })
+            .ok_or_else(|| "isosurface accounting readback is truncated".to_owned())?;
+        drop(mapped);
+        self.accounting_readback.unmap();
+        accounting
+            .validate()
+            .map_err(|_| "isosurface accounting counters are inconsistent".to_owned())?;
+        Ok(accounting)
     }
 
     /// Record draw commands into an active RenderPass.
@@ -636,35 +1047,100 @@ impl IsosurfacePipeline {
         rpass.draw_indirect(&self.indirect_buffer, 0);
     }
 
+    pub fn publication_render_pipeline(
+        &self,
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        sample_count: u32,
+    ) -> wgpu::RenderPipeline {
+        crate::renderer::pipeline::create_isosurface_render_pipeline(
+            device,
+            surface_format,
+            camera_bind_group_layout,
+            &self.iso_params_bind_group_layout,
+            sample_count,
+        )
+    }
+
+    pub fn draw_with_pipeline<'a>(
+        &'a self,
+        render_pipeline: &'a wgpu::RenderPipeline,
+        rpass: &mut wgpu::RenderPass<'a>,
+        camera_bind_group: &'a wgpu::BindGroup,
+    ) {
+        rpass.set_pipeline(render_pipeline);
+        rpass.set_bind_group(0, camera_bind_group, &[]);
+        rpass.set_bind_group(1, &self.render_bind_group, &[]);
+        rpass.set_vertex_buffer(0, self.vertices_buffer.slice(..));
+        rpass.draw_indirect(&self.indirect_buffer, 0);
+    }
+
     /// Update the rendering color of the isosurface
     pub fn set_color(&mut self, queue: &wgpu::Queue, color: [f32; 4]) {
         self.cur_color[0] = color[0];
         self.cur_color[1] = color[1];
         self.cur_color[2] = color[2];
-        let iso_params = IsosurfaceUniforms { color: self.cur_color, color_negative: self.cur_color_negative };
-        queue.write_buffer(&self.iso_params_buffer, 0, bytemuck::cast_slice(&[iso_params]));
+        let iso_params = self.uniforms();
+        queue.write_buffer(
+            &self.iso_params_buffer,
+            0,
+            bytemuck::cast_slice(&[iso_params]),
+        );
     }
 
     /// Update just the opacity alpha
     pub fn set_opacity(&mut self, queue: &wgpu::Queue, opacity: f32) {
         self.cur_color[3] = opacity;
         self.cur_color_negative[3] = opacity;
-        let iso_params = IsosurfaceUniforms { color: self.cur_color, color_negative: self.cur_color_negative };
-        queue.write_buffer(&self.iso_params_buffer, 0, bytemuck::cast_slice(&[iso_params]));
+        let iso_params = self.uniforms();
+        queue.write_buffer(
+            &self.iso_params_buffer,
+            0,
+            bytemuck::cast_slice(&[iso_params]),
+        );
     }
 
     pub fn set_color_negative(&mut self, queue: &wgpu::Queue, color: [f32; 4]) {
         self.cur_color_negative[0] = color[0];
         self.cur_color_negative[1] = color[1];
         self.cur_color_negative[2] = color[2];
-        let iso_params = IsosurfaceUniforms { color: self.cur_color, color_negative: self.cur_color_negative };
-        queue.write_buffer(&self.iso_params_buffer, 0, bytemuck::cast_slice(&[iso_params]));
+        let iso_params = self.uniforms();
+        queue.write_buffer(
+            &self.iso_params_buffer,
+            0,
+            bytemuck::cast_slice(&[iso_params]),
+        );
     }
 
     /// Update sign_mode in GPU uniform: 0=positive, 1=negative, 2=both
     pub fn set_sign_mode(&self, queue: &wgpu::Queue, mode: u32) {
         // offset = 80 (threshold) + 4 = 84
         queue.write_buffer(&self.mc_params_buffer, 84, bytemuck::cast_slice(&[mode]));
+    }
+
+    pub fn set_material_mode(
+        &mut self,
+        queue: &wgpu::Queue,
+        mode: crate::renderer::field_scene::FieldMaterialMode,
+    ) {
+        self.material_unlit =
+            matches!(mode, crate::renderer::field_scene::FieldMaterialMode::Unlit);
+        queue.write_buffer(
+            &self.iso_params_buffer,
+            0,
+            bytemuck::cast_slice(&[self.uniforms()]),
+        );
+    }
+
+    fn uniforms(&self) -> IsosurfaceUniforms {
+        IsosurfaceUniforms {
+            color: self.cur_color,
+            color_negative: self.cur_color_negative,
+            clip_planes: self.clip_planes,
+            clip_keep_positive: self.clip_keep_positive,
+            field_material: [u32::from(self.material_unlit), 0, 0, 0],
+        }
     }
 }
 
@@ -720,7 +1196,7 @@ pub fn euler_characteristic_for_test(verts: &[IsoVertex]) -> i64 {
 mod tests {
     use super::*;
     use crate::volumetric::{VolumetricData, VolumetricFormat};
-    
+
     /// Build a cubic identity-lattice VolumetricData where data[ix,iy,iz] = f(x,y,z).
     fn make_vol(n: usize, cell_len: f64, f: impl Fn(f64, f64, f64) -> f32) -> VolumetricData {
         let mut data = vec![0.0f32; n * n * n];
@@ -739,7 +1215,7 @@ mod tests {
         VolumetricData {
             grid_dims: [n, n, n],
             // ColMajor identity lattice scaled to cell_len
-            lattice: [cell_len,0.0,0.0, 0.0,cell_len,0.0, 0.0,0.0,cell_len],
+            lattice: [cell_len, 0.0, 0.0, 0.0, cell_len, 0.0, 0.0, 0.0, cell_len],
             data,
             data_min,
             data_max,
@@ -767,7 +1243,7 @@ mod tests {
     fn test_sphere_euler_chi_equals_2() {
         // 40³ grid, cell 8 Å, radius 2.5 Å — well-sampled sphere.
         let vol = sphere_vol(40, 8.0, 2.5);
-        let verts = marching_cubes_cpu(&vol, 0.0);
+        let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         assert!(
             !verts.is_empty(),
             "MC produced no triangles for sphere field"
@@ -792,7 +1268,7 @@ mod tests {
         let eps = (1.5 * h) as f32; // ~0.308 Å; plan spec is 1e-3 but that requires h→0
 
         let vol = sphere_vol(n, cell, r);
-        let verts = marching_cubes_cpu(&vol, 0.0);
+        let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         assert!(!verts.is_empty());
 
         let half = (cell / 2.0) as f32;
@@ -819,7 +1295,7 @@ mod tests {
     fn test_empty_grid_returns_no_vertices() {
         let vol = sphere_vol(2, 4.0, 0.5);
         // threshold above all field values → no crossing
-        let verts = marching_cubes_cpu(&vol, 1e9);
+        let verts = marching_cubes_cpu(&vol, 1e9).expect("valid sphere field mapping");
         assert!(verts.is_empty());
     }
 
@@ -827,14 +1303,14 @@ mod tests {
     fn test_below_threshold_returns_no_vertices() {
         let vol = sphere_vol(10, 4.0, 0.5);
         // threshold below all field values → inside full cube, no surface emitted
-        let verts = marching_cubes_cpu(&vol, -1e9);
+        let verts = marching_cubes_cpu(&vol, -1e9).expect("valid sphere field mapping");
         assert!(verts.is_empty());
     }
 
     #[test]
     fn test_output_is_multiple_of_three() {
         let vol = sphere_vol(20, 6.0, 1.8);
-        let verts = marching_cubes_cpu(&vol, 0.0);
+        let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         assert_eq!(
             verts.len() % 3,
             0,
@@ -845,7 +1321,7 @@ mod tests {
     #[test]
     fn test_normals_are_unit_length() {
         let vol = sphere_vol(20, 6.0, 1.8);
-        let verts = marching_cubes_cpu(&vol, 0.0);
+        let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         for v in &verts {
             let [nx, ny, nz] = v.normal;
             let len = (nx * nx + ny * ny + nz * nz).sqrt();
@@ -860,7 +1336,7 @@ mod tests {
     #[test]
     fn test_vertex_positions_finite() {
         let vol = sphere_vol(20, 6.0, 1.8);
-        let verts = marching_cubes_cpu(&vol, 0.0);
+        let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         for v in &verts {
             assert!(v.position.iter().all(|p| p.is_finite()), "NaN/Inf position");
             assert!(v.normal.iter().all(|n| n.is_finite()), "NaN/Inf normal");
@@ -880,28 +1356,39 @@ mod tests {
                     let u = ix as f64 / (n - 1) as f64 - half_frac;
                     let v = iy as f64 / (n - 1) as f64 - half_frac;
                     let w = iz as f64 / (n - 1) as f64 - half_frac;
-                    data[ix + iy * n + iz * n * n] =
-                        (u * u + v * v + w * w - 0.09) as f32;
+                    data[ix + iy * n + iz * n * n] = (u * u + v * v + w * w - 0.09) as f32;
                 }
             }
         }
         let vol = VolumetricData {
             grid_dims: [n, n, n],
-            lattice: [4.0,0.0,0.0, 0.0,5.0,0.0, 0.0,0.0,6.0],
-            data_min: *data.iter().reduce(|a,b| if a < b {a} else {b}).unwrap(),
-            data_max: *data.iter().reduce(|a,b| if a > b {a} else {b}).unwrap(),
+            lattice: [4.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 6.0],
+            data_min: *data
+                .iter()
+                .reduce(|a, b| if a < b { a } else { b })
+                .unwrap(),
+            data_max: *data
+                .iter()
+                .reduce(|a, b| if a > b { a } else { b })
+                .unwrap(),
             data,
             source_format: VolumetricFormat::GaussianCube,
             scalar_metadata: crate::volumetric::FieldSourceMetadata::UNDECLARED,
             origin: [0.0, 0.0, 0.0],
         };
-        let verts = marching_cubes_cpu(&vol, 0.0);
+        let verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         assert!(!verts.is_empty());
 
         // Max x extent should be ~4·0.3 = 1.2 Å, max z extent ~6·0.3 = 1.8 Å.
         // z extent must be larger than x extent for orthorhombic lattice.
-        let x_max = verts.iter().map(|v| v.position[0].abs()).fold(0.0f32, f32::max);
-        let z_max = verts.iter().map(|v| v.position[2].abs()).fold(0.0f32, f32::max);
+        let x_max = verts
+            .iter()
+            .map(|v| v.position[0].abs())
+            .fold(0.0f32, f32::max);
+        let z_max = verts
+            .iter()
+            .map(|v| v.position[2].abs())
+            .fold(0.0f32, f32::max);
         assert!(
             z_max > x_max,
             "Expected z_max ({:.3}) > x_max ({:.3}) for orthorhombic cell",
@@ -922,12 +1409,12 @@ mod tests {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: None,
             force_fallback_adapter: false,
-        })).expect("No suitable GPU adapter found for tests.");
-        
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor::default(),
-            None,
-        )).expect("Failed to create GPU device.");
+        }))
+        .expect("No suitable GPU adapter found for tests.");
+
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+                .expect("Failed to create GPU device.");
 
         // 1. Synthetic Volumetric Data (Sphere)
         let n = 32usize;
@@ -944,7 +1431,7 @@ mod tests {
         }
         let vol = VolumetricData {
             grid_dims: [n, n, n],
-            lattice: [10.0,0.0,0.0, 0.0,10.0,0.0, 0.0,0.0,10.0],
+            lattice: [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0],
             data_min: -0.05,
             data_max: 0.7,
             data,
@@ -954,7 +1441,7 @@ mod tests {
         };
 
         // 2. CPU Reference
-        let cpu_verts = marching_cubes_cpu(&vol, 0.0);
+        let cpu_verts = marching_cubes_cpu(&vol, 0.0).expect("valid sphere field mapping");
         let cpu_count = cpu_verts.len();
 
         // 3. GPU Dispatch
@@ -963,14 +1450,24 @@ mod tests {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
                 count: None,
-            }]
+            }],
         });
-        
-        let mut pipe = IsosurfacePipeline::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &fake_camera_bgl, &vol);
+
+        let mut pipe = IsosurfacePipeline::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            &fake_camera_bgl,
+            &vol,
+        );
         let dsize = pipe.update_threshold(&queue, vol.grid_dims, 0.0);
-        
+
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         pipe.dispatch_compute(&mut encoder, dsize);
 
@@ -1001,18 +1498,19 @@ mod tests {
         drop(data);
 
         // Verify vertex count matches CPU reference within 5%
-        // Differences might occur due to GPU fast-math vs CPU 64-bit precision near the thresholds, 
+        // Differences might occur due to GPU fast-math vs CPU 64-bit precision near the thresholds,
         // leading to slightly different sign evaluations.
         println!("CPU vertices: {}", cpu_count);
         println!("GPU vertices: {}", gpu_count);
 
         let diff = (cpu_count as i64 - gpu_count as i64).abs();
-        let max_diff = (cpu_count as f64 * 0.05) as i64; 
-        
+        let max_diff = (cpu_count as f64 * 0.05) as i64;
+
         assert!(
             diff <= max_diff.max(6),
             "GPU count ({}) disjoints CPU ({}) > 5%",
-            gpu_count, cpu_count
+            gpu_count,
+            cpu_count
         );
     }
 }

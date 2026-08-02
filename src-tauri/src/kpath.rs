@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use serde::{Serialize, Deserialize};
 use crate::brillouin_zone::BravaisType;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HighSymmetryPoint {
@@ -20,7 +20,11 @@ pub struct KPath {
 /// Identifies the Bravais type from the spacegroup.
 pub fn identify_bravais_type(sg_num: i32) -> BravaisType {
     if (195..=230).contains(&sg_num) {
-        if [195, 198, 200, 201, 205, 207, 208, 212, 213, 215, 218, 221, 222, 223, 224].contains(&sg_num) {
+        if [
+            195, 198, 200, 201, 205, 207, 208, 212, 213, 215, 218, 221, 222, 223, 224,
+        ]
+        .contains(&sg_num)
+        {
             BravaisType::CubicPrimitive
         } else if [196, 202, 203, 209, 216, 219, 225, 226, 227, 228].contains(&sg_num) {
             BravaisType::CubicFaceCentered
@@ -36,7 +40,9 @@ pub fn identify_bravais_type(sg_num: i32) -> BravaisType {
             BravaisType::Hexagonal
         }
     } else if (75..=142).contains(&sg_num) {
-        let body_centered = [79, 80, 82, 87, 88, 97, 98, 107, 108, 109, 110, 119, 120, 121, 122, 139, 140, 141, 142];
+        let body_centered = [
+            79, 80, 82, 87, 88, 97, 98, 107, 108, 109, 110, 119, 120, 121, 122, 139, 140, 141, 142,
+        ];
         if body_centered.contains(&sg_num) {
             BravaisType::TetragonalBodyCentered
         } else {
@@ -46,7 +52,7 @@ pub fn identify_bravais_type(sg_num: i32) -> BravaisType {
         let face_centered = [22, 42, 43, 69, 70];
         let body_centered = [23, 24, 44, 45, 46, 71, 72, 73, 74];
         let base_centered = [20, 21, 35, 36, 37, 38, 39, 40, 41, 63, 64, 65, 66, 67, 68];
-        
+
         if face_centered.contains(&sg_num) {
             BravaisType::OrthorhombicFaceCentered
         } else if body_centered.contains(&sg_num) {
@@ -165,7 +171,7 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                     path_segments: path! { "Γ", "X", "Y", "Σ", "Γ", "Z", "Σ_1", "N", "P", "Y_1", "Z"; "X", "P" },
                 }
             }
-        },
+        }
         BravaisType::OrthorhombicPrimitive => KPath {
             points: pts! {
                 "Γ" => [0.0, 0.0, 0.0], "R" => [0.5, 0.5, 0.5],
@@ -184,8 +190,10 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
 
             if (inv_a2 - inv_b2 - inv_c2).abs() < 1e-10 {
                 // ORCF3: $1/a^2 = 1/b^2 + 1/c^2$
-                let zeta = (1.0 + a_len * a_len / (b_len * b_len) - a_len * a_len / (c_len * c_len)) / 4.0;
-                let eta = (1.0 + a_len * a_len / (b_len * b_len) + a_len * a_len / (c_len * c_len)) / 4.0;
+                let zeta =
+                    (1.0 + a_len * a_len / (b_len * b_len) - a_len * a_len / (c_len * c_len)) / 4.0;
+                let eta =
+                    (1.0 + a_len * a_len / (b_len * b_len) + a_len * a_len / (c_len * c_len)) / 4.0;
                 KPath {
                     points: pts! {
                         "Γ" => [0.0, 0.0, 0.0], "A" => [0.5, 0.5 + zeta, zeta],
@@ -198,8 +206,10 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 }
             } else if inv_a2 > inv_b2 + inv_c2 {
                 // ORCF1: $1/a^2 > 1/b^2 + 1/c^2$
-                let zeta = (1.0 + a_len * a_len / (b_len * b_len) - a_len * a_len / (c_len * c_len)) / 4.0;
-                let eta = (1.0 + a_len * a_len / (b_len * b_len) + a_len * a_len / (c_len * c_len)) / 4.0;
+                let zeta =
+                    (1.0 + a_len * a_len / (b_len * b_len) - a_len * a_len / (c_len * c_len)) / 4.0;
+                let eta =
+                    (1.0 + a_len * a_len / (b_len * b_len) + a_len * a_len / (c_len * c_len)) / 4.0;
                 KPath {
                     points: pts! {
                         "Γ" => [0.0, 0.0, 0.0], "A" => [0.5, 0.5 + zeta, zeta],
@@ -212,9 +222,12 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 }
             } else {
                 // ORCF2: $1/a^2 < 1/b^2 + 1/c^2$
-                let eta = (1.0 + a_len * a_len / (b_len * b_len) - a_len * a_len / (c_len * c_len)) / 4.0;
-                let delta = (1.0 + b_len * b_len / (a_len * a_len) - b_len * b_len / (c_len * c_len)) / 4.0;
-                let phi = (1.0 + c_len * c_len / (b_len * b_len) - c_len * c_len / (a_len * a_len)) / 4.0;
+                let eta =
+                    (1.0 + a_len * a_len / (b_len * b_len) - a_len * a_len / (c_len * c_len)) / 4.0;
+                let delta =
+                    (1.0 + b_len * b_len / (a_len * a_len) - b_len * b_len / (c_len * c_len)) / 4.0;
+                let phi =
+                    (1.0 + c_len * c_len / (b_len * b_len) - c_len * c_len / (a_len * a_len)) / 4.0;
                 KPath {
                     points: pts! {
                         "Γ" => [0.0, 0.0, 0.0],
@@ -227,7 +240,7 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                     path_segments: path! { "Γ", "Y", "C", "D", "X", "Γ", "Z", "D_1", "H", "C"; "C_1", "Z"; "X", "H_1"; "H", "Y"; "L", "Γ" },
                 }
             }
-        },
+        }
         BravaisType::OrthorhombicBodyCentered => {
             // Ref: SC2010 Table 7 (ORCI)
             let a_len = norm(&lat[0]);
@@ -252,7 +265,7 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 },
                 path_segments: path! { "Γ", "X", "L", "T", "W", "R", "X_1", "Z", "Γ", "Y", "S", "W"; "L_1", "Y"; "Y_1", "Z" },
             }
-        },
+        }
         BravaisType::OrthorhombicBaseCentered => {
             // Ref: SC2010 Table 11 (ORCC), $\zeta = (1 + a^2/b^2)/4$
             let a_len = norm(&lat[0]);
@@ -268,7 +281,7 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 },
                 path_segments: path! { "Γ", "X", "S", "R", "A", "Z", "Γ", "Y", "X_1", "A_1", "T", "Y"; "Γ", "S" },
             }
-        },
+        }
         BravaisType::Hexagonal => KPath {
             points: pts! {
                 "Γ" => [0.0, 0.0, 0.0], "A" => [0.0, 0.0, 0.5],
@@ -306,14 +319,14 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                     path_segments: path! { "Γ", "P", "Z", "Q", "Γ", "F", "P_1", "Q_1", "L", "Z" },
                 }
             }
-        },
+        }
         BravaisType::MonoclinicPrimitive => {
             // Ref: SC2010 Table 13 (MCLC simplified as mP)
             // Unique axis: b, non-right angle α (between b and c)
             let sin_alpha = (1.0 - alpha_cos * alpha_cos).sqrt();
 
             let eta = (1.0 - b_len * alpha_cos / c_len) / (2.0 * sin_alpha * sin_alpha);
-            let nu  = 0.5 - eta * c_len * alpha_cos / b_len;
+            let nu = 0.5 - eta * c_len * alpha_cos / b_len;
             KPath {
                 points: pts! {
                     "Γ" => [0.0, 0.0, 0.0],
@@ -330,7 +343,7 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 },
                 path_segments: path! { "Γ", "Z", "D", "C", "A", "E", "D_1", "Y_1", "Γ", "X", "H_1"; "M", "D"; "Z", "M"; "A", "M_1"; "X", "H" },
             }
-        },
+        }
         BravaisType::MonoclinicBaseCentered => {
             // Ref: SC2010 Table 14 (MCLC)
             // Simplified parametric version for base-centered monoclinic
@@ -357,7 +370,7 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 },
                 path_segments: path! { "Γ", "Y", "F", "L", "I"; "I_1", "Z", "Γ", "X", "X_1"; "N", "Γ", "M" },
             }
-        },
+        }
         BravaisType::Triclinic => {
             // Ref: SC2010 Table 15
             // aP2: all reciprocal angles < 90°; aP1: otherwise
@@ -371,10 +384,10 @@ pub fn get_kpath(bravais_type: BravaisType, lat: &[[f64; 3]; 3]) -> KPath {
                 },
                 path_segments: path! { "X", "Γ", "Y"; "L", "Γ", "Z"; "N", "Γ", "M"; "R", "Γ" },
             }
-        },
+        }
         BravaisType::Unknown => KPath {
             points: pts! { "Γ" => [0.0, 0.0, 0.0] },
             path_segments: path! { "Γ" },
-        }
+        },
     }
 }
