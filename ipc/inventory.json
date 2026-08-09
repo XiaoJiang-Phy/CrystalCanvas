@@ -17,6 +17,7 @@
     "FieldLayerInfo",
     "FieldLineageTerm",
     "FieldLinearCombinationTerm",
+    "FieldMaterialMode",
     "FieldPresentationSettings",
     "FieldRenderMode",
     "FieldSceneChangedPayload",
@@ -111,6 +112,7 @@
     "set_field_layer_presentation",
     "set_field_layer_visibility",
     "set_isosurface_color",
+    "set_isosurface_colors",
     "set_isosurface_opacity",
     "set_isosurface_sign_mode",
     "set_isovalue",
@@ -322,6 +324,12 @@
     ],
     "set_isosurface_color": [
       "color"
+    ],
+    "set_isosurface_colors": [
+      "expectedRevision",
+      "layerId",
+      "negativeColor",
+      "positiveColor"
     ],
     "set_isosurface_opacity": [
       "opacity"
@@ -1247,6 +1255,36 @@
       "result": "null",
       "rust_result": "IpcResult<()>"
     },
+    "set_isosurface_colors": {
+      "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "negativeColor",
+          "optional": false,
+          "rust_type": "[f32; 4]",
+          "type": "[number,number,number,number]"
+        },
+        {
+          "name": "positiveColor",
+          "optional": false,
+          "rust_type": "[f32; 4]",
+          "type": "[number,number,number,number]"
+        }
+      ],
+      "result": "null",
+      "rust_result": "IpcResult<()>"
+    },
     "set_isosurface_opacity": {
       "args": [
         {
@@ -1880,6 +1918,7 @@
     "set_field_layer_presentation": "renderer_only",
     "set_field_layer_visibility": "renderer_only",
     "set_isosurface_color": "renderer_only",
+    "set_isosurface_colors": "renderer_only",
     "set_isosurface_opacity": "renderer_only",
     "set_isosurface_sign_mode": "renderer_only",
     "set_isovalue": "renderer_only",
@@ -2363,6 +2402,17 @@
       "response_type": null
     },
     {
+      "command": "set_isosurface_colors",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "expectedRevision",
+        "layerId",
+        "negativeColor",
+        "positiveColor"
+      ],
+      "response_type": null
+    },
+    {
       "command": "set_isosurface_opacity",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
@@ -2375,24 +2425,6 @@
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
         "mode"
-      ],
-      "response_type": null
-    },
-    {
-      "command": "set_isosurface_sign_mode",
-      "file": "src/components/panels/VolumetricPanel.tsx",
-      "args": [
-        "mode"
-      ],
-      "response_type": null
-    },
-    {
-      "command": "set_isovalue",
-      "file": "src/components/panels/VolumetricPanel.tsx",
-      "args": [
-        "expectedRevision",
-        "layerId",
-        "value"
       ],
       "response_type": null
     },
@@ -2489,14 +2521,6 @@
         "max",
         "min",
         "opacityScale"
-      ],
-      "response_type": null
-    },
-    {
-      "command": "set_volume_render_mode",
-      "file": "src/components/panels/VolumetricPanel.tsx",
-      "args": [
-        "mode"
       ],
       "response_type": null
     },
@@ -2820,15 +2844,16 @@
     "set_field_layer_visibility": [
       "src/components/panels/VolumetricPanel.tsx"
     ],
+    "set_isosurface_colors": [
+      "src/components/panels/VolumetricPanel.tsx"
+    ],
     "set_isosurface_opacity": [
       "src/components/panels/VolumetricPanel.tsx"
     ],
     "set_isosurface_sign_mode": [
-      "src/components/panels/VolumetricPanel.tsx",
       "src/components/panels/VolumetricPanel.tsx"
     ],
     "set_isovalue": [
-      "src/components/panels/VolumetricPanel.tsx",
       "src/components/panels/VolumetricPanel.tsx"
     ],
     "set_phonon_display_scale": [
@@ -2858,7 +2883,6 @@
       "src/components/panels/VolumetricPanel.tsx"
     ],
     "set_volume_render_mode": [
-      "src/components/panels/VolumetricPanel.tsx",
       "src/components/panels/VolumetricPanel.tsx"
     ],
     "set_wannier_orbital": [

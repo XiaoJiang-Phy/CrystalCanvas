@@ -853,6 +853,7 @@ fn main() {
             commands::set_isovalue,
             commands::set_signed_isovalues,
             commands::set_isosurface_color,
+            commands::set_isosurface_colors,
             commands::set_isosurface_opacity,
             commands::set_isosurface_sign_mode,
             commands::set_volume_render_mode,

@@ -263,9 +263,9 @@ impl Default for FieldRenderSettings {
             negative_isovalue: 0.0,
             sign_mode: FieldSignMode::Positive,
             color: [0.0, 0.722, 0.831, 0.5],
-            color_negative: [0.0, 0.722, 0.831, 0.5],
+            color_negative: [0.2298, 0.2987, 0.7537, 0.5],
             opacity: 0.5,
-            render_mode: FieldRenderMode::Both,
+            render_mode: FieldRenderMode::Isosurface,
             colormap_mode: 0,
         }
     }
@@ -424,10 +424,7 @@ impl FieldLayer {
         let normalized_sha256 = normalized_field_sha256(&volumetric);
         let (data_min, data_max) = scalar_bounds(&volumetric.data);
         let scalar_metadata = volumetric.scalar_metadata;
-        let mut render_settings = FieldRenderSettings::default();
-        render_settings.isovalue = default_field_isovalue(data_min, data_max);
-        render_settings.positive_isovalue = render_settings.isovalue;
-        render_settings.negative_isovalue = render_settings.isovalue;
+        let render_settings = default_field_render_settings(data_min, data_max);
         let grid_mapping = volumetric.grid_mapping();
         let layer = Self {
             id,
@@ -922,10 +919,7 @@ impl FieldScene {
             });
         }
         let source_sha256 = derived_source_sha256(&lineage, &normalized_sha256);
-        let mut render_settings = FieldRenderSettings::default();
-        render_settings.isovalue = default_field_isovalue(data_min, data_max);
-        render_settings.positive_isovalue = render_settings.isovalue;
-        render_settings.negative_isovalue = render_settings.isovalue;
+        let render_settings = default_field_render_settings(data_min, data_max);
         let layer = FieldLayer {
             id,
             revision,
@@ -1055,6 +1049,20 @@ fn default_field_isovalue(data_min: f32, data_max: f32) -> f32 {
     } else {
         value
     }
+}
+
+fn default_field_render_settings(data_min: f32, data_max: f32) -> FieldRenderSettings {
+    let mut settings = FieldRenderSettings::default();
+    settings.isovalue = default_field_isovalue(data_min, data_max);
+    settings.positive_isovalue = settings.isovalue;
+    settings.negative_isovalue = settings.isovalue;
+    if data_min < -0.01 * data_max.abs() {
+        settings.sign_mode = FieldSignMode::Both;
+        settings.colormap_mode = 4;
+        settings.color = [0.7059, 0.0156, 0.1502, settings.opacity];
+        settings.color_negative = [0.2298, 0.2987, 0.7537, settings.opacity];
+    }
+    settings
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -1190,6 +1198,21 @@ pub(crate) fn col_major_mat_vec(matrix: &[f64; 9], vector: [f64; 3]) -> [f64; 3]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_field_defaults_enable_both_branches_with_distinct_colors() {
+        let settings = default_field_render_settings(-12.2, 12.9);
+        assert_eq!(settings.sign_mode, FieldSignMode::Both);
+        assert_eq!(settings.colormap_mode, 4);
+        assert_ne!(settings.color[..3], settings.color_negative[..3]);
+    }
+
+    #[test]
+    fn nonnegative_field_defaults_keep_one_positive_branch() {
+        let settings = default_field_render_settings(0.0, 12.9);
+        assert_eq!(settings.sign_mode, FieldSignMode::Positive);
+        assert_eq!(settings.colormap_mode, 0);
+    }
 
     #[test]
     fn test_volumetric_data_creation() {

@@ -28,15 +28,29 @@ const colormap_from_mode = (mode: number): VolumeColormap => [
     'hot', 'magma', 'cividis', 'turbo', 'rdylbu',
 ][mode] as VolumeColormap ?? 'viridis';
 
+const rgba_to_hex = (color: [number, number, number, number]): string => `#${color
+    .slice(0, 3)
+    .map((component) => Math.round(Math.min(1, Math.max(0, component)) * 255).toString(16).padStart(2, '0'))
+    .join('')}`;
+
+const hex_to_rgba = (hex: string, alpha: number): [number, number, number, number] => [
+    Number.parseInt(hex.slice(1, 3), 16) / 255,
+    Number.parseInt(hex.slice(3, 5), 16) / 255,
+    Number.parseInt(hex.slice(5, 7), 16) / 255,
+    alpha,
+];
+
 export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
     const [fieldScene, setFieldScene] = useState<FieldSceneInfo>({ revision: 0, active_layer_id: null, layers: [] });
     const [volumetricInfo, setVolumetricInfo] = useState<VolumetricInfo | null>(null);
     const [isovalue, setIsovalue] = useState(0);
     const [surfaceOpacity, setSurfaceOpacity] = useState(0.5);
+    const [positiveColor, setPositiveColor] = useState('#b40426');
+    const [negativeColor, setNegativeColor] = useState('#3b4cc0');
     const [densityCutoff, setDensityCutoff] = useState(0);
-    const [opacityScale, setOpacityScale] = useState(1);
-    const [volumeRenderMode, setVolumeRenderMode] = useState<VolumeRenderMode>('both');
-    const [signMode, setSignMode] = useState<IsosurfaceSignMode>('both');
+    const [opacityScale, setOpacityScale] = useState(3);
+    const [volumeRenderMode, setVolumeRenderMode] = useState<VolumeRenderMode>('isosurface');
+    const [signMode, setSignMode] = useState<IsosurfaceSignMode>('positive');
     const [volumeColormap, setVolumeColormap] = useState<VolumeColormap>('viridis');
     const [combinationLayerIds, setCombinationLayerIds] = useState<[number | null, number | null]>([null, null]);
     const [combinationCoefficients, setCombinationCoefficients] = useState<[number, number]>([1, -1]);
@@ -86,9 +100,9 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
         setIsovalue(committedIsovalue.current);
         setSurfaceOpacity(0.5);
         setDensityCutoff(0);
-        setOpacityScale(1);
-        setVolumeRenderMode('both');
-        setSignMode('positive');
+        setOpacityScale(3);
+        setVolumeRenderMode('isosurface');
+        setSignMode(info.data_min < -0.01 * Math.abs(info.data_max) ? 'both' : 'positive');
         setVolumeColormap(info.data_min < -0.01 * Math.abs(info.data_max) ? 'coolwarm' : 'viridis');
         return value;
     };
@@ -113,6 +127,9 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
             committedIsovalue.current = active.isovalue;
             setIsovalue(active.isovalue);
             setSurfaceOpacity(active.opacity);
+            setPositiveColor(rgba_to_hex(active.color));
+            setNegativeColor(rgba_to_hex(active.color_negative));
+            setOpacityScale(active.opacity_scale);
             setSignMode(active.sign_mode);
             setVolumeRenderMode(active.render_mode);
             setVolumeColormap(colormap_from_mode(active.colormap_mode));
@@ -159,37 +176,7 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
                             || scene.revision < activeFieldTarget.current.revision
                         ) return;
                         applyFieldScene(scene);
-                        const layerId = scene.active_layer_id;
-                        if (layerId === null) return;
-                        const revision = scene.revision;
-                        const sequence = ++isovalueRequestSequence.current;
-                        const request = isovalueQueue.current
-                            .catch(() => undefined)
-                            .then(() => {
-                                if (!isCurrentIsovalueRequest(sequence, layerId, revision)) return;
-                                return safeInvoke('set_isovalue', {
-                                    value: defaultIsovalue,
-                                    layerId,
-                                    expectedRevision: revision,
-                                }).then(() => {
-                                    if (!isCurrentIsovalueRequest(sequence, layerId, revision)) return;
-                                    committedIsovalue.current = defaultIsovalue;
-                                    setDensityCutoff(defaultIsovalue);
-                                });
-                            })
-                            .catch((cause) => {
-                                if (isCurrentIsovalueRequest(sequence, layerId, revision)) {
-                                    setPanelError(cause, 'Unable to initialize the isovalue.');
-                                }
-                            });
-                        isovalueQueue.current = request;
                     }).catch((cause) => setPanelError(cause, 'Unable to initialize the isovalue.'));
-                    safeInvoke('set_volume_render_mode', { mode: 'both' })
-                        .then(() => setVolumeRenderMode('both'))
-                        .catch((cause) => setPanelError(cause, 'Unable to initialize the volume renderer.'));
-                    safeInvoke('set_isosurface_sign_mode', { mode: 'both' })
-                        .then(() => setSignMode('both'))
-                        .catch((cause) => setPanelError(cause, 'Unable to initialize the isosurface sign mode.'));
                 }
             }
         }).then((listener) => {
@@ -266,6 +253,30 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
             setVolumeColormap(mode);
         } catch (cause) {
             setPanelError(cause, 'Unable to change the volume colormap.');
+        } finally {
+            setPendingControl(null);
+        }
+    };
+
+    const handleSurfaceColor = async (branch: 'positive' | 'negative', value: string) => {
+        const layerId = activeFieldTarget.current.layerId;
+        const revision = activeFieldTarget.current.revision;
+        if (isPanelBusy || layerId === null) return;
+        const nextPositive = branch === 'positive' ? value : positiveColor;
+        const nextNegative = branch === 'negative' ? value : negativeColor;
+        setError(null);
+        setPendingControl(`${branch}-color`);
+        try {
+            await safeInvoke('set_isosurface_colors', {
+                positiveColor: hex_to_rgba(nextPositive, surfaceOpacity),
+                negativeColor: hex_to_rgba(nextNegative, surfaceOpacity),
+                layerId,
+                expectedRevision: revision,
+            });
+            setPositiveColor(nextPositive);
+            setNegativeColor(nextNegative);
+        } catch (cause) {
+            setPanelError(cause, 'Unable to change the isosurface colors.');
         } finally {
             setPendingControl(null);
         }
@@ -619,6 +630,17 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
                     setPanelError(cause, 'Unable to change the surface opacity.');
                 });
             }} />
+
+            <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs text-[var(--cc-muted)]">
+                    <span className="mb-1 block">Positive Color</span>
+                    <input aria-label="Positive isosurface color" type="color" value={positiveColor} disabled={isPanelBusy} onChange={(event) => void handleSurfaceColor('positive', event.target.value)} className="h-8 w-full cursor-pointer rounded border border-[var(--cc-border)] bg-[var(--cc-panel)] disabled:cursor-not-allowed disabled:opacity-50" />
+                </label>
+                <label className="text-xs text-[var(--cc-muted)]">
+                    <span className="mb-1 block">Negative Color</span>
+                    <input aria-label="Negative isosurface color" type="color" value={negativeColor} disabled={isPanelBusy} onChange={(event) => void handleSurfaceColor('negative', event.target.value)} className="h-8 w-full cursor-pointer rounded border border-[var(--cc-border)] bg-[var(--cc-panel)] disabled:cursor-not-allowed disabled:opacity-50" />
+                </label>
+            </div>
 
             <SelectInput
                 label="Sign Mode (Charge Diff)"

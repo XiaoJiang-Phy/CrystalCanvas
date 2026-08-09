@@ -371,9 +371,12 @@ pub struct RecipeFieldLayer {
     pub representations: Vec<String>,
     pub positive_isovalue: Option<f32>,
     pub negative_isovalue: Option<f32>,
+    pub positive_color: [f32; 4],
+    pub negative_color: [f32; 4],
     pub clip_planes: Vec<RecipeFieldClipPlane>,
     pub slices: Vec<RecipeFieldSlice>,
     pub transfer_function: RecipeFieldTransferFunction,
+    pub use_explicit_transfer_function: bool,
     pub colormap_mode: u32,
     pub opacity_scale: f32,
     pub density_cutoff: f32,
@@ -549,6 +552,8 @@ fn recipe_field_scene(
             representations,
             positive_isovalue: field.positive_isovalue,
             negative_isovalue: field.negative_isovalue,
+            positive_color: field.positive_color,
+            negative_color: field.negative_color,
             clip_planes,
             slices,
             transfer_function: RecipeFieldTransferFunction {
@@ -560,6 +565,7 @@ fn recipe_field_scene(
                     &field.transfer_function.positive_control_points,
                 )?,
             },
+            use_explicit_transfer_function: field.use_explicit_transfer_function,
             colormap_mode: field.colormap_mode,
             opacity_scale: field.opacity_scale,
             density_cutoff: field.density_cutoff,
@@ -661,6 +667,10 @@ fn validate_recipe_field_scene(
             || layer.clip_planes.len() > crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES
             || layer.slices.len() > crate::renderer::field_scene::MAX_FIELD_SLICES
             || layer.transfer_function.color_space != "LinearRgb"
+            || ![layer.positive_color, layer.negative_color]
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
             || layer.colormap_mode > 9
             || !layer.opacity_scale.is_finite()
             || !(0.0..=10.0).contains(&layer.opacity_scale)

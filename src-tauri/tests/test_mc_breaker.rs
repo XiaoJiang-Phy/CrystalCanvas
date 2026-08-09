@@ -10,7 +10,7 @@ use crystal_canvas::volumetric::{
 
 #[test]
 fn test_breaker_strict_epsilon_sphere() {
-    // 100^3 grid on a 2.0 Angstrom cell to achieve high resolution.
+    // 100^3 inclusive-boundary XSF grid on a 2.0 Angstrom cell.
     // h = 2.0 / 99 = 0.0202
     // Max interpolation error should be < 1e-3.
     let n = 100usize;
@@ -40,7 +40,7 @@ fn test_breaker_strict_epsilon_sphere() {
         data_min,
         data_max,
         data,
-        source_format: VolumetricFormat::VaspChgcar,
+        source_format: VolumetricFormat::Xsf,
         scalar_metadata: FieldSourceMetadata::UNDECLARED,
         origin: [0.0, 0.0, 0.0],
     };

@@ -5,102 +5,20 @@ use crate::ipc::{
     IpcEnumInput, IpcError, IpcResult, IsosurfaceSignMode, VolumeColormap, VolumeRenderMode,
 };
 
-fn smoothstep_f32(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        a[0] + t * (b[0] - a[0]),
-        a[1] + t * (b[1] - a[1]),
-        a[2] + t * (b[2] - a[2]),
-    ]
-}
-
-fn colormap_3pt(c0: [f32; 3], c1: [f32; 3], c2: [f32; 3], t: f32) -> [f32; 3] {
-    let s1 = smoothstep_f32(0.0, 0.5, t);
-    let m = lerp3(c0, c1, s1);
-    let s2 = smoothstep_f32(0.5, 1.0, t);
-    lerp3(m, c2, s2)
-}
-
-fn colormap_sample(mode: u32, t: f32) -> [f32; 3] {
-    match mode {
-        1 => {
-            let v = 0.2 + 0.8 * t;
-            [v, v, v]
-        }
-        2 => colormap_3pt(
-            [0.0002, 0.0016, 0.0139],
-            [0.8651, 0.3165, 0.2261],
-            [0.9882, 0.9984, 0.6449],
-            t,
-        ),
-        3 => colormap_3pt(
-            [0.0504, 0.0298, 0.5280],
-            [0.7981, 0.2239, 0.4471],
-            [0.9400, 0.9752, 0.1313],
-            t,
-        ),
-        4 => {
-            let blue = [0.2298_f32, 0.2987, 0.7537];
-            let white = [0.9647_f32, 0.9647, 0.9647];
-            let red = [0.7059_f32, 0.0156, 0.1502];
-            if t < 0.5 {
-                lerp3(blue, white, smoothstep_f32(0.0, 0.5, t))
-            } else {
-                lerp3(white, red, smoothstep_f32(0.5, 1.0, t))
-            }
-        }
-        5 => {
-            let r = (t * 2.5).clamp(0.0, 1.0);
-            let g = ((t - 0.4) * 2.5).clamp(0.0, 1.0);
-            let b = ((t - 0.7) * 3.33).clamp(0.0, 1.0);
-            [r, g, b]
-        }
-        6 => colormap_3pt(
-            [0.0015, 0.0005, 0.0139],
-            [0.7107, 0.0221, 0.3264],
-            [0.9873, 0.9913, 0.7494],
-            t,
-        ),
-        7 => colormap_3pt(
-            [0.0, 0.1262, 0.3015],
-            [0.5529, 0.5529, 0.5059],
-            [0.9955, 0.9110, 0.1459],
-            t,
-        ),
-        8 => {
-            let c0 = [0.1900_f32, 0.0718, 0.2322];
-            let c1 = [0.1602_f32, 0.7346, 0.9398];
-            let c2 = [0.9445_f32, 0.8530, 0.1094];
-            let c3 = [0.4796_f32, 0.0158, 0.0106];
-            if t < 0.33 {
-                lerp3(c0, c1, smoothstep_f32(0.0, 0.33, t))
-            } else if t < 0.66 {
-                lerp3(c1, c2, smoothstep_f32(0.33, 0.66, t))
-            } else {
-                lerp3(c2, c3, smoothstep_f32(0.66, 1.0, t))
-            }
-        }
-        9 => {
-            let red = [0.6471_f32, 0.0, 0.1490];
-            let yellow = [1.0_f32, 1.0, 0.749];
-            let blue = [0.1922_f32, 0.2118, 0.5843];
-            if t < 0.5 {
-                lerp3(red, yellow, smoothstep_f32(0.0, 0.5, t))
-            } else {
-                lerp3(yellow, blue, smoothstep_f32(0.5, 1.0, t))
-            }
-        }
-        _ => colormap_3pt(
-            [0.2777273, 0.00540734, 0.33409981],
-            [0.10509304, 0.59800696, 0.55836266],
-            [0.99320573, 0.90615594, 0.143936],
-            t,
-        ),
+fn initial_isovalue(data_min: f32, data_max: f32) -> Option<f32> {
+    let bound = data_min.abs().max(data_max.abs());
+    if !data_min.is_finite() || !data_max.is_finite() || bound <= 0.0 {
+        return None;
     }
+    if data_min < 0.0 {
+        return Some(bound * 0.1);
+    }
+    let candidate = data_max * 0.1;
+    Some(if candidate < data_min {
+        data_min + (data_max - data_min) * 0.1
+    } else {
+        candidate
+    })
 }
 
 fn commit_active_field_update(
@@ -185,6 +103,11 @@ pub fn load_volumetric_file(
         data_max: admitted.data_max,
         format: extension,
     };
+    if initial_isovalue(info.data_min, info.data_max).is_none() {
+        return Err(IpcError::invalid_argument(
+            "volumetric scalar range is not usable",
+        ));
+    }
 
     let mut cs = crystal_state
         .lock()
@@ -222,25 +145,12 @@ pub fn load_volumetric_file(
         r.camera.set_orthographic(extent * 1.5);
     }
     r.update_camera();
-    r.commit_field_layer(
+    r.commit_replacement_field_layer(
         prepared_volumetric,
         admitted.layer_id,
         admitted.layer_revision,
     )
     .map_err(|_| IpcError::render("stale field layer preparation"))?;
-
-    let has_negative = info.data_min < -0.01 * info.data_max.abs();
-    r.active_colormap_mode = if has_negative { 4 } else { 0 };
-    if has_negative {
-        r.with_active_volume_pipeline(|volume, queue| {
-            volume.set_signed_mapping(queue, true);
-            volume.set_colormap(queue, 4);
-        });
-        log::info!(
-            "Signed volumetric data detected (min={:.3e}). Enabled signed mapping + Coolwarm.",
-            info.data_min
-        );
-    }
 
     new_state.volumetric_data = None;
     let field_payload = FieldSceneChangedPayload::from_scene(&new_state.field_scene);
@@ -280,7 +190,6 @@ pub fn set_isovalue(
         .active_layer()
         .filter(|layer| layer.id == layer_id)
         .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
-    let data_range = layer.data_min.abs().max(layer.data_max.abs());
     let mut render_settings = layer.render_settings;
     render_settings.isovalue = value;
     render_settings.positive_isovalue = value;
@@ -290,28 +199,6 @@ pub fn set_isovalue(
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     r.update_field_render_settings(layer, render_settings)
         .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
-
-    // Auto-sync isosurface color with volume colormap.
-    // Must match volume_raycast.wgsl sqrt-stretched signed mapping:
-    // $t = 0.5 \pm 0.5\sqrt{|v/v_{\max}|}$
-    let norm = (value.abs() / data_range.max(1e-10)).clamp(0.0, 1.0);
-    let stretched = norm.sqrt();
-    let t_pos = 0.5 + 0.5 * stretched;
-    let t_neg = 0.5 - 0.5 * stretched;
-    let color_pos = colormap_sample(r.active_colormap_mode, t_pos);
-    let color_neg = colormap_sample(r.active_colormap_mode, t_neg);
-    let r_mut = &mut *r;
-    if let Some(iso) = &mut r_mut.active_field_layer_pipeline {
-        let alpha = iso.cur_color[3];
-        iso.set_color(
-            &r_mut.gpu.queue,
-            [color_pos[0], color_pos[1], color_pos[2], alpha],
-        );
-        iso.set_color_negative(
-            &r_mut.gpu.queue,
-            [color_neg[0], color_neg[1], color_neg[2], alpha],
-        );
-    }
 
     // Sync volume clip threshold + density cutoff (Both mode)
     let is_both = matches!(
@@ -330,18 +217,6 @@ pub fn set_isovalue(
         layer.render_settings.isovalue = value;
         layer.render_settings.positive_isovalue = value;
         layer.render_settings.negative_isovalue = value;
-        layer.render_settings.color = [
-            color_pos[0],
-            color_pos[1],
-            color_pos[2],
-            layer.render_settings.opacity,
-        ];
-        layer.render_settings.color_negative = [
-            color_neg[0],
-            color_neg[1],
-            color_neg[2],
-            layer.render_settings.opacity,
-        ];
     }
     Ok(())
 }
@@ -416,6 +291,58 @@ pub fn set_isosurface_color(
     if let Some(layer) = state.field_scene.active_layer_mut() {
         layer.render_settings.color = color;
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_isosurface_colors(
+    positive_color: [f32; 4],
+    negative_color: [f32; 4],
+    layer_id: u64,
+    expected_revision: u64,
+    crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<()> {
+    let valid_color = |color: [f32; 4]| {
+        color
+            .iter()
+            .all(|component| component.is_finite() && (0.0..=1.0).contains(component))
+    };
+    if !valid_color(positive_color) || !valid_color(negative_color) {
+        return Err(IpcError::invalid_argument(
+            "isosurface colors must contain finite normalized components",
+        ));
+    }
+    let mut state = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    let layer = state
+        .field_scene
+        .active_layer_mut()
+        .filter(|layer| layer.id == layer_id)
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    let opacity = layer.render_settings.opacity;
+    let positive_color = [
+        positive_color[0],
+        positive_color[1],
+        positive_color[2],
+        opacity,
+    ];
+    let negative_color = [
+        negative_color[0],
+        negative_color[1],
+        negative_color[2],
+        opacity,
+    ];
+    let mut renderer = renderer_state
+        .lock()
+        .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
+    if !renderer.set_active_isosurface_colors(positive_color, negative_color) {
+        return Err(IpcError::render("active field renderer is unavailable"));
+    }
+    layer.render_settings.color = positive_color;
+    layer.render_settings.color_negative = negative_color;
     Ok(())
 }
 
@@ -507,7 +434,9 @@ pub fn set_volume_render_mode(
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    r.volume_render_mode = new_mode;
+    if !r.set_active_field_render_mode(field_render_mode) {
+        return Err(IpcError::render("active field renderer is unavailable"));
+    }
 
     // Sync volume clip threshold + density cutoff with current isovalue
     let iso_threshold = r
@@ -600,55 +529,14 @@ pub fn set_volume_colormap(
     let mut cs = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-    let iso_sync = cs.field_scene.active_layer().map(|layer| {
-        (
-            layer.data_min.abs().max(layer.data_max.abs()),
-            layer.render_settings.opacity,
-        )
-    });
-
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     r.active_colormap_mode = colormap_mode;
     r.with_active_volume_pipeline(|volume, queue| volume.set_colormap(queue, colormap_mode));
 
-    // Re-sync isosurface color with the new colormap
-    // Matches volume_raycast.wgsl sqrt-stretched signed mapping
-    if let Some((abs_max, opacity)) = iso_sync {
-        let r_mut = &mut *r;
-        if let Some(iso) = &mut r_mut.active_field_layer_pipeline {
-            let cur_threshold = iso.cur_threshold;
-            let norm = (cur_threshold.abs() / abs_max.max(1e-10)).clamp(0.0, 1.0);
-            let stretched = norm.sqrt();
-            let t_pos = 0.5 + 0.5 * stretched;
-            let t_neg = 0.5 - 0.5 * stretched;
-            let color_pos = colormap_sample(colormap_mode, t_pos);
-            let color_neg = colormap_sample(colormap_mode, t_neg);
-            let alpha = opacity;
-            iso.set_color(
-                &r_mut.gpu.queue,
-                [color_pos[0], color_pos[1], color_pos[2], alpha],
-            );
-            iso.set_color_negative(
-                &r_mut.gpu.queue,
-                [color_neg[0], color_neg[1], color_neg[2], alpha],
-            );
-        }
-    }
     if let Some(layer) = cs.field_scene.active_layer_mut() {
         layer.render_settings.colormap_mode = colormap_mode;
-        if let Some((abs_max, opacity)) = iso_sync {
-            let threshold = layer.render_settings.isovalue;
-            let stretched = (threshold.abs() / abs_max.max(1e-10))
-                .clamp(0.0, 1.0)
-                .sqrt();
-            let color_pos = colormap_sample(colormap_mode, 0.5 + 0.5 * stretched);
-            let color_neg = colormap_sample(colormap_mode, 0.5 - 0.5 * stretched);
-            layer.render_settings.color = [color_pos[0], color_pos[1], color_pos[2], opacity];
-            layer.render_settings.color_negative =
-                [color_neg[0], color_neg[1], color_neg[2], opacity];
-        }
     }
     Ok(())
 }
@@ -686,6 +574,9 @@ pub struct FieldLayerInfo {
     pub visible: bool,
     pub isovalue: f32,
     pub opacity: f32,
+    pub color: [f32; 4],
+    pub color_negative: [f32; 4],
+    pub opacity_scale: f32,
     pub sign_mode: crate::volumetric::FieldSignMode,
     pub render_mode: crate::volumetric::FieldRenderMode,
     pub colormap_mode: u32,
@@ -732,6 +623,9 @@ impl FieldSceneInfo {
                     visible: layer.render_settings.visible,
                     isovalue: layer.render_settings.isovalue,
                     opacity: layer.render_settings.opacity,
+                    color: layer.render_settings.color,
+                    color_negative: layer.render_settings.color_negative,
+                    opacity_scale: layer.presentation_settings.opacity_scale,
                     sign_mode: layer.render_settings.sign_mode,
                     render_mode: layer.render_settings.render_mode,
                     colormap_mode: layer.render_settings.colormap_mode,

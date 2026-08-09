@@ -48,6 +48,9 @@ export interface FieldLayerInfo {
     visible: boolean;
     isovalue: number;
     opacity: number;
+    color: [number, number, number, number];
+    color_negative: [number, number, number, number];
+    opacity_scale: number;
     sign_mode: FieldSignMode;
     render_mode: FieldRenderMode;
     colormap_mode: number;
@@ -78,6 +81,7 @@ export interface FieldLinearCombinationTerm {
 
 export type FieldSliceInterpolation = 'trilinear';
 export type FieldTransparencyMethod = 'weighted_blended_oit' | 'premultiplied_alpha_fallback';
+export type FieldMaterialMode = 'lit' | 'unlit';
 
 export interface FieldClipPlane {
     normal: [number, number, number];
@@ -112,10 +116,12 @@ export interface FieldPresentationSettings {
     clip_planes: FieldClipPlane[];
     slices: FieldSliceRequest[];
     transfer_function: FieldTransferFunction;
+    use_explicit_transfer_function: boolean;
     display_range: [number, number] | null;
     opacity_scale: number;
     density_cutoff: number;
     transparency_method: FieldTransparencyMethod;
+    field_material_mode: FieldMaterialMode;
 }
 
 export interface TauriDragPayload {
@@ -227,6 +233,7 @@ export interface IpcCommandContract {
     set_camera_projection: { args: { isPerspective: boolean }; result: null };
     set_camera_view_axis: { args: { axis: CameraAxis }; result: null };
     set_isosurface_color: { args: { color: [number, number, number, number] }; result: null };
+    set_isosurface_colors: { args: { positiveColor: [number, number, number, number]; negativeColor: [number, number, number, number]; layerId: number; expectedRevision: number }; result: null };
     set_isosurface_opacity: { args: { opacity: number }; result: null };
     set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode }; result: null };
     set_isovalue: { args: { value: number; layerId: number; expectedRevision: number }; result: null };
@@ -393,6 +400,8 @@ export function is_field_scene_info(value: unknown): value is FieldSceneInfo {
         && typeof layer.source_sha256 === 'string' && typeof layer.normalized_sha256 === 'string'
         && typeof layer.visible === 'boolean' && is_finite_number(layer.isovalue)
         && is_finite_number(layer.opacity) && layer.opacity >= 0 && layer.opacity <= 1
+        && is_rgba(layer.color) && is_rgba(layer.color_negative)
+        && is_finite_number(layer.opacity_scale) && layer.opacity_scale >= 0 && layer.opacity_scale <= 10
         && (layer.sign_mode === 'positive' || layer.sign_mode === 'negative' || layer.sign_mode === 'both')
         && (layer.render_mode === 'isosurface' || layer.render_mode === 'volume' || layer.render_mode === 'both')
         && is_nonnegative_integer(layer.colormap_mode) && layer.colormap_mode <= 9
@@ -551,6 +560,7 @@ const IPC_RESULT_VALIDATORS: {
     set_camera_projection: is_null,
     set_camera_view_axis: is_null,
     set_isosurface_color: is_null,
+    set_isosurface_colors: is_null,
     set_isosurface_opacity: is_null,
     set_isosurface_sign_mode: is_null,
     set_isovalue: is_null,

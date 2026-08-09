@@ -73,6 +73,18 @@ pub fn parse_xsf_volumetric(path: &str) -> Result<CrystalState, String> {
                 if a_parts.len() < 4 {
                     return Err("Invalid atom coordinate line".to_string());
                 }
+                let x: f64 = a_parts[1].parse().map_err(|_| "Invalid atom X")?;
+                let y: f64 = a_parts[2].parse().map_err(|_| "Invalid atom Y")?;
+                let z: f64 = a_parts[3].parse().map_err(|_| "Invalid atom Z")?;
+                if a_parts[0] == "-1" {
+                    // FIXME(FIELD-1): Preserve this Yambo fixed-hole position as a
+                    // non-atomic spatial marker once that scene primitive exists.
+                    // Treating it as an element would corrupt the structure.
+                    log::warn!(
+                        "XSF Yambo fixed-hole marker at ({x:.6}, {y:.6}, {z:.6}) is not rendered in v0.8"
+                    );
+                    continue;
+                }
                 let at_num: u8 = a_parts[0]
                     .parse()
                     .unwrap_or_else(|_| crate::io::import::get_atomic_number(a_parts[0]));
@@ -80,9 +92,6 @@ pub fn parse_xsf_volumetric(path: &str) -> Result<CrystalState, String> {
                     return Err("Invalid PRIMCOORD element".to_string());
                 }
                 let sym = crate::io::import::get_element_symbol(at_num);
-                let x: f64 = a_parts[1].parse().map_err(|_| "Invalid atom X")?;
-                let y: f64 = a_parts[2].parse().map_err(|_| "Invalid atom Y")?;
-                let z: f64 = a_parts[3].parse().map_err(|_| "Invalid atom Z")?;
                 elems.push(sym);
                 cart_pos.push([x, y, z]);
             }
@@ -476,6 +485,22 @@ mod tests {
             state.cell_a
         );
         assert!((state.cell_alpha - 90.0).abs() < 1e-9, "alpha must be 90°");
+    }
+
+    #[test]
+    fn yambo_fixed_hole_marker_is_not_misclassified_as_an_atom() {
+        let content = make_xsf_5x5x5(1.0).replacen(
+            "PRIMCOORD\n 1 1\n 1  0.0 0.0 0.0",
+            "PRIMCOORD\n 2 1\n -1  1.0 2.0 3.0\n 1  0.0 0.0 0.0",
+            1,
+        );
+        let tmp = write_tmp(&content, ".xsf");
+        let state = parse_xsf_volumetric(tmp.path().to_str().unwrap())
+            .expect("the Yambo fixed-hole marker must not reject the XSF structure");
+
+        assert_eq!(state.intrinsic_sites, 1);
+        assert_eq!(state.atomic_numbers, vec![1]);
+        assert_eq!(state.elements, vec!["H".to_owned()]);
     }
 
     #[test]

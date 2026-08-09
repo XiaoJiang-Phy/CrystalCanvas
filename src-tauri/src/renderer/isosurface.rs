@@ -512,6 +512,12 @@ struct IsosurfaceUniforms {
     field_material: [u32; 4],
 }
 
+const MC_THRESHOLD_OFFSET: u64 = std::mem::offset_of!(MCParams, threshold) as u64;
+const MC_SIGN_MODE_OFFSET: u64 = std::mem::offset_of!(MCParams, sign_mode) as u64;
+const _: () = assert!(MC_THRESHOLD_OFFSET == 128);
+const _: () = assert!(MC_SIGN_MODE_OFFSET == 132);
+const _: () = assert!(std::mem::size_of::<IsosurfaceUniforms>() == 176);
+
 /// GPU-accelerated isosurface rendering pipeline.
 pub struct IsosurfacePipeline {
     compute_pipeline: wgpu::ComputePipeline,
@@ -969,10 +975,9 @@ impl IsosurfacePipeline {
             bytemuck::cast_slice(&[0_u32; 4]),
         );
 
-        // Update threshold parameter: offset = 4*vec4(grid_dims) + 4*vec4(a) + 4*vec4(b) + 4*vec4(c) + 4*vec4(origin) = 80
         queue.write_buffer(
             &self.mc_params_buffer,
-            80,
+            MC_THRESHOLD_OFFSET,
             bytemuck::cast_slice(&[threshold]),
         );
 
@@ -1115,8 +1120,11 @@ impl IsosurfacePipeline {
 
     /// Update sign_mode in GPU uniform: 0=positive, 1=negative, 2=both
     pub fn set_sign_mode(&self, queue: &wgpu::Queue, mode: u32) {
-        // offset = 80 (threshold) + 4 = 84
-        queue.write_buffer(&self.mc_params_buffer, 84, bytemuck::cast_slice(&[mode]));
+        queue.write_buffer(
+            &self.mc_params_buffer,
+            MC_SIGN_MODE_OFFSET,
+            bytemuck::cast_slice(&[mode]),
+        );
     }
 
     pub fn set_material_mode(

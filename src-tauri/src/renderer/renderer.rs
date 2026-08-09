@@ -36,7 +36,7 @@ pub enum RendererVolumeMode {
 
 fn field_representations(
     settings: crate::volumetric::FieldRenderSettings,
-    presentation: &crate::renderer::field_scene::FieldPresentationSettings,
+    slices: &[crate::renderer::field_scene::FieldSliceRequest],
 ) -> Vec<FieldRepresentation> {
     let mut representations = Vec::with_capacity(5);
     if matches!(
@@ -62,13 +62,9 @@ fn field_representations(
     ) {
         representations.push(FieldRepresentation::VolumeRaycast);
     }
-    if !presentation.slices.is_empty() {
+    if !slices.is_empty() {
         representations.push(FieldRepresentation::Slice);
-        if presentation
-            .slices
-            .iter()
-            .any(|slice| !slice.contour_levels.is_empty())
-        {
+        if slices.iter().any(|slice| !slice.contour_levels.is_empty()) {
             representations.push(FieldRepresentation::Contour);
         }
     }
@@ -3876,6 +3872,10 @@ impl Renderer {
     /// Clear volumetric pipelines when switching to a non-volumetric file.
     pub fn clear_volumetric(&mut self) {
         self.field_resource_epoch = self.field_resource_epoch.wrapping_add(1);
+        self.drop_all_field_resources();
+    }
+
+    fn drop_all_field_resources(&mut self) {
         self.active_field_layer_pipeline = None;
         self.active_negative_field_layer_pipeline = None;
         self.active_field_layer = None;
@@ -4118,10 +4118,12 @@ impl Renderer {
             );
             volume_raycast_pipeline
                 .set_density_cutoff(&self.gpu.queue, presentation_settings.density_cutoff);
-            volume_raycast_pipeline.update_explicit_transfer_function(
-                &self.gpu.queue,
-                &presentation_settings.transfer_function,
-            )?;
+            if presentation_settings.use_explicit_transfer_function {
+                volume_raycast_pipeline.update_explicit_transfer_function(
+                    &self.gpu.queue,
+                    &presentation_settings.transfer_function,
+                )?;
+            }
             volume_raycast_pipeline
                 .set_material_mode(&self.gpu.queue, presentation_settings.field_material_mode);
             if let Some(pipeline) = &mut isosurface_pipeline {
@@ -4193,7 +4195,10 @@ impl Renderer {
                 }
                 .to_owned(),
                 scalar_range: [vol.scalar_range().0, vol.scalar_range().1],
-                representations: field_representations(render_settings, presentation_settings),
+                representations: field_representations(
+                    render_settings,
+                    &presentation_settings.slices,
+                ),
                 positive_isovalue: (!matches!(
                     render_settings.sign_mode,
                     crate::volumetric::FieldSignMode::Negative
@@ -4212,9 +4217,13 @@ impl Renderer {
                         | crate::volumetric::FieldRenderMode::Both
                 ))
                 .then_some(negative_isovalue),
+                positive_color: render_settings.color,
+                negative_color: render_settings.color_negative,
                 clip_planes,
                 slices: presentation_settings.slices.clone(),
                 transfer_function: presentation_settings.transfer_function.clone(),
+                use_explicit_transfer_function: presentation_settings
+                    .use_explicit_transfer_function,
                 transparency_method: presentation_settings.transparency_method,
                 field_material_mode: presentation_settings.field_material_mode,
                 display_range: presentation_settings.display_range,
@@ -4407,6 +4416,23 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn commit_replacement_field_layer(
+        &mut self,
+        prepared: PreparedFieldLayer,
+        layer_id: crate::volumetric::FieldLayerId,
+        layer_revision: crate::volumetric::FieldSceneRevision,
+    ) -> Result<(), ()> {
+        if prepared.layer_id != layer_id
+            || prepared.layer_revision != layer_revision
+            || prepared.renderer_field_epoch != self.field_resource_epoch
+        {
+            log::warn!("stale replacement field layer was not committed");
+            return Err(());
+        }
+        self.drop_all_field_resources();
+        self.commit_field_layer(prepared, layer_id, layer_revision)
+    }
+
     /// Drop every renderer-owned resource for one logical field layer.
     /// Call only after the replacement resource has prepared successfully.
     pub fn remove_field_layer_resources(&mut self, layer_id: crate::volumetric::FieldLayerId) {
@@ -4573,6 +4599,63 @@ impl Renderer {
                 matches!(settings.sign_mode, crate::volumetric::FieldSignMode::Both),
             );
         }
+    }
+
+    pub fn set_active_field_render_mode(
+        &mut self,
+        render_mode: crate::volumetric::FieldRenderMode,
+    ) -> bool {
+        let Some(settings) = &mut self.active_field_render_settings else {
+            return false;
+        };
+        settings.render_mode = render_mode;
+        self.volume_render_mode = match render_mode {
+            crate::volumetric::FieldRenderMode::Isosurface => RendererVolumeMode::Isosurface,
+            crate::volumetric::FieldRenderMode::Volume => RendererVolumeMode::Volume,
+            crate::volumetric::FieldRenderMode::Both => RendererVolumeMode::Both,
+        };
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.representations = field_representations(*settings, &snapshot.slices);
+            let includes_isosurface = matches!(
+                render_mode,
+                crate::volumetric::FieldRenderMode::Isosurface
+                    | crate::volumetric::FieldRenderMode::Both
+            );
+            snapshot.positive_isovalue = (includes_isosurface
+                && !matches!(
+                    settings.sign_mode,
+                    crate::volumetric::FieldSignMode::Negative
+                ))
+            .then_some(settings.positive_isovalue);
+            snapshot.negative_isovalue = (includes_isosurface
+                && !matches!(
+                    settings.sign_mode,
+                    crate::volumetric::FieldSignMode::Positive
+                ))
+            .then_some(settings.negative_isovalue);
+        }
+        true
+    }
+
+    pub fn set_active_isosurface_colors(&mut self, positive: [f32; 4], negative: [f32; 4]) -> bool {
+        let Some(settings) = &mut self.active_field_render_settings else {
+            return false;
+        };
+        settings.color = positive;
+        settings.color_negative = negative;
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.positive_color = positive;
+            snapshot.negative_color = negative;
+        }
+        if let Some(iso) = &mut self.active_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, positive);
+            iso.set_color_negative(&self.gpu.queue, negative);
+        }
+        if let Some(iso) = &mut self.active_negative_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, positive);
+            iso.set_color_negative(&self.gpu.queue, negative);
+        }
+        true
     }
 
     /// Update isovalue threshold and trigger compute pass.

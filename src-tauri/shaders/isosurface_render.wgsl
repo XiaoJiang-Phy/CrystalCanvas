@@ -10,7 +10,9 @@ struct CameraUniforms {
 
 struct FieldMaterial {
     unlit: u32,
-    _pad: vec3<u32>,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
 }
 
 struct IsosurfaceUniforms {
@@ -95,7 +97,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = base_color.a;
 
     let field_material = iso_params.field_material;
-    if !field_material.unlit {
+    if field_material.unlit == 0u {
         return vec4<f32>(base_color.rgb * brightness, alpha);
     }
     return base_color;

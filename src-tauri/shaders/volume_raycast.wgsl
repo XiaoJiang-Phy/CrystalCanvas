@@ -526,7 +526,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     normal = -normal;
                 }
                 
-                if !params.unlit {
+                if params.unlit == 0u {
                     let light_dir = normalize(vec3<f32>(0.3, 0.6, 0.8));
                     let view_dir = -ray_dir_world;
                     let half_vec = normalize(light_dir + view_dir);

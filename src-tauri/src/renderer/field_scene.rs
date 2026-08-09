@@ -272,6 +272,8 @@ pub struct FieldPresentationSettings {
     #[serde(default)]
     pub slices: Vec<FieldSliceRequest>,
     pub transfer_function: FieldTransferFunction,
+    #[serde(default)]
+    pub use_explicit_transfer_function: bool,
     /// `None` preserves the complete finite source range.  A display range is
     /// presentation state and never rescales source scalar data.
     #[serde(default)]
@@ -287,7 +289,7 @@ pub struct FieldPresentationSettings {
 }
 
 const fn default_field_opacity_scale() -> f32 {
-    1.0
+    3.0
 }
 
 const fn default_field_transparency_method() -> FieldTransparencyMethod {
@@ -300,6 +302,7 @@ impl Default for FieldPresentationSettings {
             clip_planes: Vec::new(),
             slices: Vec::new(),
             transfer_function: FieldTransferFunction::default(),
+            use_explicit_transfer_function: false,
             display_range: None,
             opacity_scale: default_field_opacity_scale(),
             density_cutoff: 0.0,
@@ -379,9 +382,12 @@ pub struct FieldRenderSnapshot {
     pub representations: Vec<FieldRepresentation>,
     pub positive_isovalue: Option<f32>,
     pub negative_isovalue: Option<f32>,
+    pub positive_color: [f32; 4],
+    pub negative_color: [f32; 4],
     pub clip_planes: Vec<FieldClipPlane>,
     pub slices: Vec<FieldSliceRequest>,
     pub transfer_function: FieldTransferFunction,
+    pub use_explicit_transfer_function: bool,
     pub transparency_method: FieldTransparencyMethod,
     #[serde(default)]
     pub field_material_mode: FieldMaterialMode,
@@ -430,6 +436,13 @@ impl FieldRenderSnapshot {
             requires_positive,
             "positive",
         )?;
+        if ![self.positive_color, self.negative_color]
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        {
+            return Err("field isosurface color is invalid".to_owned());
+        }
         validate_isovalue(
             self.negative_isovalue,
             -data_min,
@@ -450,6 +463,7 @@ impl FieldRenderSnapshot {
             clip_planes: self.clip_planes.clone(),
             slices: self.slices.clone(),
             transfer_function: self.transfer_function.clone(),
+            use_explicit_transfer_function: self.use_explicit_transfer_function,
             display_range: self.display_range,
             opacity_scale: self.opacity_scale,
             density_cutoff: self.density_cutoff,

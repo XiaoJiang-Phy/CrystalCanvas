@@ -54,6 +54,7 @@
     "set_camera_projection": "renderer_only",
     "set_camera_view_axis": "renderer_only",
     "set_isosurface_color": "renderer_only",
+    "set_isosurface_colors": "renderer_only",
     "set_isosurface_opacity": "renderer_only",
     "set_isosurface_sign_mode": "renderer_only",
     "set_isovalue": "renderer_only",

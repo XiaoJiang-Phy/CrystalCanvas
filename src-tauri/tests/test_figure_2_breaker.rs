@@ -40,6 +40,8 @@ fn complete_five_representation_snapshot() -> FieldRenderSnapshot {
         ],
         "positive_isovalue": 1.0,
         "negative_isovalue": 1.0,
+        "positive_color": [0.8, 0.1, 0.1, 0.5],
+        "negative_color": [0.1, 0.2, 0.8, 0.5],
         "clip_planes": [],
         "slices": [],
         "transfer_function": {
@@ -53,6 +55,7 @@ fn complete_five_representation_snapshot() -> FieldRenderSnapshot {
                 { "position": 1.0, "color_linear_rgba": [1.0, 0.8, 0.2, 0.7] }
             ]
         },
+        "use_explicit_transfer_function": false,
         "transparency_method": "premultiplied_alpha_fallback",
         "display_range": [-1.0, 2.0],
         "opacity_scale": 1.0,
@@ -158,10 +161,28 @@ fn unlit_field_material_is_a_serialized_uniform_contract_not_fixed_shader_lighti
         );
     }
     assert!(
-        iso_shader.contains("if !field_material.unlit")
-            && volume_shader.contains("if !params.unlit"),
-        "unlit isosurfaces and volumes must bypass every lighting calculation rather than merely dimming it"
+        iso_shader.contains("if field_material.unlit == 0u")
+            && volume_shader.contains("if params.unlit == 0u"),
+        "WGSL u32 unlit flags must use an explicit comparison, and unlit isosurfaces and volumes must bypass every lighting calculation"
     );
+    assert!(
+        iso_shader.contains("_pad_a: u32")
+            && iso_shader.contains("_pad_b: u32")
+            && iso_shader.contains("_pad_c: u32"),
+        "the WGSL field-material uniform must retain the Rust-side 16-byte ABI instead of padding a trailing vec3 to 32 bytes"
+    );
+
+    let isosurface = source("src/renderer/isosurface.rs");
+    for required in [
+        "offset_of!(MCParams, threshold)",
+        "offset_of!(MCParams, sign_mode)",
+        "size_of::<IsosurfaceUniforms>() == 176",
+    ] {
+        assert!(
+            isosurface.contains(required),
+            "FIGURE-2 GPU uniform writes must be tied to the declared Rust ABI; missing `{required}`"
+        );
+    }
 }
 
 #[test]
