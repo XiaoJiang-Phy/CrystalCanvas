@@ -115,10 +115,10 @@ fn rejects_extreme_dimensions_before_gpu_or_cpu_resource_meltdown() {
         "readback layout must reject arithmetic and address-space overflow"
     );
     assert!(
-        gate.contains("publication_render_plan(request, limits)")
+        gate.contains("publication_render_plan(request, limits, field_resources.as_ref())")
             && gate.contains("estimate.staging_bytes > limits.max_buffer_size")
             && gate.contains("budgets.max_readback_bytes"),
-        "the gate must derive a bounded tile plan, then enforce device staging-buffer and CPU-image budgets"
+        "the gate must derive a field-aware bounded tile plan, then enforce device staging-buffer and CPU-image budgets"
     );
     assert!(
         recipe_builder.contains("evaluate_publication_export_admission(")
