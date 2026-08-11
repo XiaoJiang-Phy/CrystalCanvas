@@ -4,27 +4,14 @@ use crystal_canvas::io::export::{export_lammps_data, export_poscar, export_qe_in
 use std::fs;
 
 fn get_dummy_state() -> CrystalState {
-    let mut state = CrystalState {
-        name: "TestCrystal".to_string(),
-        cell_a: 5.0,
-        cell_b: 5.0,
-        cell_c: 5.0,
-        cell_alpha: 90.0,
-        cell_beta: 90.0,
-        cell_gamma: 90.0,
-        spacegroup_hm: "P1".to_string(),
-        spacegroup_number: 1,
-        labels: vec![],
-        elements: vec![],
-        fract_x: vec![],
-        fract_y: vec![],
-        fract_z: vec![],
-        occupancies: vec![],
-        atomic_numbers: vec![],
-        cart_positions: vec![],
-        version: 1,
-        ..Default::default()
-    };
+    let mut state = CrystalState::default();
+    state.name = "TestCrystal".to_string();
+    state.cell_a = 5.0;
+    state.cell_b = 5.0;
+    state.cell_c = 5.0;
+    state.spacegroup_hm = "P1".to_string();
+    state.spacegroup_number = 1;
+    state.version = 1;
     state.try_add_atom("Na", 11, [0.0, 0.0, 0.0]).unwrap();
     state.try_add_atom("Cl", 17, [0.5, 0.5, 0.5]).unwrap();
     state

@@ -39,12 +39,11 @@ pub(crate) fn next_version(cs: &CrystalState) -> IpcResult<PendingVersion> {
     })
 }
 
-pub(crate) fn commit_version(
-    cs: &mut CrystalState,
-    pending: PendingVersion,
-) -> IpcResult<u32> {
+pub(crate) fn commit_version(cs: &mut CrystalState, pending: PendingVersion) -> IpcResult<u32> {
     if cs.version != pending.base {
-        return Err(IpcError::busy("crystal state changed before version commit"));
+        return Err(IpcError::busy(
+            "crystal state changed before version commit",
+        ));
     }
     cs.version = pending.next;
     Ok(pending.next)
@@ -241,13 +240,8 @@ where
     drop(u_stack);
     drop(cs);
 
-    app.emit(
-        "state_changed",
-        StateChangedPayload {
-            version,
-        },
-    )
-    .ok();
+    app.emit("state_changed", StateChangedPayload { version })
+        .ok();
     app.emit(
         "undo_stack_changed",
         UndoStackPayload { can_undo, can_redo },
@@ -297,19 +291,16 @@ where
     let render_overlay = (!invalidate_structure_bound_data)
         .then(|| cs.wannier_overlay.as_ref())
         .flatten();
-    let atom_scene = match crate::wannier::build_atoms_with_ghosts_with_overlay(
-        &cs,
-        &settings,
-        render_overlay,
-    )
-    .and_then(crate::renderer::instance::prepare_atom_scene)
-    {
-        Ok(atom_scene) => atom_scene,
-        Err(error) => {
-            pre_mutation_snapshot.restore_for_rollback(&mut cs);
-            return Err(error);
-        }
-    };
+    let atom_scene =
+        match crate::wannier::build_atoms_with_ghosts_with_overlay(&cs, &settings, render_overlay)
+            .and_then(crate::renderer::instance::prepare_atom_scene)
+        {
+            Ok(atom_scene) => atom_scene,
+            Err(error) => {
+                pre_mutation_snapshot.restore_for_rollback(&mut cs);
+                return Err(error);
+            }
+        };
     let line_scene = match crate::renderer::instance::build_line_scene(&cs, &settings) {
         Ok(line_scene) => line_scene,
         Err(error) => {
@@ -317,12 +308,14 @@ where
             return Err(error);
         }
     };
-    let hopping_instances = render_overlay.map(|overlay| {
-        crate::renderer::instance::build_hopping_instances(
-            &overlay.visible_hoppings,
-            overlay.hr_data.t_max,
-        )
-    }).transpose();
+    let hopping_instances = render_overlay
+        .map(|overlay| {
+            crate::renderer::instance::build_hopping_instances(
+                &overlay.visible_hoppings,
+                overlay.hr_data.t_max,
+            )
+        })
+        .transpose();
     let hopping_instances = match hopping_instances {
         Ok(instances) => instances,
         Err(error) => {
@@ -350,11 +343,11 @@ where
 
     renderer.commit_atoms(atom_scene);
     renderer.update_lines(&line_scene);
-    
+
     if let Some(hopping_instances) = &hopping_instances {
         renderer.update_hoppings(hopping_instances);
     }
-    
+
     drop(renderer);
     drop(settings);
     drop(u_stack);

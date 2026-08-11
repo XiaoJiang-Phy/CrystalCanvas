@@ -100,8 +100,6 @@ fn hostile_scene_data_is_rejected_before_glb_allocation_or_serialization() {
         "selected_atoms",
         "active_phonon_mode",
         "wannier_overlay",
-        "isosurface",
-        "volume",
         "brillouin",
     ] {
         assert!(
@@ -109,6 +107,11 @@ fn hostile_scene_data_is_rejected_before_glb_allocation_or_serialization() {
             "scene admission must actively reject {rejected_domain:?}, not merely omit it accidentally"
         );
     }
+    assert!(
+        !scene_export.contains("(\"isosurface\", request.has_isosurface)")
+            && !scene_export.contains("(\"volume\", request.has_volume)"),
+        "DELIVERY-2 must admit portable realized field geometry; it may reject only a raycast-only scene"
+    );
 }
 
 #[test]

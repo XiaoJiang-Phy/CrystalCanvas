@@ -8,9 +8,20 @@ struct CameraUniforms {
 }
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 
+struct FieldMaterial {
+    unlit: u32,
+    _pad_a: u32,
+    _pad_b: u32,
+    _pad_c: u32,
+}
+
 struct IsosurfaceUniforms {
     color: vec4<f32>,
     color_negative: vec4<f32>,
+    clip_planes: array<vec4<f32>, 6>,
+    // Entries 0..5 store keep_positive; entry 6 stores the plane count.
+    clip_keep_positive: array<vec4<u32>, 2>,
+    field_material: FieldMaterial,
 }
 @group(1) @binding(0) var<uniform> iso_params: IsosurfaceUniforms;
 
@@ -24,6 +35,7 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) view_normal: vec3<f32>,
     @location(1) sign_flag: f32,
+    @location(2) world_position: vec3<f32>,
 }
 
 @vertex
@@ -32,11 +44,21 @@ fn vs_main(model: VertexInput) -> VertexOutput {
     out.clip_position = camera.view_proj * vec4<f32>(model.position, 1.0);
     out.view_normal = (camera.view * vec4<f32>(model.normal, 0.0)).xyz;
     out.sign_flag = model.sign_flag;
+    out.world_position = model.position;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let clip_count = min(iso_params.clip_keep_positive[1].z, 6u);
+    for (var index = 0u; index < clip_count; index += 1u) {
+        let plane = iso_params.clip_planes[index];
+        let signed_distance = dot(plane.xyz, in.world_position) - plane.w;
+        let keep_positive = iso_params.clip_keep_positive[index / 4u][index % 4u] != 0u;
+        if select(signed_distance > 0.0, signed_distance < 0.0, keep_positive) {
+            discard;
+        }
+    }
     let normal = normalize(in.view_normal);
     let is_front = normal.z > 0.0;
     let face_normal = select(-normal, normal, is_front);
@@ -74,5 +96,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_color = select(iso_params.color, iso_params.color_negative, in.sign_flag < 0.0);
     let alpha = base_color.a;
 
-    return vec4<f32>(base_color.rgb * brightness, alpha);
+    let field_material = iso_params.field_material;
+    if field_material.unlit == 0u {
+        return vec4<f32>(base_color.rgb * brightness, alpha);
+    }
+    return base_color;
 }

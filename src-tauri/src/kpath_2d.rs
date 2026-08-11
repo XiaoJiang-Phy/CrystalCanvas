@@ -22,7 +22,7 @@ fn sg_is_centered_ortho(sg: i32) -> bool {
 }
 
 /// Identify the 2D Bravais lattice from IN-PLANE lattice parameters.
-/// 
+///
 /// Parameters `a`, `b`, and `gamma_deg` MUST be obtained from the projected 2D
 /// primitive lattice (e.g., via `CrystalState::get_inplane_lattice`), NOT from
 /// the 3D bulk parameters directly (unless the vacuum axis has been strictly decoupled).
@@ -30,7 +30,7 @@ pub fn identify_bravais_2d(a: f64, b: f64, gamma_deg: f64, spacegroup: i32) -> B
     if a < 1e-12 || b < 1e-12 {
         return BravaisType2D::Oblique; // Degenerate cell protection
     }
-    
+
     let a_b_diff = (a - b).abs() / a;
     let gamma_diff_90 = (gamma_deg - 90.0).abs();
     let gamma_diff_120 = (gamma_deg - 120.0).abs();
@@ -57,7 +57,6 @@ fn map_2d_to_3d(k1: f64, k2: f64, _vacuum_axis: usize) -> [f64; 3] {
     [k1, k2, 0.0]
 }
 
-
 macro_rules! pts2d {
     ($vac:expr, $($name:expr => [$x:expr, $y:expr]),* $(,)?) => {
         vec![
@@ -82,7 +81,7 @@ macro_rules! path {
 }
 
 /// Retrieve the high-symmetry Brillouin zone path for a 2D system.
-/// 
+///
 /// Parameters `a` and `b` MUST be the norms of the in-plane lattice vectors.
 /// `vacuum_axis` identifies the out-of-plane dimension (0=x, 1=y, 2=z) where
 /// out-of-plane components will safely project to 0.0.
@@ -114,7 +113,7 @@ pub fn get_kpath_2d(btype: BravaisType2D, a: f64, b: f64, vacuum_axis: usize) ->
                 },
                 path_segments: path! { "Γ", "X", "S_0", "Y", "Γ" },
             }
-        },
+        }
         BravaisType2D::Oblique => KPath {
             points: pts2d! { vacuum_axis,
                 "Γ" => [0.0, 0.0], "X" => [0.5, 0.0], "C" => [0.5, 0.5], "Y" => [0.0, 0.5]

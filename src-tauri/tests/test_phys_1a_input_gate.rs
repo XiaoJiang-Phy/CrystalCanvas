@@ -1,6 +1,6 @@
 use crystal_canvas::crystal_state::{
-    validate_fractional_position, validate_lattice_parameters, validate_slab_request,
-    validate_supercell_request, CrystalState,
+    CrystalState, validate_fractional_position, validate_lattice_parameters, validate_slab_request,
+    validate_supercell_request,
 };
 
 #[test]
@@ -97,24 +97,19 @@ fn supercell_request_returns_checked_output_size() {
 #[test]
 fn supercell_rejects_cartesian_coordinates_not_representable_as_f32() {
     let scale = f64::from(f32::MAX) * 4.0;
-    let state = CrystalState {
-        name: "overflow-probe".to_string(),
-        cell_a: scale,
-        cell_b: scale,
-        cell_c: scale,
-        cell_alpha: 90.0,
-        cell_beta: 90.0,
-        cell_gamma: 90.0,
-        labels: vec!["C1".to_string()],
-        elements: vec!["C".to_string()],
-        fract_x: vec![0.5],
-        fract_y: vec![0.5],
-        fract_z: vec![0.5],
-        occupancies: vec![1.0],
-        atomic_numbers: vec![6],
-        intrinsic_sites: 1,
-        ..CrystalState::default()
-    };
+    let mut state = CrystalState::default();
+    state.name = "overflow-probe".to_string();
+    state.cell_a = scale;
+    state.cell_b = scale;
+    state.cell_c = scale;
+    state.labels = vec!["C1".to_string()];
+    state.elements = vec!["C".to_string()];
+    state.fract_x = vec![0.5];
+    state.fract_y = vec![0.5];
+    state.fract_z = vec![0.5];
+    state.occupancies = vec![1.0];
+    state.atomic_numbers = vec![6];
+    state.intrinsic_sites = 1;
 
     let identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
     assert!(state.generate_supercell(&identity).is_err());

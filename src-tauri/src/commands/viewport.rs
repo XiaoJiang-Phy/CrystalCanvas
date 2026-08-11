@@ -71,7 +71,7 @@ pub fn set_render_flags(
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    
+
     renderer.show_cell = show_cell;
     renderer.show_bonds = show_bonds;
     Ok(())
@@ -182,7 +182,7 @@ fn get_api_key(provider: &str, provided_key: &str) -> String {
     // Fallback to .env for development
     dotenvy::dotenv().ok();
     dotenvy::from_path("../.env").ok();
-    
+
     // Case-insensitive env var search
     let target_key = if provider == "claude" {
         "anthropic_api_key".to_string()
@@ -324,7 +324,7 @@ pub fn llm_execute_command(
             crate::llm::router::execute_command(command, &mut prepared).map_err(|e| {
                 IpcError::invalid_argument(format!("command execution failed: {}", e))
             })?;
-        Ok(prepared)
+            Ok(prepared)
         },
     )
 }
@@ -349,7 +349,7 @@ pub fn rotate_camera(
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-        
+
     if renderer.show_bz {
         // Rotation disabled in BZ view — labels use a fixed camera projection
     } else {
@@ -367,7 +367,7 @@ pub fn zoom_camera(
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-        
+
     if renderer.show_bz {
         let crate::renderer::renderer::Renderer {
             ref gpu,
@@ -394,7 +394,7 @@ pub fn pan_camera(
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-        
+
     if renderer.show_bz {
         let crate::renderer::renderer::Renderer {
             ref gpu,

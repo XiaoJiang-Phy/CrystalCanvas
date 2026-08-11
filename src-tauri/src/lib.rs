@@ -2,23 +2,23 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+pub mod blender_export;
+pub mod brillouin_zone;
 pub mod commands;
 pub mod crystal_state;
 pub mod export_recipe;
 pub mod ffi;
 pub mod io;
 pub mod ipc;
+pub mod kpath;
+pub mod kpath_2d;
 pub mod llm;
 pub mod phonon;
 pub mod renderer;
-pub mod settings;
 pub mod scene_export;
-pub mod blender_export;
-pub mod utils;
-pub mod volumetric;
-pub mod brillouin_zone;
-pub mod kpath;
-pub mod kpath_2d;
-pub mod wannier;
+pub mod settings;
 pub mod transaction;
 pub mod undo;
+pub mod utils;
+pub mod volumetric;
+pub mod wannier;

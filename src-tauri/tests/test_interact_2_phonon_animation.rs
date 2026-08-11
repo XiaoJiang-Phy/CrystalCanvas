@@ -5,7 +5,7 @@
 //! test does not carry a duplicate implementation of the display relation.
 
 use crystal_canvas::renderer::instance::{
-    apply_phonon_frame, validate_phonon_display_envelope, AtomInstance,
+    AtomInstance, apply_phonon_frame, validate_phonon_display_envelope,
 };
 use crystal_canvas::renderer::renderer::PhononPlayback;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};

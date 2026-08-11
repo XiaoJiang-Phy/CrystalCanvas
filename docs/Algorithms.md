@@ -1,6 +1,6 @@
 # CrystalCanvas Algorithms and Implementation Notes
 
-> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
+> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
 
 This document connects the current visualization and geometry algorithms to their implementation and regression gates. It guides contributors who change existing behavior. It is not a validation report for a material, calculation, or source file.
 

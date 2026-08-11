@@ -35,6 +35,107 @@ export interface VolumetricInfo {
     format: string;
 }
 
+export interface FieldLayerInfo {
+    id: number;
+    revision: number;
+    label: string;
+    grid_dims: [number, number, number];
+    data_min: number;
+    data_max: number;
+    lattice_angstrom: [number, number, number, number, number, number, number, number, number];
+    origin_angstrom: [number, number, number];
+    source_coordinate_unit: string;
+    coordinate_to_angstrom: number;
+    periodic_axes: [boolean, boolean, boolean];
+    attachment: string;
+    ordering: string;
+    scalar_unit: string;
+    scalar_unit_scale: number;
+    normalization: string;
+    metadata_declared: boolean;
+    source_sha256: string;
+    normalized_sha256: string;
+    lineage: FieldLineageTerm[] | null;
+    visible: boolean;
+    isovalue: number;
+    opacity: number;
+    color: [number, number, number, number];
+    color_negative: [number, number, number, number];
+    opacity_scale: number;
+    sign_mode: FieldSignMode;
+    render_mode: FieldRenderMode;
+    colormap_mode: number;
+    presentation_settings: FieldPresentationSettings;
+}
+
+export interface FieldLineageTerm {
+    source_sha256: string;
+    normalized_sha256: string;
+    compatibility_receipt_sha256: string;
+    coefficient: number;
+}
+
+export interface FieldSceneInfo {
+    revision: number;
+    active_layer_id: number | null;
+    layers: FieldLayerInfo[];
+}
+
+export interface FieldSceneChangedPayload {
+    revision: number;
+    active_layer_id: number | null;
+}
+
+export interface FieldLinearCombinationTerm {
+    layerId: number;
+    coefficient: number;
+}
+
+export type FieldSliceInterpolation = 'trilinear';
+export type FieldTransparencyMethod = 'weighted_blended_oit' | 'premultiplied_alpha_fallback';
+export type FieldMaterialMode = 'lit' | 'unlit';
+
+export interface FieldClipPlane {
+    normal: [number, number, number];
+    signed_offset_angstrom: number;
+    keep_positive: boolean;
+}
+
+export interface FieldSlicePlane {
+    normal: [number, number, number];
+    signed_offset_angstrom: number;
+    interpolation: FieldSliceInterpolation;
+}
+
+export interface FieldSliceRequest {
+    plane: FieldSlicePlane;
+    dimensions: [number, number];
+    contour_levels: number[];
+}
+
+export interface FieldTransferControlPoint {
+    position: number;
+    color_linear_rgba: [number, number, number, number];
+}
+
+export interface FieldTransferFunction {
+    color_space: string;
+    negative_control_points: FieldTransferControlPoint[];
+    positive_control_points: FieldTransferControlPoint[];
+}
+
+export interface FieldPresentationSettings {
+    clip_planes: FieldClipPlane[];
+    slices: FieldSliceRequest[];
+    transfer_function: FieldTransferFunction;
+    use_explicit_transfer_function: boolean;
+    display_range: [number, number] | null;
+    opacity_scale: number;
+    density_cutoff: number;
+    transparency_method: FieldTransparencyMethod;
+    field_material_mode: FieldMaterialMode;
+}
+
 export interface TauriDragPayload {
     paths: string[];
     position: { x: number; y: number };
@@ -47,6 +148,8 @@ export interface StateChangedPayload {
 export type CameraAxis = 'a' | 'b' | 'c' | 'a_star' | 'b_star' | 'c_star' | 'reset';
 export type IsosurfaceSignMode = 'positive' | 'negative' | 'both';
 export type VolumeRenderMode = 'isosurface' | 'volume' | 'both';
+export type FieldSignMode = 'positive' | 'negative' | 'both';
+export type FieldRenderMode = 'isosurface' | 'volume' | 'both';
 export type VolumeColormap = 'viridis' | 'grayscale' | 'inferno' | 'plasma' | 'coolwarm'
     | 'hot' | 'magma' | 'cividis' | 'turbo' | 'rdylbu';
 export type LlmProvider = 'openai' | 'deepseek' | 'claude' | 'gemini' | 'ollama';
@@ -76,6 +179,7 @@ export class IpcException extends Error implements IpcError {
 }
 
 export interface IpcEventContract {
+    field_scene_changed: FieldSceneChangedPayload;
     'menu-action': string;
     state_changed: StateChangedPayload;
     'tauri://drag-drop': TauriDragPayload;
@@ -88,6 +192,7 @@ export interface IpcEventContract {
 
 export interface IpcCommandContract {
     add_atom: { args: { elementSymbol: string; atomicNumber: number; fractPos: [number, number, number] }; result: null };
+    add_field_layer: { args: { path: string; scalarUnit?: string | null; expectedRevision: number }; result: FieldSceneInfo };
     add_measurement: { args: { indices: number[] }; result: MeasurementOverlay };
     apply_cell_standardize: { args: { toPrimitive: boolean }; result: null };
     apply_niggli_reduce: { args: undefined; result: null };
@@ -106,6 +211,7 @@ export interface IpcCommandContract {
     export_blender_scene: { args: { path: string; publicationProfile: PublicationLookProfileId }; result: null };
     generate_kpath_text: { args: { npoints: number }; result: KPathText };
     get_bond_analysis: { args: { thresholdFactor?: number | null }; result: BondAnalysisResult };
+    get_field_scene_info: { args: undefined; result: FieldSceneInfo };
     get_bz_label_positions: { args: { width: number; height: number }; result: ScreenLabel[] };
     get_crystal_state: { args: undefined; result: CrystalState };
     get_kpath_info: { args: undefined; result: KPathInfo };
@@ -122,6 +228,11 @@ export interface IpcCommandContract {
     load_phonon_interactive: { args: { scfIn: string; scfOut: string; modes: string }; result: PhononModeSummary[] };
     load_volumetric_file: { args: { path: string }; result: VolumetricInfo };
     load_wannier_hr: { args: { path: string }; result: WannierInfo };
+    remove_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
+    rename_field_layer: { args: { layerId: number; label: string; expectedRevision: number }; result: FieldSceneInfo };
+    set_field_layer_visibility: { args: { layerId: number; visible: boolean; expectedRevision: number }; result: FieldSceneInfo };
+    set_field_layer_presentation: { args: { layerId: number; presentationSettings: FieldPresentationSettings; expectedRevision: number }; result: FieldSceneInfo };
+    reorder_field_layer: { args: { layerId: number; targetIndex: number; expectedRevision: number }; result: FieldSceneInfo };
     pan_camera: { args: { dx: number; dy: number }; result: null };
     pick_atom: { args: { x: number; y: number; screenW: number; screenH: number }; result: number | null };
     preview_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: CrystalState };
@@ -133,23 +244,27 @@ export interface IpcCommandContract {
     set_bz_scale: { args: { scale: number }; result: null };
     set_camera_projection: { args: { isPerspective: boolean }; result: null };
     set_camera_view_axis: { args: { axis: CameraAxis }; result: null };
-    set_isosurface_color: { args: { color: [number, number, number, number] }; result: null };
-    set_isosurface_opacity: { args: { opacity: number }; result: null };
-    set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode }; result: null };
-    set_isovalue: { args: { value: number }; result: null };
+    set_isosurface_color: { args: { color: [number, number, number, number]; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isosurface_colors: { args: { positiveColor: [number, number, number, number]; negativeColor: [number, number, number, number]; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isosurface_opacity: { args: { opacity: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isovalue: { args: { value: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_signed_isovalues: { args: { positiveValue: number; negativeValue: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    select_active_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
     set_phonon_mode: { args: { modeIndex?: number | null }; result: null };
     set_phonon_phase: { args: { phase: number; amplitude?: number | null }; result: null };
     set_phonon_display_scale: { args: { displayScale: number }; result: null };
     set_phonon_playing: { args: { playing: boolean }; result: null };
     set_render_flags: { args: { showCell: boolean; showBonds: boolean }; result: null };
-    set_volume_colormap: { args: { mode: VolumeColormap }; result: null };
-    set_volume_density_cutoff: { args: { cutoff: number }; result: null };
-    set_volume_opacity_range: { args: { min: number; max: number; opacityScale: number }; result: null };
-    set_volume_render_mode: { args: { mode: VolumeRenderMode }; result: null };
+    set_volume_colormap: { args: { mode: VolumeColormap; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_volume_density_cutoff: { args: { cutoff: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_volume_opacity_range: { args: { min: number; max: number; opacityScale: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_volume_render_mode: { args: { mode: VolumeRenderMode; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
     set_wannier_orbital: { args: { orbIdx: number; active: boolean }; result: null };
     set_wannier_r_shell: { args: { shellIdx: number; active: boolean }; result: null };
     set_wannier_t_min: { args: { tMin: number }; result: null };
     shift_termination: { args: { targetLayerIdx: number; layerToleranceA?: number | null }; result: number };
+    combine_field_layers: { args: { terms: FieldLinearCombinationTerm[]; outputLabel: string; expectedRevision: number }; result: FieldSceneInfo };
     substitute_atoms: { args: { indices: number[]; newElementSymbol: string; newAtomicNumber: number }; result: null };
     toggle_bz_display: { args: { show: boolean }; result: null };
     toggle_hopping_display: { args: { show: boolean }; result: null };
@@ -225,6 +340,10 @@ function is_number_triplet(value: unknown): value is [number, number, number] {
     return Array.isArray(value) && value.length === 3 && value.every(is_finite_number);
 }
 
+function is_boolean_triplet(value: unknown): value is [boolean, boolean, boolean] {
+    return Array.isArray(value) && value.length === 3 && value.every((item) => typeof item === 'boolean');
+}
+
 function is_nonnegative_integer(value: unknown): value is number {
     return Number.isSafeInteger(value) && (value as number) >= 0;
 }
@@ -232,6 +351,58 @@ function is_nonnegative_integer(value: unknown): value is number {
 function is_rgba(value: unknown): value is [number, number, number, number] {
     return Array.isArray(value) && value.length === 4
         && value.every((component) => is_finite_number(component) && component >= 0 && component <= 1);
+}
+
+function is_sha256(value: unknown): value is string {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function is_number_pair(value: unknown): value is [number, number] {
+    return Array.isArray(value) && value.length === 2 && value.every(is_finite_number);
+}
+
+function is_nonzero_triplet(value: unknown): value is [number, number, number] {
+    return is_number_triplet(value) && value.some((component) => component !== 0);
+}
+
+function is_strictly_increasing(values: unknown[]): boolean {
+    return values.every((value, index) => index === 0 || (value as number) > (values[index - 1] as number));
+}
+
+function is_field_presentation_settings(value: unknown): value is FieldPresentationSettings {
+    if (!is_record(value)
+        || !Array.isArray(value.clip_planes)
+        || !Array.isArray(value.slices)
+        || !is_record(value.transfer_function)
+        || typeof value.use_explicit_transfer_function !== 'boolean'
+        || (value.display_range !== null && (!is_number_pair(value.display_range) || value.display_range[0] >= value.display_range[1]))
+        || !is_finite_number(value.opacity_scale) || value.opacity_scale < 0 || value.opacity_scale > 10
+        || !is_finite_number(value.density_cutoff) || value.density_cutoff < 0
+        || value.transparency_method !== 'premultiplied_alpha_fallback'
+        || (value.field_material_mode !== 'lit' && value.field_material_mode !== 'unlit')) return false;
+    if (value.clip_planes.length > 6 || !value.clip_planes.every((plane) => is_record(plane)
+        && is_nonzero_triplet(plane.normal) && is_finite_number(plane.signed_offset_angstrom)
+        && typeof plane.keep_positive === 'boolean')) return false;
+    if (value.slices.length > 4 || !value.slices.every((slice) => is_record(slice)
+        && is_record(slice.plane) && is_nonzero_triplet(slice.plane.normal)
+        && is_finite_number(slice.plane.signed_offset_angstrom) && slice.plane.interpolation === 'trilinear'
+        && Array.isArray(slice.dimensions) && slice.dimensions.length === 2
+        && slice.dimensions.every((dimension) => is_nonnegative_integer(dimension) && dimension >= 2 && dimension <= 512)
+        && slice.dimensions[0] * slice.dimensions[1] <= 512 * 512
+        && Array.isArray(slice.contour_levels) && slice.contour_levels.length <= 32
+        && slice.contour_levels.every(is_finite_number) && is_strictly_increasing(slice.contour_levels))) return false;
+    const transfer = value.transfer_function;
+    const valid_branch = (branch: unknown) => Array.isArray(branch)
+        && branch.length >= 2 && branch.length <= 16
+        && branch.every((point) => is_record(point)
+            && is_finite_number(point.position) && point.position >= 0 && point.position <= 1
+            && is_rgba(point.color_linear_rgba))
+        && is_strictly_increasing(branch.map((point) => (point as FieldTransferControlPoint).position));
+    return transfer.color_space === 'LinearRgb'
+        && Array.isArray(transfer.negative_control_points)
+        && Array.isArray(transfer.positive_control_points)
+        && valid_branch(transfer.negative_control_points)
+        && valid_branch(transfer.positive_control_points);
 }
 
 function is_measurement(value: unknown): value is MeasurementOverlay {
@@ -281,6 +452,52 @@ export function is_volumetric_info(value: unknown): value is VolumetricInfo {
         && Number.isFinite(candidate.data_max)
         && candidate.data_min <= candidate.data_max
         && typeof candidate.format === 'string';
+}
+
+export function is_field_scene_info(value: unknown): value is FieldSceneInfo {
+    if (!is_record(value) || !is_nonnegative_integer(value.revision)
+        || (value.active_layer_id !== null && !is_nonnegative_integer(value.active_layer_id))
+        || !Array.isArray(value.layers)) return false;
+    if (value.active_layer_id !== null && !value.layers.some((layer) => is_record(layer) && layer.id === value.active_layer_id)) return false;
+    const layerIds = new Set<number>();
+    return value.layers.every((layer) => is_record(layer)
+        && is_nonnegative_integer(layer.id) && !layerIds.has(layer.id)
+        && (layerIds.add(layer.id), true) && is_nonnegative_integer(layer.revision)
+        && typeof layer.label === 'string'
+        && Array.isArray(layer.grid_dims) && layer.grid_dims.length === 3
+        && layer.grid_dims.every((dimension) => is_nonnegative_integer(dimension) && dimension > 0)
+        && is_finite_number(layer.data_min) && is_finite_number(layer.data_max)
+        && layer.data_min <= layer.data_max
+        && Array.isArray(layer.lattice_angstrom) && layer.lattice_angstrom.length === 9
+        && layer.lattice_angstrom.every(is_finite_number)
+        && is_number_triplet(layer.origin_angstrom) && is_finite_number(layer.coordinate_to_angstrom)
+        && layer.coordinate_to_angstrom > 0
+        && (layer.source_coordinate_unit === 'angstrom' || layer.source_coordinate_unit === 'bohr')
+        && is_boolean_triplet(layer.periodic_axes)
+        && (layer.attachment === 'grid_point' || layer.attachment === 'cell')
+        && layer.ordering === 'col_major'
+        && (layer.scalar_unit === 'electron_per_cubic_angstrom'
+            || layer.scalar_unit === 'electron_per_bohr_cubed' || layer.scalar_unit === 'arbitrary')
+        && is_finite_number(layer.scalar_unit_scale) && layer.scalar_unit_scale > 0
+        && (layer.normalization === 'raw' || layer.normalization === 'vasp_cell_integrated_to_density')
+        && typeof layer.metadata_declared === 'boolean'
+        && is_sha256(layer.source_sha256) && is_sha256(layer.normalized_sha256)
+        && typeof layer.visible === 'boolean' && is_finite_number(layer.isovalue)
+        && is_finite_number(layer.opacity) && layer.opacity >= 0 && layer.opacity <= 1
+        && is_rgba(layer.color) && is_rgba(layer.color_negative)
+        && is_finite_number(layer.opacity_scale) && layer.opacity_scale >= 0 && layer.opacity_scale <= 10
+        && (layer.sign_mode === 'positive' || layer.sign_mode === 'negative' || layer.sign_mode === 'both')
+        && (layer.render_mode === 'isosurface' || layer.render_mode === 'volume' || layer.render_mode === 'both')
+        && is_nonnegative_integer(layer.colormap_mode) && layer.colormap_mode <= 9
+        && is_field_presentation_settings(layer.presentation_settings)
+        && (layer.lineage === null || (Array.isArray(layer.lineage) && layer.lineage.every((term) => is_record(term)
+            && is_sha256(term.source_sha256) && is_sha256(term.normalized_sha256)
+            && is_sha256(term.compatibility_receipt_sha256) && is_finite_number(term.coefficient)))));
+}
+
+function is_field_scene_changed(value: unknown): value is FieldSceneChangedPayload {
+    return is_record(value) && is_nonnegative_integer(value.revision)
+        && (value.active_layer_id === null || is_nonnegative_integer(value.active_layer_id));
 }
 
 function is_crystal_state(value: unknown): value is CrystalState {
@@ -377,6 +594,7 @@ const IPC_RESULT_VALIDATORS: {
     [Command in TypedIpcCommand]: (value: unknown) => boolean;
 } = {
     add_atom: is_null,
+    add_field_layer: is_field_scene_info,
     add_measurement: is_measurement,
     apply_cell_standardize: is_null,
     apply_niggli_reduce: is_null,
@@ -395,6 +613,7 @@ const IPC_RESULT_VALIDATORS: {
     export_image: is_null,
     generate_kpath_text: is_kpath_text,
     get_bond_analysis: is_bond_analysis,
+    get_field_scene_info: is_field_scene_info,
     get_bz_label_positions: is_screen_labels,
     get_crystal_state: is_crystal_state,
     get_kpath_info: is_kpath_info,
@@ -411,6 +630,9 @@ const IPC_RESULT_VALIDATORS: {
     load_phonon_interactive: is_phonon_modes,
     load_volumetric_file: is_volumetric_info,
     load_wannier_hr: is_wannier_info,
+    remove_field_layer: is_field_scene_info,
+    rename_field_layer: is_field_scene_info,
+    reorder_field_layer: is_field_scene_info,
     pan_camera: is_null,
     pick_atom: (value) => value === null || is_nonnegative_integer(value),
     preview_slab: is_crystal_state,
@@ -422,23 +644,29 @@ const IPC_RESULT_VALIDATORS: {
     set_bz_scale: is_null,
     set_camera_projection: is_null,
     set_camera_view_axis: is_null,
-    set_isosurface_color: is_null,
-    set_isosurface_opacity: is_null,
-    set_isosurface_sign_mode: is_null,
-    set_isovalue: is_null,
+    set_isosurface_color: is_field_scene_changed,
+    set_isosurface_colors: is_field_scene_changed,
+    set_isosurface_opacity: is_field_scene_changed,
+    set_isosurface_sign_mode: is_field_scene_changed,
+    set_isovalue: is_field_scene_changed,
+    set_signed_isovalues: is_field_scene_changed,
+    set_field_layer_visibility: is_field_scene_info,
+    set_field_layer_presentation: is_field_scene_info,
+    select_active_field_layer: is_field_scene_info,
     set_phonon_mode: is_null,
     set_phonon_phase: is_null,
     set_phonon_display_scale: is_null,
     set_phonon_playing: is_null,
     set_render_flags: is_null,
-    set_volume_colormap: is_null,
-    set_volume_density_cutoff: is_null,
-    set_volume_opacity_range: is_null,
-    set_volume_render_mode: is_null,
+    set_volume_colormap: is_field_scene_changed,
+    set_volume_density_cutoff: is_field_scene_changed,
+    set_volume_opacity_range: is_field_scene_changed,
+    set_volume_render_mode: is_field_scene_changed,
     set_wannier_orbital: is_null,
     set_wannier_r_shell: is_null,
     set_wannier_t_min: is_null,
     shift_termination: is_integer,
+    combine_field_layers: is_field_scene_info,
     substitute_atoms: is_null,
     toggle_bz_display: is_null,
     toggle_hopping_display: is_null,
@@ -477,6 +705,7 @@ export function normalize_ipc_error(value: unknown): IpcException {
 }
 
 export function validate_ipc_event<Event extends TypedIpcEvent>(event: Event, value: unknown): IpcEventContract[Event] {
+    if (event === 'field_scene_changed' && is_field_scene_changed(value)) return value as IpcEventContract[Event];
     if (event === 'state_changed' && is_record(value) && is_nonnegative_integer(value.version)) return value as IpcEventContract[Event];
     if (event === 'tauri://drag-leave' && (value === null || value === undefined)) return value as IpcEventContract[Event];
     if (event === 'menu-action' && typeof value === 'string') return value as IpcEventContract[Event];

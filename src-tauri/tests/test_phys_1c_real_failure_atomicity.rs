@@ -6,8 +6,8 @@ use crystal_canvas::{
     undo::{StructuralSnapshot, UndoStack},
 };
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 use tauri::{Listener, Manager};
 

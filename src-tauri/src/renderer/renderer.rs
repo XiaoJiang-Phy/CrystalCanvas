@@ -18,6 +18,14 @@ use super::publication_look::{
     PublicationCellLineBackground, PublicationCellLineStyle, PublicationLookProfile,
     PublicationLookUniform,
 };
+use crate::renderer::field_scene::{
+    FieldRenderSnapshot, FieldRepresentation, MAX_VISIBLE_FIELD_LAYERS_FIGURE_2,
+};
+// FIELD-1's legacy one-visible-layer cap remains documented for migration; the
+// FIGURE-2 renderer enforces its own bounded multi-layer capacity.
+use crate::volumetric::MAX_VISIBLE_FIELD_LAYERS_FIELD_1;
+
+const _FIELD_1_LEGACY_VISIBLE_CAP: usize = MAX_VISIBLE_FIELD_LAYERS_FIELD_1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RendererVolumeMode {
@@ -26,10 +34,377 @@ pub enum RendererVolumeMode {
     Both,
 }
 
-pub struct PreparedVolumetric {
-    isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
-    volume_raycast_pipeline: crate::renderer::volume_raycast::VolumeRaycastPipeline,
+fn field_representations(
+    settings: crate::volumetric::FieldRenderSettings,
+    slices: &[crate::renderer::field_scene::FieldSliceRequest],
+) -> Vec<FieldRepresentation> {
+    let mut representations = Vec::with_capacity(5);
+    if matches!(
+        settings.render_mode,
+        crate::volumetric::FieldRenderMode::Isosurface | crate::volumetric::FieldRenderMode::Both
+    ) {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) {
+            representations.push(FieldRepresentation::PositiveIsosurface);
+        }
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) {
+            representations.push(FieldRepresentation::NegativeIsosurface);
+        }
+    }
+    if matches!(
+        settings.render_mode,
+        crate::volumetric::FieldRenderMode::Volume | crate::volumetric::FieldRenderMode::Both
+    ) {
+        representations.push(FieldRepresentation::VolumeRaycast);
+    }
+    if !slices.is_empty() {
+        representations.push(FieldRepresentation::Slice);
+        if slices.iter().any(|slice| !slice.contour_levels.is_empty()) {
+            representations.push(FieldRepresentation::Contour);
+        }
+    }
+    representations
 }
+
+fn field_scene_hash(snapshots: &[FieldRenderSnapshot]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    for snapshot in snapshots {
+        digest.update(snapshot.layer_id.to_le_bytes());
+        digest.update(snapshot.source_layer_revision.to_le_bytes());
+        digest.update(serde_json::to_vec(snapshot).unwrap_or_default());
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn add_field_resource_footprint(
+    total: FieldResourceFootprint,
+    next: FieldResourceFootprint,
+) -> Option<FieldResourceFootprint> {
+    Some(FieldResourceFootprint {
+        resident_field_bytes: total
+            .resident_field_bytes
+            .checked_add(next.resident_field_bytes)?,
+        isosurface_vertex_bytes: total
+            .isosurface_vertex_bytes
+            .checked_add(next.isosurface_vertex_bytes)?,
+        volume_storage_bytes: total
+            .volume_storage_bytes
+            .checked_add(next.volume_storage_bytes)?,
+        slice_vertex_bytes: total
+            .slice_vertex_bytes
+            .checked_add(next.slice_vertex_bytes)?,
+        contour_vertex_bytes: total
+            .contour_vertex_bytes
+            .checked_add(next.contour_vertex_bytes)?,
+    })
+}
+
+fn draw_frozen_field_resources<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    camera_bind_group: &'a wgpu::BindGroup,
+    settings: crate::volumetric::FieldRenderSettings,
+    volume: &'a crate::renderer::volume_raycast::VolumeRaycastPipeline,
+    positive_isosurface: Option<&'a crate::renderer::isosurface::IsosurfacePipeline>,
+    negative_isosurface: Option<&'a crate::renderer::isosurface::IsosurfacePipeline>,
+    slices: &'a [crate::renderer::field_slice::FieldSliceGpuResource],
+    slice_pipeline: &'a wgpu::RenderPipeline,
+    line_pipeline: &'a wgpu::RenderPipeline,
+) {
+    if !settings.visible {
+        return;
+    }
+    if matches!(
+        settings.render_mode,
+        crate::volumetric::FieldRenderMode::Volume | crate::volumetric::FieldRenderMode::Both
+    ) {
+        volume.render(pass, camera_bind_group);
+    }
+    if matches!(
+        settings.render_mode,
+        crate::volumetric::FieldRenderMode::Isosurface | crate::volumetric::FieldRenderMode::Both
+    ) {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) && let Some(iso) = positive_isosurface
+        {
+            iso.draw(pass, camera_bind_group);
+        }
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) && let Some(iso) = negative_isosurface
+        {
+            iso.draw(pass, camera_bind_group);
+        }
+    }
+    for slice in slices {
+        if let Some(buffer) = &slice.slice_buffer {
+            pass.set_pipeline(slice_pipeline);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.draw(0..slice.slice_vertex_count, 0..1);
+        }
+        if let Some(buffer) = &slice.contour_buffer {
+            pass.set_pipeline(line_pipeline);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.draw(0..slice.contour_vertex_count, 0..1);
+        }
+    }
+}
+
+struct PublicationFieldLayerPipelines {
+    layer_id: crate::volumetric::FieldLayerId,
+    positive: Option<wgpu::RenderPipeline>,
+    negative: Option<wgpu::RenderPipeline>,
+    volume: Option<wgpu::RenderPipeline>,
+    slice: wgpu::RenderPipeline,
+}
+
+struct PublicationVolumeBinding {
+    layer_id: crate::volumetric::FieldLayerId,
+    bind_group: wgpu::BindGroup,
+}
+
+fn draw_publication_field_layer<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    camera_bind_group: &'a wgpu::BindGroup,
+    field_pipelines: &'a [PublicationFieldLayerPipelines],
+    volume_bindings: &'a [PublicationVolumeBinding],
+    line_pipeline: &'a wgpu::RenderPipeline,
+    layer_id: crate::volumetric::FieldLayerId,
+    settings: crate::volumetric::FieldRenderSettings,
+    volume: Option<&'a crate::renderer::volume_raycast::VolumeRaycastPipeline>,
+    positive_isosurface: Option<&'a crate::renderer::isosurface::IsosurfacePipeline>,
+    negative_isosurface: Option<&'a crate::renderer::isosurface::IsosurfacePipeline>,
+    slices: &'a [crate::renderer::field_slice::FieldSliceGpuResource],
+) {
+    if !settings.visible {
+        return;
+    }
+    let Some(pipelines) = field_pipelines
+        .iter()
+        .find(|pipelines| pipelines.layer_id == layer_id)
+    else {
+        return;
+    };
+    if matches!(
+        settings.render_mode,
+        crate::volumetric::FieldRenderMode::Volume | crate::volumetric::FieldRenderMode::Both
+    ) {
+        if let (Some(volume), Some(binding), Some(render_pipeline)) = (
+            volume,
+            volume_bindings
+                .iter()
+                .find(|binding| binding.layer_id == layer_id),
+            pipelines.volume.as_ref(),
+        ) {
+            volume.render_with_bind_group(
+                render_pipeline,
+                pass,
+                camera_bind_group,
+                &binding.bind_group,
+            );
+        }
+    }
+    if matches!(
+        settings.render_mode,
+        crate::volumetric::FieldRenderMode::Isosurface | crate::volumetric::FieldRenderMode::Both
+    ) {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) && let (Some(iso), Some(render_pipeline)) = (positive_isosurface, &pipelines.positive)
+        {
+            iso.draw_with_pipeline(render_pipeline, pass, camera_bind_group);
+        }
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) && let (Some(iso), Some(render_pipeline)) = (negative_isosurface, &pipelines.negative)
+        {
+            iso.draw_with_pipeline(render_pipeline, pass, camera_bind_group);
+        }
+    }
+    for slice in slices {
+        if let Some(buffer) = &slice.slice_buffer {
+            pass.set_pipeline(&pipelines.slice);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.draw(0..slice.slice_vertex_count, 0..1);
+        }
+        if let Some(buffer) = &slice.contour_buffer {
+            pass.set_pipeline(line_pipeline);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.draw(0..slice.contour_vertex_count, 0..1);
+        }
+    }
+}
+
+fn draw_publication_retained_field_layer<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    camera_bind_group: &'a wgpu::BindGroup,
+    field_pipelines: &'a [PublicationFieldLayerPipelines],
+    volume_bindings: &'a [PublicationVolumeBinding],
+    line_pipeline: &'a wgpu::RenderPipeline,
+    layer: &'a RetainedFieldLayer,
+) {
+    draw_publication_field_layer(
+        pass,
+        camera_bind_group,
+        field_pipelines,
+        volume_bindings,
+        line_pipeline,
+        layer.layer_id,
+        layer.render_settings,
+        Some(&layer.volume_raycast_pipeline),
+        layer.isosurface_pipeline.as_ref(),
+        layer.negative_isosurface_pipeline.as_ref(),
+        &layer.slices,
+    );
+}
+
+fn draw_publication_fields<'a>(
+    renderer: &'a Renderer,
+    pass: &mut wgpu::RenderPass<'a>,
+    camera_bind_group: &'a wgpu::BindGroup,
+    field_pipelines: &'a [PublicationFieldLayerPipelines],
+    volume_bindings: &'a [PublicationVolumeBinding],
+    line_pipeline: &'a wgpu::RenderPipeline,
+    draw_list: &'a FrozenFieldDrawList,
+) {
+    for layer_id in draw_list.iter() {
+        if renderer
+            .active_field_layer
+            .is_some_and(|(active_id, _)| active_id == *layer_id)
+        {
+            if let Some(settings) = renderer.active_field_render_settings {
+                draw_publication_field_layer(
+                    pass,
+                    camera_bind_group,
+                    field_pipelines,
+                    volume_bindings,
+                    line_pipeline,
+                    *layer_id,
+                    settings,
+                    renderer.volume_raycast_pipeline.as_ref(),
+                    renderer.active_field_layer_pipeline.as_ref(),
+                    renderer.active_negative_field_layer_pipeline.as_ref(),
+                    &renderer.active_field_slices,
+                );
+            }
+        } else if let Some(layer) = renderer
+            .retained_field_layers
+            .iter()
+            .find(|layer| layer.layer_id == *layer_id)
+        {
+            draw_publication_retained_field_layer(
+                pass,
+                camera_bind_group,
+                field_pipelines,
+                volume_bindings,
+                line_pipeline,
+                layer,
+            );
+        }
+    }
+}
+
+pub struct PreparedFieldLayer {
+    layer_id: crate::volumetric::FieldLayerId,
+    layer_revision: crate::volumetric::FieldSceneRevision,
+    renderer_field_epoch: u64,
+    render_settings: crate::volumetric::FieldRenderSettings,
+    field_snapshot: FieldRenderSnapshot,
+    grid_dims: [usize; 3],
+    gpu_bytes: u64,
+    resource_footprint: FieldResourceFootprint,
+    isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    negative_isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    volume_raycast_pipeline: crate::renderer::volume_raycast::VolumeRaycastPipeline,
+    slices: Vec<crate::renderer::field_slice::FieldSliceGpuResource>,
+}
+
+struct RetainedFieldLayer {
+    layer_id: crate::volumetric::FieldLayerId,
+    render_settings: crate::volumetric::FieldRenderSettings,
+    field_snapshot: FieldRenderSnapshot,
+    gpu_bytes: u64,
+    resource_footprint: FieldResourceFootprint,
+    isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    negative_isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    volume_raycast_pipeline: crate::renderer::volume_raycast::VolumeRaycastPipeline,
+    slices: Vec<crate::renderer::field_slice::FieldSliceGpuResource>,
+}
+
+/// Immutable ordered field resources shared by interactive and publication draws.
+#[derive(Clone, Debug)]
+pub struct FrozenFieldDrawList {
+    layer_ids: [crate::volumetric::FieldLayerId; MAX_VISIBLE_FIELD_LAYERS_FIGURE_2],
+    len: usize,
+}
+
+impl FrozenFieldDrawList {
+    fn empty() -> Self {
+        Self {
+            layer_ids: [0; MAX_VISIBLE_FIELD_LAYERS_FIGURE_2],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, layer_id: crate::volumetric::FieldLayerId) -> bool {
+        if self.len >= self.layer_ids.len() {
+            return false;
+        }
+        self.layer_ids[self.len] = layer_id;
+        self.len += 1;
+        true
+    }
+
+    fn sort(&mut self) {
+        self.layer_ids[..self.len].sort_unstable();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &crate::volumetric::FieldLayerId> {
+        self.layer_ids[..self.len].iter()
+    }
+}
+
+/// Immutable FIGURE-2 field state captured before publication rasterization.
+/// It deliberately contains no interactive renderer handles or mutable structure state.
+#[derive(Clone, Debug)]
+pub struct FieldPublicationSnapshot {
+    pub field_snapshots: Vec<FieldRenderSnapshot>,
+    pub draw_list: FrozenFieldDrawList,
+    pub representation: Vec<FieldRepresentation>,
+    pub transfer_function: crate::renderer::field_scene::FieldTransferFunction,
+    pub clip_planes: Vec<crate::renderer::field_scene::FieldClipPlane>,
+    pub composition_method: crate::renderer::field_scene::FieldTransparencyMethod,
+    pub requested_field_capabilities: u32,
+    pub selected_field_capabilities: u32,
+    pub field_scene_hash: String,
+    pub resource_footprint: FieldResourceFootprint,
+}
+
+/// The actual resident GPU allocation categorized by field representation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FieldResourceFootprint {
+    pub resident_field_bytes: u64,
+    pub isosurface_vertex_bytes: u64,
+    pub volume_storage_bytes: u64,
+    pub slice_vertex_bytes: u64,
+    pub contour_vertex_bytes: u64,
+}
+
+pub type PreparedVolumetric = PreparedFieldLayer;
 
 #[derive(Clone, Copy)]
 struct AtomDragInstance {
@@ -297,6 +672,7 @@ pub struct Renderer {
 
     // Lines rendering (Unit cell box)
     line_pipeline: wgpu::RenderPipeline,
+    field_slice_pipeline: wgpu::RenderPipeline,
     cell_line_buffer: wgpu::Buffer,
     cell_line_count: u32,
     cell_line_vertices: Vec<LineVertex>,
@@ -318,7 +694,21 @@ pub struct Renderer {
     pub show_bonds: bool,
 
     // Volumetric rendering
-    pub isosurface_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    pub active_field_layer_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    active_negative_field_layer_pipeline: Option<crate::renderer::isosurface::IsosurfacePipeline>,
+    pub active_field_layer: Option<(
+        crate::volumetric::FieldLayerId,
+        crate::volumetric::FieldSceneRevision,
+    )>,
+    active_field_snapshot: Option<FieldRenderSnapshot>,
+    active_field_render_settings: Option<crate::volumetric::FieldRenderSettings>,
+    active_field_slices: Vec<crate::renderer::field_slice::FieldSliceGpuResource>,
+    retained_field_layers: Vec<RetainedFieldLayer>,
+    /// Changes whenever a prepared field resource can no longer be committed.
+    field_resource_epoch: u64,
+    active_field_gpu_bytes: u64,
+    active_field_resource_footprint: FieldResourceFootprint,
+    resident_field_gpu_bytes: u64,
     pub show_isosurface: bool,
     pub volume_raycast_pipeline: Option<crate::renderer::volume_raycast::VolumeRaycastPipeline>,
     pub show_volume: bool,
@@ -344,6 +734,8 @@ const PUBLICATION_LOOK_UNIFORM_BYTES: u64 = 256;
 const PUBLICATION_EXPORT_GPU_DRIVER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_CPU_ENCODER_RESERVE_BYTES: u64 = 16 * 1024 * 1024;
 const PUBLICATION_EXPORT_ENCODED_OVERHEAD_BYTES: u64 = 1024 * 1024;
+const MAX_ACTIVE_FIELD_GPU_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_FIELD_ISOSURFACE_VERTEX_BYTES: u64 = 96 * 1024 * 1024;
 pub(crate) const MAX_PUBLICATION_RECIPE_BYTES: u64 = 1024 * 1024;
 pub const PUBLICATION_EXPORT_POLICY_VERSION: u32 = 7;
 const PUBLICATION_FRAMING_MARGIN: f32 = 0.08;
@@ -528,6 +920,7 @@ pub(crate) struct PublicationRenderConfig {
     publication_bond_instances: Vec<crate::renderer::instance::BondInstance>,
     readback_layout: OffscreenReadbackLayout,
     admission: PublicationExportAdmissionReceipt,
+    field_snapshot: Option<FieldPublicationSnapshot>,
 }
 
 /// Per-export pipelines. They are deliberately local to one export and reused
@@ -630,6 +1023,8 @@ pub struct PublicationExportResourceEstimate {
     pub opaque_depth_bytes: u64,
     pub transparent_depth_bytes: u64,
     pub depth_replay_color_bytes: u64,
+    pub volume_depth_replay_color_bytes: u64,
+    pub volume_depth_replay_depth_bytes: u64,
     pub look_uniform_bytes: u64,
     pub publication_bond_bytes: u64,
     pub jpeg_rgb_bytes: u64,
@@ -642,6 +1037,11 @@ pub struct PublicationExportResourceEstimate {
     pub png_encode_peak_cpu_bytes: u64,
     pub jpeg_encode_peak_cpu_bytes: u64,
     pub peak_cpu_bytes: u64,
+    pub field_accumulation_bytes: u64,
+    pub field_revealage_bytes: u64,
+    pub field_slice_bytes: u64,
+    pub field_contour_bytes: u64,
+    pub field_staging_bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -655,7 +1055,7 @@ pub struct PublicationExportBudgets {
     pub max_recipe_bytes: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PublicationExportAdmissionReceipt {
     pub(crate) policy_version: u32,
     pub(crate) request: PublicationExportRequest,
@@ -663,6 +1063,12 @@ pub struct PublicationExportAdmissionReceipt {
     pub(crate) budgets: PublicationExportBudgets,
     pub(crate) render_plan: PublicationRenderPlan,
     pub(crate) estimate: PublicationExportResourceEstimate,
+    pub(crate) field_layer_count: u8,
+    pub(crate) field_has_slice: bool,
+    pub(crate) field_has_contour: bool,
+    pub(crate) field_admitted: bool,
+    pub(crate) field_scene_hash: Option<String>,
+    pub(crate) field_resource_footprint: Option<FieldResourceFootprint>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -792,6 +1198,7 @@ fn offscreen_readback_layout(
 fn publication_render_plan(
     request: PublicationExportRequest,
     limits: PublicationExportLimits,
+    field_resources: Option<&FieldPublicationResources>,
 ) -> Result<PublicationRenderPlan, PublicationExportRejection> {
     if limits.max_texture_dimension_2d == 0 {
         return Err(PublicationExportRejection::TextureDimensionLimit);
@@ -813,6 +1220,11 @@ fn publication_render_plan(
             tile_overlap_pixels: 0,
         };
         let estimate = publication_export_resource_estimate(request, plan)?;
+        let estimate = if let Some(resources) = field_resources {
+            add_field_publication_resource_estimate(estimate, resources)?
+        } else {
+            estimate
+        };
         if estimate.transient_gpu_bytes <= publication_export_budgets().max_transient_gpu_bytes {
             return Ok(plan);
         }
@@ -822,6 +1234,42 @@ fn publication_render_plan(
         let axis = usize::from(tile_dimensions[1] > tile_dimensions[0]);
         tile_dimensions[axis] = tile_dimensions[axis].div_ceil(2).max(1);
     }
+}
+
+fn add_field_publication_resource_estimate(
+    mut estimate: PublicationExportResourceEstimate,
+    resources: &FieldPublicationResources,
+) -> Result<PublicationExportResourceEstimate, PublicationExportRejection> {
+    let tile_pixels = estimate
+        .tile_rgba_bytes
+        .checked_div(4)
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    estimate.field_slice_bytes = if resources.has_slice {
+        tile_pixels
+            .checked_mul(8)
+            .ok_or(PublicationExportRejection::TransientGpuBudget)?
+    } else {
+        0
+    };
+    estimate.field_contour_bytes = if resources.has_contour {
+        tile_pixels
+            .checked_mul(4)
+            .ok_or(PublicationExportRejection::TransientGpuBudget)?
+    } else {
+        0
+    };
+    estimate.field_staging_bytes = estimate
+        .field_slice_bytes
+        .checked_add(estimate.field_contour_bytes)
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    estimate.transient_gpu_bytes = estimate
+        .transient_gpu_bytes
+        .checked_add(resources.footprint.resident_field_bytes)
+        .and_then(|value| value.checked_add(estimate.field_slice_bytes))
+        .and_then(|value| value.checked_add(estimate.field_contour_bytes))
+        .and_then(|value| value.checked_add(estimate.field_staging_bytes))
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    Ok(estimate)
 }
 
 fn publication_export_resource_estimate(
@@ -852,6 +1300,13 @@ fn publication_export_resource_estimate(
     let depth_replay_color_bytes = (request.needs_transparent_depth && plan.selected_samples > 1)
         .then_some(msaa_color_bytes)
         .unwrap_or(0);
+    let needs_volume_depth_replay = request.has_volume && plan.selected_samples > 1;
+    let volume_depth_replay_color_bytes = needs_volume_depth_replay
+        .then_some(tile_rgba_bytes)
+        .unwrap_or(0);
+    let volume_depth_replay_depth_bytes = needs_volume_depth_replay
+        .then_some(tile_rgba_bytes)
+        .unwrap_or(0);
     let publication_bond_bytes = u64::from(request.publication_bond_instance_count)
         .checked_mul(std::mem::size_of::<crate::renderer::instance::BondInstance>() as u64)
         .ok_or(PublicationExportRejection::TransientGpuBudget)?;
@@ -859,15 +1314,29 @@ fn publication_export_resource_estimate(
     let max_encoded_bytes = rgba_bytes
         .checked_add(budgets.encoded_overhead_bytes)
         .ok_or(PublicationExportRejection::PeakCpuBudget)?;
+    // Field targets are separate from the structure targets. The default legacy request
+    // contains no field snapshot, so these are zero until FIGURE-2 admission supplies one.
+    let field_accumulation_bytes = 0_u64;
+    let field_revealage_bytes = 0_u64;
+    let field_slice_bytes = 0_u64;
+    let field_contour_bytes = 0_u64;
+    let field_staging_bytes = 0_u64;
     let total_gpu_bytes = resolve_color_bytes
         .checked_add(msaa_color_bytes)
         .and_then(|value| value.checked_add(opaque_depth_bytes))
         .and_then(|value| value.checked_add(transparent_depth_bytes))
         .and_then(|value| value.checked_add(depth_replay_color_bytes))
+        .and_then(|value| value.checked_add(volume_depth_replay_color_bytes))
+        .and_then(|value| value.checked_add(volume_depth_replay_depth_bytes))
         .and_then(|value| value.checked_add(layout.staging_size))
         .and_then(|value| value.checked_add(PUBLICATION_EXPORT_CAMERA_UNIFORM_BYTES))
         .and_then(|value| value.checked_add(PUBLICATION_LOOK_UNIFORM_BYTES))
         .and_then(|value| value.checked_add(publication_bond_bytes))
+        .and_then(|value| value.checked_add(field_accumulation_bytes))
+        .and_then(|value| value.checked_add(field_revealage_bytes))
+        .and_then(|value| value.checked_add(field_slice_bytes))
+        .and_then(|value| value.checked_add(field_contour_bytes))
+        .and_then(|value| value.checked_add(field_staging_bytes))
         .and_then(|value| value.checked_add(budgets.gpu_driver_reserve_bytes))
         .ok_or(PublicationExportRejection::TransientGpuBudget)?;
     let readback_peak_cpu_bytes = rgba_bytes
@@ -901,6 +1370,8 @@ fn publication_export_resource_estimate(
         opaque_depth_bytes,
         transparent_depth_bytes,
         depth_replay_color_bytes,
+        volume_depth_replay_color_bytes,
+        volume_depth_replay_depth_bytes,
         look_uniform_bytes: PUBLICATION_LOOK_UNIFORM_BYTES,
         publication_bond_bytes,
         jpeg_rgb_bytes,
@@ -913,6 +1384,11 @@ fn publication_export_resource_estimate(
         png_encode_peak_cpu_bytes,
         jpeg_encode_peak_cpu_bytes,
         peak_cpu_bytes,
+        field_accumulation_bytes,
+        field_revealage_bytes,
+        field_slice_bytes,
+        field_contour_bytes,
+        field_staging_bytes,
     })
 }
 
@@ -1092,6 +1568,152 @@ fn upload_atom_instances(queue: &wgpu::Queue, buffer: &wgpu::Buffer, instances: 
 }
 
 impl Renderer {
+    pub fn with_active_volume_pipeline(
+        &mut self,
+        update: impl FnOnce(&mut crate::renderer::volume_raycast::VolumeRaycastPipeline, &wgpu::Queue),
+    ) {
+        let Renderer {
+            gpu,
+            volume_raycast_pipeline,
+            ..
+        } = self;
+        if let Some(volume) = volume_raycast_pipeline.as_mut() {
+            update(volume, &gpu.queue);
+        }
+    }
+
+    fn publication_field_pipelines(
+        &self,
+        sample_count: u32,
+    ) -> Result<Vec<PublicationFieldLayerPipelines>, String> {
+        let count = self
+            .retained_field_layers
+            .len()
+            .checked_add(usize::from(self.active_field_layer.is_some()))
+            .ok_or_else(|| "publication field-layer count overflow".to_owned())?;
+        let mut pipelines = Vec::new();
+        pipelines
+            .try_reserve_exact(count)
+            .map_err(|_| "unable to allocate publication field pipelines".to_owned())?;
+        let create_layer =
+            |layer_id,
+             positive: Option<&crate::renderer::isosurface::IsosurfacePipeline>,
+             negative: Option<&crate::renderer::isosurface::IsosurfacePipeline>,
+             volume: Option<&crate::renderer::volume_raycast::VolumeRaycastPipeline>| {
+                PublicationFieldLayerPipelines {
+                    layer_id,
+                    positive: positive.map(|iso| {
+                        iso.publication_render_pipeline(
+                            &self.gpu.device,
+                            self.gpu.surface_format(),
+                            &self.camera_bind_group_layout,
+                            sample_count,
+                        )
+                    }),
+                    negative: negative.map(|iso| {
+                        iso.publication_render_pipeline(
+                            &self.gpu.device,
+                            self.gpu.surface_format(),
+                            &self.camera_bind_group_layout,
+                            sample_count,
+                        )
+                    }),
+                    volume: volume.map(|volume| {
+                        volume.publication_render_pipeline(
+                            &self.gpu.device,
+                            self.gpu.surface_format(),
+                            &self.camera_bind_group_layout,
+                            sample_count,
+                        )
+                    }),
+                    slice: pipeline::create_field_slice_pipeline(
+                        &self.gpu.device,
+                        self.gpu.surface_format(),
+                        &self.camera_bind_group_layout,
+                        sample_count,
+                    ),
+                }
+            };
+        for layer in &self.retained_field_layers {
+            pipelines.push(create_layer(
+                layer.layer_id,
+                layer.isosurface_pipeline.as_ref(),
+                layer.negative_isosurface_pipeline.as_ref(),
+                Some(&layer.volume_raycast_pipeline),
+            ));
+        }
+        if let Some((layer_id, _)) = self.active_field_layer {
+            pipelines.push(create_layer(
+                layer_id,
+                self.active_field_layer_pipeline.as_ref(),
+                self.active_negative_field_layer_pipeline.as_ref(),
+                self.volume_raycast_pipeline.as_ref(),
+            ));
+        }
+        Ok(pipelines)
+    }
+
+    fn publication_volume_bindings(
+        &self,
+        depth_view: &wgpu::TextureView,
+        camera: &Camera,
+    ) -> Result<Vec<PublicationVolumeBinding>, String> {
+        let count = self
+            .retained_field_layers
+            .len()
+            .checked_add(usize::from(self.active_field_layer.is_some()))
+            .ok_or_else(|| "publication field-layer count overflow".to_owned())?;
+        let mut bindings = Vec::new();
+        bindings
+            .try_reserve_exact(count)
+            .map_err(|_| "unable to allocate publication volume bindings".to_owned())?;
+        for layer in &self.retained_field_layers {
+            if layer.render_settings.visible
+                && matches!(
+                    layer.render_settings.render_mode,
+                    crate::volumetric::FieldRenderMode::Volume
+                        | crate::volumetric::FieldRenderMode::Both
+                )
+            {
+                bindings.push(PublicationVolumeBinding {
+                    layer_id: layer.layer_id,
+                    bind_group: layer.volume_raycast_pipeline.publication_bind_group(
+                        &self.gpu.device,
+                        depth_view,
+                        camera.eye,
+                        camera.is_perspective,
+                        (camera.target - camera.eye).normalize(),
+                    ),
+                });
+            }
+        }
+        if let (Some((layer_id, _)), Some(settings), Some(volume)) = (
+            self.active_field_layer,
+            self.active_field_render_settings,
+            self.volume_raycast_pipeline.as_ref(),
+        ) {
+            if settings.visible
+                && matches!(
+                    settings.render_mode,
+                    crate::volumetric::FieldRenderMode::Volume
+                        | crate::volumetric::FieldRenderMode::Both
+                )
+            {
+                bindings.push(PublicationVolumeBinding {
+                    layer_id,
+                    bind_group: volume.publication_bind_group(
+                        &self.gpu.device,
+                        depth_view,
+                        camera.eye,
+                        camera.is_perspective,
+                        (camera.target - camera.eye).normalize(),
+                    ),
+                });
+            }
+        }
+        Ok(bindings)
+    }
+
     pub(crate) fn publication_export_camera(
         &self,
         width: u32,
@@ -1124,15 +1746,60 @@ impl Renderer {
         source_state: PublicationExportSourceState,
         publication_bond_instance_count: u32,
     ) -> PublicationExportRequest {
+        let active_settings = self.active_field_render_settings;
+        let retained_has_isosurface = self.retained_field_layers.iter().any(|layer| {
+            layer.render_settings.visible
+                && (layer.isosurface_pipeline.is_some()
+                    || layer.negative_isosurface_pipeline.is_some())
+                && matches!(
+                    layer.render_settings.render_mode,
+                    crate::volumetric::FieldRenderMode::Isosurface
+                        | crate::volumetric::FieldRenderMode::Both
+                )
+        });
+        let retained_has_volume = self.retained_field_layers.iter().any(|layer| {
+            layer.render_settings.visible
+                && matches!(
+                    layer.render_settings.render_mode,
+                    crate::volumetric::FieldRenderMode::Volume
+                        | crate::volumetric::FieldRenderMode::Both
+                )
+        });
         PublicationExportRequest {
             width,
             height,
             publication_bond_instance_count,
-            needs_transparent_depth: self.transparent_instance_count > 0,
+            needs_transparent_depth: self.transparent_instance_count > 0
+                || self
+                    .active_field_render_settings
+                    .is_some_and(|settings| settings.visible)
+                || self
+                    .retained_field_layers
+                    .iter()
+                    .any(|layer| layer.render_settings.visible),
             has_measurement_overlays: self.measurement_line_count > 0,
             has_hopping_overlays: self.hopping_instance_count > 0,
-            has_isosurface: self.isosurface_pipeline.is_some(),
-            has_volume: self.volume_raycast_pipeline.is_some(),
+            has_isosurface: retained_has_isosurface
+                || ((self.active_field_layer_pipeline.is_some()
+                    || self.active_negative_field_layer_pipeline.is_some())
+                    && active_settings.is_some_and(|settings| {
+                        settings.visible
+                            && matches!(
+                                settings.render_mode,
+                                crate::volumetric::FieldRenderMode::Isosurface
+                                    | crate::volumetric::FieldRenderMode::Both
+                            )
+                    })),
+            has_volume: retained_has_volume
+                || (self.volume_raycast_pipeline.is_some()
+                    && active_settings.is_some_and(|settings| {
+                        settings.visible
+                            && matches!(
+                                settings.render_mode,
+                                crate::volumetric::FieldRenderMode::Volume
+                                    | crate::volumetric::FieldRenderMode::Both
+                            )
+                    })),
             has_phonon_presentation: self.phonon_presentation.is_some(),
             has_atom_drag: self.atom_drag.is_some(),
             show_bz: self.show_bz,
@@ -1165,6 +1832,23 @@ impl Renderer {
             return Err("publication bond scene changed after admission".to_owned());
         }
         self.validate_publication_export_receipt(admission)?;
+        let field_snapshot = if admission.field_admitted {
+            let snapshot = self
+                .field_publication_snapshot()
+                .ok_or_else(|| "publication field scene changed after admission".to_owned())?;
+            let expected = evaluate_field_publication_export_admission(
+                admission.request,
+                admission.limits,
+                &snapshot,
+            )
+            .map_err(|error| error.to_string())?;
+            if expected != admission.clone() {
+                return Err("publication field scene changed after admission".to_owned());
+            }
+            Some(snapshot)
+        } else {
+            None
+        };
         let width = admission.request.width;
         let height = admission.request.height;
         let target_format = self.gpu.surface_format();
@@ -1204,15 +1888,94 @@ impl Renderer {
                 plan.tile_dimensions[1],
             )
             .map_err(|error| error.to_string())?,
-            admission: *admission,
+            admission: admission.clone(),
+            field_snapshot,
         })
     }
 }
 
 #[must_use]
+fn reject_legacy_unadmitted_field(
+    request: PublicationExportRequest,
+) -> Result<(), PublicationExportRejection> {
+    if request.has_isosurface {
+        return Err(PublicationExportRejection::Isosurface);
+    }
+    if request.has_volume {
+        return Err(PublicationExportRejection::Volume);
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct FieldPublicationResources {
+    layer_count: u8,
+    has_slice: bool,
+    has_contour: bool,
+    footprint: FieldResourceFootprint,
+    field_scene_hash: String,
+}
+
+fn field_publication_resources(
+    field_snapshot: &FieldPublicationSnapshot,
+) -> Result<FieldPublicationResources, PublicationExportRejection> {
+    if field_snapshot.representation.is_empty()
+        || field_snapshot.field_snapshots.is_empty()
+        || field_snapshot.field_snapshots.len() > MAX_VISIBLE_FIELD_LAYERS_FIGURE_2
+        || field_snapshot.clip_planes.len() > crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES
+        || field_snapshot.transfer_function.validate().is_err()
+    {
+        return Err(PublicationExportRejection::ReceiptMismatch);
+    }
+    let mut has_slice = false;
+    let mut has_contour = false;
+    for snapshot in &field_snapshot.field_snapshots {
+        if snapshot.validate().is_err() {
+            return Err(PublicationExportRejection::ReceiptMismatch);
+        }
+        has_slice |= snapshot
+            .representations
+            .contains(&FieldRepresentation::Slice);
+        has_contour |= snapshot
+            .representations
+            .contains(&FieldRepresentation::Contour);
+    }
+    u8::try_from(field_snapshot.field_snapshots.len())
+        .map(|layer_count| FieldPublicationResources {
+            layer_count,
+            has_slice,
+            has_contour,
+            footprint: field_snapshot.resource_footprint,
+            field_scene_hash: field_snapshot.field_scene_hash.clone(),
+        })
+        .map_err(|_| PublicationExportRejection::ReceiptMismatch)
+}
+
+/// Admit a frozen FIGURE-2 field scene without mutating the interactive renderer.
+pub fn evaluate_field_publication_export_admission(
+    request: PublicationExportRequest,
+    limits: PublicationExportLimits,
+    field_snapshot: &FieldPublicationSnapshot,
+) -> Result<PublicationExportAdmissionReceipt, PublicationExportRejection> {
+    let resources = field_publication_resources(field_snapshot)?;
+    if field_snapshot.selected_field_capabilities & field_snapshot.requested_field_capabilities == 0
+    {
+        return Err(PublicationExportRejection::ReceiptMismatch);
+    }
+    evaluate_publication_export_admission_inner(request, limits, Some(resources))
+}
+
 pub fn evaluate_publication_export_admission(
     request: PublicationExportRequest,
     limits: PublicationExportLimits,
+) -> Result<PublicationExportAdmissionReceipt, PublicationExportRejection> {
+    evaluate_publication_export_admission_inner(request, limits, None)
+}
+
+fn evaluate_publication_export_admission_inner(
+    request: PublicationExportRequest,
+    limits: PublicationExportLimits,
+    field_resources: Option<FieldPublicationResources>,
 ) -> Result<PublicationExportAdmissionReceipt, PublicationExportRejection> {
     if request.width == 0 || request.height == 0 {
         return Err(PublicationExportRejection::ZeroDimensions);
@@ -1223,11 +1986,8 @@ pub fn evaluate_publication_export_admission(
     if request.has_hopping_overlays {
         return Err(PublicationExportRejection::HoppingOverlays);
     }
-    if request.has_isosurface {
-        return Err(PublicationExportRejection::Isosurface);
-    }
-    if request.has_volume {
-        return Err(PublicationExportRejection::Volume);
+    if field_resources.is_none() {
+        reject_legacy_unadmitted_field(request)?;
     }
     if request.has_phonon_presentation {
         return Err(PublicationExportRejection::PhononPresentation);
@@ -1251,8 +2011,32 @@ pub fn evaluate_publication_export_admission(
         return Err(PublicationExportRejection::ActivePhononState);
     }
     let budgets = publication_export_budgets();
-    let render_plan = publication_render_plan(request, limits)?;
+    let render_plan = publication_render_plan(request, limits, field_resources.as_ref())?;
     let estimate = publication_export_resource_estimate(request, render_plan)?;
+    let estimate = if let Some(resources) = field_resources.as_ref() {
+        add_field_publication_resource_estimate(estimate, resources)?
+    } else {
+        estimate
+    };
+    let (
+        field_layer_count,
+        field_has_slice,
+        field_has_contour,
+        field_admitted,
+        field_scene_hash,
+        field_resource_footprint,
+    ) = if let Some(resources) = field_resources {
+        (
+            resources.layer_count,
+            resources.has_slice,
+            resources.has_contour,
+            true,
+            Some(resources.field_scene_hash),
+            Some(resources.footprint),
+        )
+    } else {
+        (0, false, false, false, None, None)
+    };
     if estimate.staging_bytes > limits.max_buffer_size
         || estimate.publication_bond_bytes > limits.max_buffer_size
     {
@@ -1275,6 +2059,12 @@ pub fn evaluate_publication_export_admission(
         budgets,
         render_plan,
         estimate,
+        field_layer_count,
+        field_has_slice,
+        field_has_contour,
+        field_admitted,
+        field_scene_hash,
+        field_resource_footprint,
     })
 }
 
@@ -1284,8 +2074,28 @@ pub(crate) fn validate_publication_export_receipt_fields(
     if receipt.policy_version != PUBLICATION_EXPORT_POLICY_VERSION {
         return Err(PublicationExportRejection::PolicyVersion);
     }
-    let expected = evaluate_publication_export_admission(receipt.request, receipt.limits)?;
-    if expected != *receipt {
+    let field_resources = if receipt.field_admitted {
+        Some(FieldPublicationResources {
+            layer_count: receipt.field_layer_count,
+            has_slice: receipt.field_has_slice,
+            has_contour: receipt.field_has_contour,
+            footprint: receipt
+                .field_resource_footprint
+                .ok_or(PublicationExportRejection::ReceiptMismatch)?,
+            field_scene_hash: receipt
+                .field_scene_hash
+                .clone()
+                .ok_or(PublicationExportRejection::ReceiptMismatch)?,
+        })
+    } else {
+        None
+    };
+    let expected = evaluate_publication_export_admission_inner(
+        receipt.request,
+        receipt.limits,
+        field_resources,
+    )?;
+    if expected != receipt.clone() {
         return Err(PublicationExportRejection::ReceiptMismatch);
     }
     Ok(())
@@ -1363,6 +2173,12 @@ impl Renderer {
         );
 
         let line_pipeline = pipeline::create_line_pipeline(
+            &gpu.device,
+            gpu.surface_format(),
+            &camera_bind_group_layout,
+            1,
+        );
+        let field_slice_pipeline = pipeline::create_field_slice_pipeline(
             &gpu.device,
             gpu.surface_format(),
             &camera_bind_group_layout,
@@ -1504,6 +2320,7 @@ impl Renderer {
             transparent_depth_texture,
             transparent_depth_view,
             line_pipeline,
+            field_slice_pipeline,
             cell_line_buffer,
             cell_line_count: 0,
             cell_line_vertices: Vec::new(),
@@ -1517,7 +2334,17 @@ impl Renderer {
             show_hoppings: true,
             show_cell: true,
             show_bonds: true,
-            isosurface_pipeline: None,
+            active_field_layer_pipeline: None,
+            active_negative_field_layer_pipeline: None,
+            active_field_layer: None,
+            active_field_snapshot: None,
+            active_field_render_settings: None,
+            active_field_slices: Vec::new(),
+            retained_field_layers: Vec::with_capacity(MAX_VISIBLE_FIELD_LAYERS_FIGURE_2 - 1),
+            field_resource_epoch: 0,
+            active_field_gpu_bytes: 0,
+            active_field_resource_footprint: FieldResourceFootprint::default(),
+            resident_field_gpu_bytes: 0,
             show_isosurface: false,
             volume_raycast_pipeline: None,
             show_volume: false,
@@ -1561,6 +2388,11 @@ impl Renderer {
             // Notify volume pipeline to rebind depth texture
             if let Some(vol_pipe) = &mut self.volume_raycast_pipeline {
                 vol_pipe.update_depth_view(&self.gpu.device, &self.opaque_depth_view);
+            }
+            for layer in &mut self.retained_field_layers {
+                layer
+                    .volume_raycast_pipeline
+                    .update_depth_view(&self.gpu.device, &self.opaque_depth_view);
             }
         }
     }
@@ -2021,6 +2853,15 @@ impl Renderer {
                 forward,
             );
         }
+        let forward = (self.camera.target - self.camera.eye).normalize();
+        for layer in &mut self.retained_field_layers {
+            layer.volume_raycast_pipeline.update_camera(
+                &self.gpu.queue,
+                self.camera.eye,
+                self.camera.is_perspective,
+                forward,
+            );
+        }
     }
 
     /// Render one frame. Returns Err if the surface texture cannot be acquired.
@@ -2183,9 +3024,14 @@ impl Renderer {
         }
 
         // ═══ Depth copy: opaque → transparent (for Pass 2 depth test) ════
-        let needs_transparent_pass = (self.show_volume
-            && (self.volume_render_mode == RendererVolumeMode::Volume
-                || self.volume_render_mode == RendererVolumeMode::Both))
+        let has_retained_field = self
+            .retained_field_layers
+            .iter()
+            .any(|layer| layer.render_settings.visible);
+        let needs_transparent_pass = has_retained_field
+            || (self.show_volume
+                && (self.volume_render_mode == RendererVolumeMode::Volume
+                    || self.volume_render_mode == RendererVolumeMode::Both))
             || (self.show_isosurface
                 && (self.volume_render_mode == RendererVolumeMode::Isosurface
                     || self.volume_render_mode == RendererVolumeMode::Both))
@@ -2239,23 +3085,44 @@ impl Renderer {
                     occlusion_query_set: None,
                 });
 
-                // Volume raycast FIRST (inner fill), then Isosurface (outer skin)
-                if self.show_volume
-                    && (self.volume_render_mode == RendererVolumeMode::Volume
-                        || self.volume_render_mode == RendererVolumeMode::Both)
-                {
-                    if let Some(vol_pipe) = &self.volume_raycast_pipeline {
-                        vol_pipe.render(&mut pass, &self.camera_bind_group);
-                    }
-                }
-
-                // Isosurface (semi-transparent outer envelope)
-                if self.show_isosurface
-                    && (self.volume_render_mode == RendererVolumeMode::Isosurface
-                        || self.volume_render_mode == RendererVolumeMode::Both)
-                {
-                    if let Some(iso_pipe) = &self.isosurface_pipeline {
-                        iso_pipe.draw(&mut pass, &self.camera_bind_group);
+                let frozen_draw_list = self.frozen_field_draw_list();
+                for layer_id in frozen_draw_list.iter() {
+                    if self
+                        .active_field_layer
+                        .is_some_and(|(active_id, _)| active_id == *layer_id)
+                    {
+                        if let (Some(settings), Some(volume)) = (
+                            self.active_field_render_settings,
+                            self.volume_raycast_pipeline.as_ref(),
+                        ) {
+                            draw_frozen_field_resources(
+                                &mut pass,
+                                &self.camera_bind_group,
+                                settings,
+                                volume,
+                                self.active_field_layer_pipeline.as_ref(),
+                                self.active_negative_field_layer_pipeline.as_ref(),
+                                &self.active_field_slices,
+                                &self.field_slice_pipeline,
+                                &self.line_pipeline,
+                            );
+                        }
+                    } else if let Some(layer) = self
+                        .retained_field_layers
+                        .iter()
+                        .find(|layer| layer.layer_id == *layer_id)
+                    {
+                        draw_frozen_field_resources(
+                            &mut pass,
+                            &self.camera_bind_group,
+                            layer.render_settings,
+                            &layer.volume_raycast_pipeline,
+                            layer.isosurface_pipeline.as_ref(),
+                            layer.negative_isosurface_pipeline.as_ref(),
+                            &layer.slices,
+                            &self.field_slice_pipeline,
+                            &self.line_pipeline,
+                        );
                     }
                 }
 
@@ -2325,6 +3192,14 @@ impl Renderer {
             config.target_format,
             config.selected_samples,
         );
+        let publication_volume_replay_pipelines = (config.selected_samples > 1
+            && config.admission.request.has_volume)
+            .then(|| PublicationPipelines::new(&self.gpu.device, config.target_format, 1));
+        let publication_field_pipelines = config
+            .field_snapshot
+            .as_ref()
+            .map(|_| self.publication_field_pipelines(config.selected_samples))
+            .transpose()?;
         let publication_look_uniform =
             PublicationLookUniform::from_profile(config.look_profile, config.camera.is_perspective);
         let publication_look_buffer =
@@ -2412,16 +3287,20 @@ impl Renderer {
                     publication_bond_instances: Vec::new(),
                     readback_layout: offscreen_readback_layout(tile_width, tile_height)
                         .map_err(|error| error.to_string())?,
-                    admission: config.admission,
+                    admission: config.admission.clone(),
+                    field_snapshot: config.field_snapshot.clone(),
                 };
                 let rgba = self
                     .render_offscreen_tile(
                         &current_tile,
                         &publication_pipelines,
                         &publication_look_bind_group,
+                        &publication_look_buffer,
                         publication_bond_buffer,
                         publication_cell_line_buffer,
                         publication_bond_instance_count,
+                        publication_field_pipelines.as_deref(),
+                        publication_volume_replay_pipelines.as_ref(),
                         tile_x,
                         tile_y,
                         config.width,
@@ -2487,9 +3366,12 @@ impl Renderer {
         config: &PublicationRenderConfig,
         publication_pipelines: &PublicationPipelines,
         publication_look_bind_group: &wgpu::BindGroup,
+        publication_look_buffer: &wgpu::Buffer,
         publication_bond_buffer: Option<&wgpu::Buffer>,
         publication_cell_line_buffer: Option<&wgpu::Buffer>,
         publication_bond_instance_count: u32,
+        publication_field_pipelines: Option<&[PublicationFieldLayerPipelines]>,
+        publication_volume_replay_pipelines: Option<&PublicationPipelines>,
         tile_x: u32,
         tile_y: u32,
         full_width: u32,
@@ -2552,6 +3434,43 @@ impl Renderer {
                         resource: export_camera_buffer.as_entire_binding(),
                     }],
                 });
+        let field_export_camera_bind_group = publication_field_pipelines.map(|_| {
+            self.gpu
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Publication Field Camera Bind Group"),
+                    layout: &self.camera_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: export_camera_buffer.as_entire_binding(),
+                    }],
+                })
+        });
+        let volume_replay_camera_bind_group =
+            publication_volume_replay_pipelines.map(|pipelines| {
+                self.gpu
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Publication Volume Replay Camera Bind Group"),
+                        layout: &pipelines.camera_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: export_camera_buffer.as_entire_binding(),
+                        }],
+                    })
+            });
+        let volume_replay_look_bind_group = publication_volume_replay_pipelines.map(|pipelines| {
+            self.gpu
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Publication Volume Replay Look Bind Group"),
+                    layout: &pipelines.look_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: publication_look_buffer.as_entire_binding(),
+                    }],
+                })
+        });
 
         let tex_format = config.target_format;
         let needs_transparent = config.admission.request.needs_transparent_depth;
@@ -2611,6 +3530,27 @@ impl Renderer {
         let depth_replay_color_view = depth_replay_color
             .as_ref()
             .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        let needs_volume_depth_replay =
+            config.admission.request.has_volume && config.selected_samples > 1;
+        let volume_depth_replay_color = needs_volume_depth_replay.then(|| {
+            self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Publication Volume Depth Replay Color Texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: tex_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+        });
+        let volume_depth_replay_color_view = volume_depth_replay_color
+            .as_ref()
+            .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()));
 
         let (offscreen_opaque_depth, offscreen_opaque_depth_view) = pipeline::create_depth_texture(
             &self.gpu.device,
@@ -2626,6 +3566,9 @@ impl Renderer {
                 config.selected_samples,
             )
         });
+        let offscreen_volume_depth = needs_volume_depth_replay
+            .then(|| pipeline::create_depth_texture(&self.gpu.device, width, height, 1));
+        let offscreen_volume_depth_view = offscreen_volume_depth.as_ref().map(|(_, view)| view);
 
         let mut encoder = self
             .gpu
@@ -2694,6 +3637,11 @@ impl Renderer {
         if let Some((offscreen_transparent_depth, offscreen_transparent_depth_view)) =
             &offscreen_transparent_depth
         {
+            let volume_depth_view =
+                offscreen_volume_depth_view.unwrap_or(offscreen_transparent_depth_view);
+            let publication_volume_bindings = publication_field_pipelines
+                .map(|_| self.publication_volume_bindings(volume_depth_view, &config.camera))
+                .transpose()?;
             if config.selected_samples == 1 {
                 encoder.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -2763,6 +3711,70 @@ impl Renderer {
                     replay.set_vertex_buffer(0, publication_bond_buffer.slice(..));
                     replay.draw(0..72, 0..publication_bond_instance_count);
                 }
+                drop(replay);
+
+                if let (
+                    Some(replay_pipelines),
+                    Some(replay_camera_bind_group),
+                    Some(replay_look_bind_group),
+                    Some(volume_replay_color_view),
+                    Some(volume_depth_view),
+                ) = (
+                    publication_volume_replay_pipelines,
+                    volume_replay_camera_bind_group.as_ref(),
+                    volume_replay_look_bind_group.as_ref(),
+                    volume_depth_replay_color_view.as_ref(),
+                    offscreen_volume_depth_view,
+                ) {
+                    let mut volume_replay =
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Publication Single-Sample Volume Depth Replay Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: volume_replay_color_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                    store: wgpu::StoreOp::Discard,
+                                },
+                            })],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: volume_depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                    volume_replay.set_pipeline(&replay_pipelines.render);
+                    volume_replay.set_bind_group(0, replay_camera_bind_group, &[]);
+                    volume_replay.set_bind_group(1, replay_look_bind_group, &[]);
+                    if self.instance_count > 0 {
+                        volume_replay.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                        volume_replay.draw(0..6, 0..self.instance_count);
+                    }
+                    if self.show_cell && self.cell_line_count > 0 {
+                        let publication_cell_line_buffer = publication_cell_line_buffer
+                            .ok_or_else(|| "publication cell line buffer is missing".to_owned())?;
+                        volume_replay.set_pipeline(&replay_pipelines.line);
+                        volume_replay.set_bind_group(0, replay_camera_bind_group, &[]);
+                        volume_replay.set_vertex_buffer(0, publication_cell_line_buffer.slice(..));
+                        volume_replay.draw(0..self.cell_line_count, 0..1);
+                    }
+                    if self.show_bonds && publication_bond_instance_count > 0 {
+                        let publication_bond_buffer = publication_bond_buffer
+                            .ok_or_else(|| "publication bond buffer is missing".to_owned())?;
+                        volume_replay.set_pipeline(&replay_pipelines.bond);
+                        volume_replay.set_bind_group(0, replay_camera_bind_group, &[]);
+                        volume_replay.set_bind_group(1, replay_look_bind_group, &[]);
+                        volume_replay.set_vertex_buffer(0, publication_bond_buffer.slice(..));
+                        volume_replay.draw(0..72, 0..publication_bond_instance_count);
+                    }
+                }
             }
 
             {
@@ -2792,6 +3804,26 @@ impl Renderer {
                     occlusion_query_set: None,
                 });
 
+                if let (Some(field_pipelines), Some(field_camera_bind_group)) = (
+                    publication_field_pipelines,
+                    field_export_camera_bind_group.as_ref(),
+                ) {
+                    let volume_bindings = publication_volume_bindings.as_deref().unwrap_or(&[]);
+                    draw_publication_fields(
+                        self,
+                        &mut pass,
+                        field_camera_bind_group,
+                        field_pipelines,
+                        volume_bindings,
+                        &publication_pipelines.line,
+                        config
+                            .field_snapshot
+                            .as_ref()
+                            .map(|snapshot| &snapshot.draw_list)
+                            .ok_or_else(|| "publication field draw list is missing".to_owned())?,
+                    );
+                }
+                // Match the interactive fallback: fields precede translucent structure.
                 if self.transparent_instance_count > 0 {
                     pass.set_pipeline(&publication_pipelines.transparent);
                     pass.set_bind_group(0, &export_camera_bind_group, &[]);
@@ -2874,7 +3906,21 @@ impl Renderer {
 
     /// Clear volumetric pipelines when switching to a non-volumetric file.
     pub fn clear_volumetric(&mut self) {
-        self.isosurface_pipeline = None;
+        self.field_resource_epoch = self.field_resource_epoch.wrapping_add(1);
+        self.drop_all_field_resources();
+    }
+
+    fn drop_all_field_resources(&mut self) {
+        self.active_field_layer_pipeline = None;
+        self.active_negative_field_layer_pipeline = None;
+        self.active_field_layer = None;
+        self.active_field_snapshot = None;
+        self.active_field_render_settings = None;
+        self.active_field_slices.clear();
+        self.retained_field_layers.clear();
+        self.active_field_gpu_bytes = 0;
+        self.active_field_resource_footprint = FieldResourceFootprint::default();
+        self.resident_field_gpu_bytes = 0;
         self.volume_raycast_pipeline = None;
         self.show_isosurface = false;
         self.show_volume = false;
@@ -2883,6 +3929,17 @@ impl Renderer {
 
     pub fn clear_structure_bound_overlays(&mut self) {
         self.clear_volumetric();
+        self.clear_non_field_structure_bound_overlays();
+    }
+
+    pub fn set_active_field_visibility(&mut self, visible: bool) {
+        self.show_isosurface = visible && self.active_field_layer_pipeline.is_some();
+        self.show_volume = visible && self.volume_raycast_pipeline.is_some();
+    }
+
+    /// Clear overlays derived from the crystal structure while preserving a
+    /// prepared field resource until its replacement can be committed.
+    pub fn clear_non_field_structure_bound_overlays(&mut self) {
         self.update_hoppings(&[]);
         self.show_hoppings = false;
         self.bz_viewport = None;
@@ -2914,79 +3971,985 @@ impl Renderer {
         }
     }
 
-    pub fn prepare_volumetric(
+    fn prepare_scalar_field(
         &self,
-        vol: &crate::volumetric::VolumetricData,
-    ) -> Result<PreparedVolumetric, ()> {
+        layer_id: crate::volumetric::FieldLayerId,
+        layer_revision: crate::volumetric::FieldSceneRevision,
+        vol: &impl crate::volumetric::ScalarFieldView,
+        scalar_unit: crate::volumetric::ScalarUnit,
+        render_settings: crate::volumetric::FieldRenderSettings,
+        presentation_settings: &crate::renderer::field_scene::FieldPresentationSettings,
+        precomputed_vertex_counts: Option<(u32, u32)>,
+    ) -> Result<PreparedFieldLayer, ()> {
+        let clip_planes = presentation_settings
+            .normalized_clip_planes()
+            .map_err(|_| ())?;
+        if !clip_planes
+            .iter()
+            .flat_map(|plane| {
+                plane
+                    .normal
+                    .into_iter()
+                    .chain(std::iter::once(plane.signed_offset_angstrom))
+            })
+            .all(|value| (value as f32).is_finite())
+        {
+            return Err(());
+        }
+        let scalar_bytes = (vol.scalar_data().len() as u64)
+            .checked_mul(std::mem::size_of::<f32>() as u64)
+            .ok_or(())?;
+        let slices = crate::renderer::field_slice::prepare_field_slices(
+            &self.gpu.device,
+            vol,
+            layer_revision,
+            &presentation_settings.slices,
+            &clip_planes,
+            &presentation_settings.transfer_function,
+            presentation_settings.display_range,
+            presentation_settings.opacity_scale,
+        )
+        .map_err(|_| ())?;
+        let slice_gpu_bytes = slices
+            .iter()
+            .try_fold(0_u64, |total, slice| total.checked_add(slice.gpu_bytes))
+            .ok_or(())?;
+        let slice_vertex_bytes = slices
+            .iter()
+            .try_fold(0_u64, |total, slice| {
+                total.checked_add(slice.slice_vertex_bytes)
+            })
+            .ok_or(())?;
+        let contour_vertex_bytes = slices
+            .iter()
+            .try_fold(0_u64, |total, slice| {
+                total.checked_add(slice.contour_vertex_bytes)
+            })
+            .ok_or(())?;
+        let positive_isovalue = render_settings.positive_isovalue;
+        let negative_isovalue = render_settings.negative_isovalue;
+        let (exact_positive_vertices, exact_negative_vertices) =
+            if self.gpu.render_config.supports_compute_shaders {
+                match precomputed_vertex_counts {
+                    Some(counts) => counts,
+                    None => crate::renderer::isosurface::marching_cubes_signed_vertex_counts(
+                        vol,
+                        (!matches!(
+                            render_settings.sign_mode,
+                            crate::volumetric::FieldSignMode::Negative
+                        ))
+                        .then_some(positive_isovalue),
+                        (!matches!(
+                            render_settings.sign_mode,
+                            crate::volumetric::FieldSignMode::Positive
+                        ))
+                        .then_some(negative_isovalue),
+                    )?,
+                }
+            } else {
+                (0, 0)
+            };
+        let mut positive_vertex_capacity = exact_positive_vertices;
+        let mut negative_vertex_capacity = exact_negative_vertices;
+        let proposed_positive_capacity = exact_positive_vertices
+            .checked_add(exact_positive_vertices / 2)
+            .unwrap_or(exact_positive_vertices);
+        let proposed_negative_capacity = exact_negative_vertices
+            .checked_add(exact_negative_vertices / 2)
+            .unwrap_or(exact_negative_vertices);
+        let proposed_isosurface_bytes = u64::from(proposed_positive_capacity.max(3))
+            .checked_add(u64::from(proposed_negative_capacity.max(3)))
+            .and_then(|vertices| {
+                vertices.checked_mul(
+                    std::mem::size_of::<crate::renderer::isosurface::IsoVertex>() as u64,
+                )
+            })
+            .ok_or(())?;
+        let proposed_gpu_bytes = scalar_bytes
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(proposed_isosurface_bytes))
+            .and_then(|bytes| bytes.checked_add(slice_gpu_bytes))
+            .ok_or(())?;
+        if proposed_isosurface_bytes <= MAX_FIELD_ISOSURFACE_VERTEX_BYTES
+            && proposed_gpu_bytes <= MAX_ACTIVE_FIELD_GPU_BYTES
+        {
+            positive_vertex_capacity = proposed_positive_capacity;
+            negative_vertex_capacity = proposed_negative_capacity;
+        }
+        let maximum_isosurface_bytes = u64::from(positive_vertex_capacity.max(3))
+            .checked_add(u64::from(negative_vertex_capacity.max(3)))
+            .and_then(|vertices| {
+                vertices.checked_mul(
+                    std::mem::size_of::<crate::renderer::isosurface::IsoVertex>() as u64,
+                )
+            })
+            .ok_or(())?;
+        let maximum_gpu_bytes = scalar_bytes
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(maximum_isosurface_bytes))
+            .and_then(|bytes| bytes.checked_add(slice_gpu_bytes))
+            .ok_or(())?;
+        let limits = self.gpu.device.limits();
+        if scalar_bytes > u64::from(limits.max_storage_buffer_binding_size)
+            || maximum_isosurface_bytes > u64::from(limits.max_storage_buffer_binding_size)
+            || maximum_isosurface_bytes > MAX_FIELD_ISOSURFACE_VERTEX_BYTES
+            || maximum_gpu_bytes > MAX_ACTIVE_FIELD_GPU_BYTES
+            || self
+                .resident_field_gpu_bytes
+                .checked_sub(
+                    self.active_field_layer
+                        .is_some_and(|(active_layer_id, active_layer_revision)| {
+                            active_layer_id == layer_id && active_layer_revision == layer_revision
+                        })
+                        .then_some(self.active_field_gpu_bytes)
+                        .unwrap_or(0),
+                )
+                .ok_or(())?
+                .checked_add(maximum_gpu_bytes)
+                .ok_or(())?
+                > MAX_ACTIVE_FIELD_GPU_BYTES
+            || !vol
+                .lattice_angstrom()
+                .iter()
+                .chain(vol.origin_angstrom().iter())
+                .all(|value| value.is_finite() && (*value as f32).is_finite())
+        {
+            return Err(());
+        }
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let isosurface_pipeline = if self.gpu.render_config.supports_compute_shaders {
-                Some(crate::renderer::isosurface::IsosurfacePipeline::new(
-                    &self.gpu.device,
-                    &self.gpu.queue,
-                    self.gpu.surface_format(),
-                    &self.camera_bind_group_layout,
-                    vol,
-                ))
+            let shared_scalar_buffer = Arc::new(self.gpu.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Shared Field Scalar Buffer"),
+                    contents: bytemuck::cast_slice(vol.scalar_data()),
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ));
+            let mut isosurface_pipeline = if self.gpu.render_config.supports_compute_shaders
+                && positive_vertex_capacity > 0
+            {
+                Some(
+                    crate::renderer::isosurface::IsosurfacePipeline::new_with_vertex_capacity(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        self.gpu.surface_format(),
+                        &self.camera_bind_group_layout,
+                        vol,
+                        positive_vertex_capacity,
+                        &clip_planes,
+                        Some(shared_scalar_buffer.clone()),
+                    )?,
+                )
             } else {
                 log::warn!(
                     "Compute shaders not supported! GPU Marching Cubes cannot run on this device."
                 );
                 None
             };
-            let volume_raycast_pipeline =
+            let mut negative_isosurface_pipeline = if self
+                .gpu
+                .render_config
+                .supports_compute_shaders
+                && negative_vertex_capacity > 0
+            {
+                Some(
+                    crate::renderer::isosurface::IsosurfacePipeline::new_with_vertex_capacity(
+                        &self.gpu.device,
+                        &self.gpu.queue,
+                        self.gpu.surface_format(),
+                        &self.camera_bind_group_layout,
+                        vol,
+                        negative_vertex_capacity,
+                        &clip_planes,
+                        Some(shared_scalar_buffer.clone()),
+                    )?,
+                )
+            } else {
+                None
+            };
+            let mut volume_raycast_pipeline =
                 crate::renderer::volume_raycast::VolumeRaycastPipeline::new(
                     &self.gpu.device,
                     self.gpu.surface_format(),
                     &self.camera_bind_group_layout,
                     vol,
                     &self.opaque_depth_view,
-                );
-            PreparedVolumetric {
-                isosurface_pipeline,
-                volume_raycast_pipeline,
+                    &clip_planes,
+                    Some(shared_scalar_buffer.clone()),
+                )?;
+            let display_range = presentation_settings
+                .display_range
+                .unwrap_or([vol.scalar_range().0, vol.scalar_range().1]);
+            volume_raycast_pipeline.update_transfer_function(
+                &self.gpu.queue,
+                display_range,
+                (render_settings.opacity * presentation_settings.opacity_scale).clamp(0.0, 1.0),
+            );
+            volume_raycast_pipeline
+                .set_density_cutoff(&self.gpu.queue, presentation_settings.density_cutoff);
+            if presentation_settings.use_explicit_transfer_function {
+                volume_raycast_pipeline.update_explicit_transfer_function(
+                    &self.gpu.queue,
+                    &presentation_settings.transfer_function,
+                )?;
             }
+            volume_raycast_pipeline
+                .set_material_mode(&self.gpu.queue, presentation_settings.field_material_mode);
+            if let Some(pipeline) = &mut isosurface_pipeline {
+                pipeline
+                    .set_material_mode(&self.gpu.queue, presentation_settings.field_material_mode);
+            }
+            if let Some(pipeline) = &mut negative_isosurface_pipeline {
+                pipeline
+                    .set_material_mode(&self.gpu.queue, presentation_settings.field_material_mode);
+            }
+            let isosurface_vertex_bytes = isosurface_pipeline
+                .iter()
+                .chain(negative_isosurface_pipeline.iter())
+                .try_fold(0_u64, |total, pipeline| {
+                    total.checked_add(pipeline.vertex_buffer_bytes())
+                })
+                .ok_or(())?;
+            let isosurface_resident_bytes = isosurface_pipeline
+                .iter()
+                .chain(negative_isosurface_pipeline.iter())
+                .try_fold(0_u64, |total, pipeline| {
+                    total.checked_add(pipeline.resident_bytes())
+                })
+                .ok_or(())?;
+            let resident_field_bytes = volume_raycast_pipeline
+                .resident_bytes()
+                .checked_add(isosurface_resident_bytes)
+                .and_then(|bytes| bytes.checked_add(scalar_bytes))
+                .and_then(|bytes| bytes.checked_add(slice_gpu_bytes))
+                .ok_or(())?;
+            let resource_footprint = FieldResourceFootprint {
+                resident_field_bytes,
+                isosurface_vertex_bytes,
+                volume_storage_bytes: volume_raycast_pipeline.scalar_storage_bytes(),
+                slice_vertex_bytes,
+                contour_vertex_bytes,
+            };
+            let gpu_bytes = resource_footprint.resident_field_bytes;
+            if gpu_bytes > MAX_ACTIVE_FIELD_GPU_BYTES
+                || self
+                    .resident_field_gpu_bytes
+                    .checked_sub(
+                        self.active_field_layer
+                            .is_some_and(|(active_layer_id, active_layer_revision)| {
+                                active_layer_id == layer_id
+                                    && active_layer_revision == layer_revision
+                            })
+                            .then_some(self.active_field_gpu_bytes)
+                            .unwrap_or(0),
+                    )
+                    .ok_or(())?
+                    .checked_add(gpu_bytes)
+                    .ok_or(())?
+                    > MAX_ACTIVE_FIELD_GPU_BYTES
+            {
+                return Err(());
+            }
+            let field_snapshot = FieldRenderSnapshot {
+                layer_id,
+                source_layer_revision: layer_revision,
+                source_origin_angstrom: vol.source_origin_angstrom(),
+                scalar_unit: match scalar_unit {
+                    crate::volumetric::ScalarUnit::ElectronPerCubicAngstrom => {
+                        "electron_per_cubic_angstrom"
+                    }
+                    crate::volumetric::ScalarUnit::ElectronPerBohrCubed => {
+                        "electron_per_bohr_cubed"
+                    }
+                    crate::volumetric::ScalarUnit::Arbitrary => "arbitrary",
+                }
+                .to_owned(),
+                scalar_range: [vol.scalar_range().0, vol.scalar_range().1],
+                representations: field_representations(
+                    render_settings,
+                    &presentation_settings.slices,
+                ),
+                positive_isovalue: (!matches!(
+                    render_settings.sign_mode,
+                    crate::volumetric::FieldSignMode::Negative
+                ) && matches!(
+                    render_settings.render_mode,
+                    crate::volumetric::FieldRenderMode::Isosurface
+                        | crate::volumetric::FieldRenderMode::Both
+                ))
+                .then_some(positive_isovalue),
+                negative_isovalue: (!matches!(
+                    render_settings.sign_mode,
+                    crate::volumetric::FieldSignMode::Positive
+                ) && matches!(
+                    render_settings.render_mode,
+                    crate::volumetric::FieldRenderMode::Isosurface
+                        | crate::volumetric::FieldRenderMode::Both
+                ))
+                .then_some(negative_isovalue),
+                positive_color: render_settings.color,
+                negative_color: render_settings.color_negative,
+                clip_planes,
+                slices: presentation_settings.slices.clone(),
+                transfer_function: presentation_settings.transfer_function.clone(),
+                use_explicit_transfer_function: presentation_settings
+                    .use_explicit_transfer_function,
+                transparency_method: presentation_settings.transparency_method,
+                field_material_mode: presentation_settings.field_material_mode,
+                display_range: presentation_settings.display_range,
+                opacity_scale: presentation_settings.opacity_scale,
+                density_cutoff: presentation_settings.density_cutoff,
+                colormap_mode: render_settings.colormap_mode,
+            };
+            field_snapshot.validate().map_err(|_| ())?;
+            Ok(PreparedFieldLayer {
+                layer_id,
+                layer_revision,
+                renderer_field_epoch: self.field_resource_epoch,
+                render_settings,
+                field_snapshot,
+                grid_dims: vol.grid_dims(),
+                gpu_bytes,
+                resource_footprint,
+                isosurface_pipeline,
+                negative_isosurface_pipeline,
+                volume_raycast_pipeline,
+                slices,
+            })
         }))
-        .map_err(|_| ())
+        .map_err(|_| ())?
+    }
+
+    pub fn prepare_volumetric(
+        &self,
+        vol: &crate::volumetric::VolumetricData,
+    ) -> Result<PreparedVolumetric, ()> {
+        self.prepare_scalar_field(
+            0,
+            0,
+            vol,
+            crate::volumetric::ScalarUnit::Arbitrary,
+            crate::volumetric::FieldRenderSettings::default(),
+            &crate::renderer::field_scene::FieldPresentationSettings::default(),
+            None,
+        )
+    }
+
+    pub fn prepare_field_layer(
+        &self,
+        layer: &crate::volumetric::FieldLayer,
+    ) -> Result<PreparedFieldLayer, ()> {
+        self.prepare_scalar_field(
+            layer.id,
+            layer.revision,
+            layer,
+            layer.scalar_unit,
+            layer.render_settings,
+            &layer.presentation_settings,
+            None,
+        )
+    }
+
+    pub fn prepare_field_layer_with_vertex_counts(
+        &self,
+        layer: &crate::volumetric::FieldLayer,
+        vertex_counts: (u32, u32),
+    ) -> Result<PreparedFieldLayer, ()> {
+        self.prepare_scalar_field(
+            layer.id,
+            layer.revision,
+            layer,
+            layer.scalar_unit,
+            layer.render_settings,
+            &layer.presentation_settings,
+            Some(vertex_counts),
+        )
+    }
+
+    pub fn prepare_field_layer_with_render_settings(
+        &self,
+        layer: &crate::volumetric::FieldLayer,
+        render_settings: crate::volumetric::FieldRenderSettings,
+    ) -> Result<PreparedFieldLayer, ()> {
+        self.prepare_scalar_field(
+            layer.id,
+            layer.revision,
+            layer,
+            layer.scalar_unit,
+            render_settings,
+            &layer.presentation_settings,
+            None,
+        )
+    }
+
+    pub fn update_field_render_settings(
+        &mut self,
+        layer: &crate::volumetric::FieldLayer,
+        render_settings: crate::volumetric::FieldRenderSettings,
+    ) -> Result<(), ()> {
+        let prepared = self.prepare_field_layer_with_render_settings(layer, render_settings)?;
+        self.commit_field_layer(prepared, layer.id, layer.revision)
     }
 
     pub fn commit_volumetric(&mut self, prepared: PreparedVolumetric) {
-        self.show_isosurface = prepared.isosurface_pipeline.is_some();
-        self.isosurface_pipeline = prepared.isosurface_pipeline;
+        let _ = self.commit_field_layer(prepared, 0, 0);
+    }
+
+    pub fn commit_field_layer(
+        &mut self,
+        prepared: PreparedFieldLayer,
+        layer_id: crate::volumetric::FieldLayerId,
+        layer_revision: crate::volumetric::FieldSceneRevision,
+    ) -> Result<(), ()> {
+        if MAX_VISIBLE_FIELD_LAYERS_FIGURE_2 == 0 {
+            log::warn!("FIGURE-2 requires a positive visible field-layer capacity");
+            return Err(());
+        }
+        if prepared.layer_id != layer_id || prepared.layer_revision != layer_revision {
+            log::warn!("stale prepared field layer was not committed");
+            return Err(());
+        }
+        if prepared.renderer_field_epoch != self.field_resource_epoch {
+            log::warn!("stale prepared field layer resource epoch was not committed");
+            return Err(());
+        }
+        let replaces_active = self
+            .active_field_layer
+            .is_some_and(|(active_layer_id, _)| active_layer_id == layer_id);
+        let retained_without_replacement = self
+            .retained_field_layers
+            .iter()
+            .filter(|layer| layer.layer_id != layer_id)
+            .count();
+        let pending_previous_active =
+            usize::from(self.active_field_layer.is_some() && !replaces_active);
+        if retained_without_replacement
+            .checked_add(pending_previous_active)
+            .ok_or(())?
+            >= MAX_VISIBLE_FIELD_LAYERS_FIGURE_2
+        {
+            log::warn!("FIGURE-2 visible field-layer capacity exceeded");
+            return Err(());
+        }
+        if let Some(index) = self
+            .retained_field_layers
+            .iter()
+            .position(|layer| layer.layer_id == layer_id)
+        {
+            self.retained_field_layers.remove(index);
+        }
+        let previous = match (
+            self.active_field_layer.take(),
+            self.active_field_render_settings.take(),
+            self.active_field_snapshot.take(),
+            self.active_field_layer_pipeline.take(),
+            self.active_negative_field_layer_pipeline.take(),
+            self.volume_raycast_pipeline.take(),
+            std::mem::take(&mut self.active_field_slices),
+        ) {
+            (
+                Some((previous_id, _previous_revision)),
+                Some(render_settings),
+                Some(field_snapshot),
+                isosurface_pipeline,
+                negative_isosurface_pipeline,
+                Some(volume_raycast_pipeline),
+                slices,
+            ) if previous_id != layer_id => Some(RetainedFieldLayer {
+                layer_id: previous_id,
+                render_settings,
+                field_snapshot,
+                gpu_bytes: self.active_field_gpu_bytes,
+                resource_footprint: self.active_field_resource_footprint,
+                isosurface_pipeline,
+                negative_isosurface_pipeline,
+                volume_raycast_pipeline,
+                slices,
+            }),
+            _ => None,
+        };
+        if let Some(previous) = previous {
+            let insertion = self
+                .retained_field_layers
+                .binary_search_by_key(&previous.layer_id, |layer| layer.layer_id)
+                .unwrap_or_else(|index| index);
+            self.retained_field_layers.insert(insertion, previous);
+        }
+        let render_settings = prepared.render_settings;
+        let grid_dims = prepared.grid_dims;
+        let gpu_bytes = prepared.gpu_bytes;
+        let resource_footprint = prepared.resource_footprint;
+        self.show_isosurface = prepared.isosurface_pipeline.is_some()
+            || prepared.negative_isosurface_pipeline.is_some();
+        self.active_field_layer_pipeline = prepared.isosurface_pipeline;
+        self.active_negative_field_layer_pipeline = prepared.negative_isosurface_pipeline;
+        self.active_field_layer = Some((layer_id, layer_revision));
+        self.active_field_snapshot = Some(prepared.field_snapshot);
+        self.active_field_render_settings = Some(render_settings);
         self.volume_raycast_pipeline = Some(prepared.volume_raycast_pipeline);
-        self.show_volume = true;
-        self.volume_render_mode = RendererVolumeMode::Both;
+        self.active_field_slices = prepared.slices;
+        self.active_field_gpu_bytes = gpu_bytes;
+        self.active_field_resource_footprint = resource_footprint;
+        self.resident_field_gpu_bytes = self
+            .retained_field_layers
+            .iter()
+            .try_fold(gpu_bytes, |total, layer| total.checked_add(layer.gpu_bytes))
+            .ok_or(())?;
+        self.field_resource_epoch = self.field_resource_epoch.wrapping_add(1);
+        self.apply_field_render_settings(render_settings);
+        self.update_signed_isovalues(
+            grid_dims,
+            render_settings.positive_isovalue,
+            render_settings.negative_isovalue,
+        );
+        Ok(())
+    }
+
+    pub fn commit_replacement_field_layer(
+        &mut self,
+        prepared: PreparedFieldLayer,
+        layer_id: crate::volumetric::FieldLayerId,
+        layer_revision: crate::volumetric::FieldSceneRevision,
+    ) -> Result<(), ()> {
+        if prepared.layer_id != layer_id
+            || prepared.layer_revision != layer_revision
+            || prepared.renderer_field_epoch != self.field_resource_epoch
+        {
+            log::warn!("stale replacement field layer was not committed");
+            return Err(());
+        }
+        self.drop_all_field_resources();
+        self.commit_field_layer(prepared, layer_id, layer_revision)
+    }
+
+    /// Drop every renderer-owned resource for one logical field layer.
+    /// Call only after the replacement resource has prepared successfully.
+    pub fn remove_field_layer_resources(&mut self, layer_id: crate::volumetric::FieldLayerId) {
+        if self
+            .active_field_layer
+            .is_some_and(|(active_layer_id, _)| active_layer_id == layer_id)
+        {
+            self.active_field_layer_pipeline = None;
+            self.active_negative_field_layer_pipeline = None;
+            self.volume_raycast_pipeline = None;
+            self.active_field_slices.clear();
+            self.active_field_layer = None;
+            self.active_field_snapshot = None;
+            self.active_field_render_settings = None;
+            self.active_field_gpu_bytes = 0;
+            self.active_field_resource_footprint = FieldResourceFootprint::default();
+            self.show_isosurface = false;
+            self.show_volume = false;
+        }
+        if let Some(index) = self
+            .retained_field_layers
+            .iter()
+            .position(|layer| layer.layer_id == layer_id)
+        {
+            self.retained_field_layers.remove(index);
+        }
+        self.resident_field_gpu_bytes = self
+            .retained_field_layers
+            .iter()
+            .try_fold(self.active_field_gpu_bytes, |total, layer| {
+                total.checked_add(layer.gpu_bytes)
+            })
+            .unwrap_or(0);
+    }
+
+    pub fn set_field_layer_visibility(
+        &mut self,
+        layer_id: crate::volumetric::FieldLayerId,
+        visible: bool,
+    ) -> bool {
+        if self
+            .active_field_layer
+            .is_some_and(|(active_layer_id, _)| active_layer_id == layer_id)
+        {
+            self.set_active_field_visibility(visible);
+            if let Some(settings) = &mut self.active_field_render_settings {
+                settings.visible = visible;
+            }
+            return true;
+        }
+        if let Some(layer) = self
+            .retained_field_layers
+            .iter_mut()
+            .find(|layer| layer.layer_id == layer_id)
+        {
+            layer.render_settings.visible = visible;
+            return true;
+        }
+        false
+    }
+
+    /// Capture field-only publication inputs without retaining mutable interactive state.
+    fn frozen_field_draw_list(&self) -> FrozenFieldDrawList {
+        let mut draw_list = FrozenFieldDrawList::empty();
+        for layer in &self.retained_field_layers {
+            if layer.render_settings.visible {
+                let pushed = draw_list.push(layer.layer_id);
+                debug_assert!(pushed);
+            }
+        }
+        if self
+            .active_field_render_settings
+            .is_some_and(|settings| settings.visible)
+        {
+            if let Some((layer_id, _)) = self.active_field_layer {
+                let pushed = draw_list.push(layer_id);
+                debug_assert!(pushed);
+            }
+        }
+        draw_list.sort();
+        draw_list
+    }
+
+    pub fn field_publication_snapshot(&self) -> Option<FieldPublicationSnapshot> {
+        let mut field_snapshots = Vec::new();
+        let mut resource_footprint = FieldResourceFootprint::default();
+        field_snapshots
+            .try_reserve_exact(self.retained_field_layers.len().checked_add(1)?)
+            .ok()?;
+        for layer in &self.retained_field_layers {
+            if layer.render_settings.visible {
+                field_snapshots.push(layer.field_snapshot.clone());
+                resource_footprint =
+                    add_field_resource_footprint(resource_footprint, layer.resource_footprint)?;
+            }
+        }
+        if self
+            .active_field_render_settings
+            .is_some_and(|settings| settings.visible)
+        {
+            field_snapshots.push(self.active_field_snapshot.as_ref()?.clone());
+            resource_footprint = add_field_resource_footprint(
+                resource_footprint,
+                self.active_field_resource_footprint,
+            )?;
+        }
+        field_snapshots.sort_unstable_by_key(|snapshot| snapshot.layer_id);
+        let mut draw_list = FrozenFieldDrawList::empty();
+        for snapshot in &field_snapshots {
+            if !draw_list.push(snapshot.layer_id) {
+                return None;
+            }
+        }
+        let primary = field_snapshots.first()?.clone();
+        if field_snapshots
+            .iter()
+            .any(|snapshot| snapshot.transparency_method != primary.transparency_method)
+        {
+            return None;
+        }
+        let field_scene_hash = field_scene_hash(&field_snapshots);
+        let frozen = FieldPublicationSnapshot {
+            field_snapshots,
+            draw_list,
+            representation: primary.representations.clone(),
+            transfer_function: primary.transfer_function.clone(),
+            clip_planes: primary.clip_planes.clone(),
+            composition_method: primary.transparency_method,
+            requested_field_capabilities: 1,
+            selected_field_capabilities: 1,
+            field_scene_hash,
+            resource_footprint,
+        };
+        Some(frozen)
+    }
+
+    fn apply_field_render_settings(&mut self, settings: crate::volumetric::FieldRenderSettings) {
+        self.active_colormap_mode = settings.colormap_mode;
+        self.show_isosurface = settings.visible
+            && (self.active_field_layer_pipeline.is_some()
+                || self.active_negative_field_layer_pipeline.is_some());
+        self.show_volume = settings.visible;
+        self.volume_render_mode = match settings.render_mode {
+            crate::volumetric::FieldRenderMode::Isosurface => RendererVolumeMode::Isosurface,
+            crate::volumetric::FieldRenderMode::Volume => RendererVolumeMode::Volume,
+            crate::volumetric::FieldRenderMode::Both => RendererVolumeMode::Both,
+        };
+        if let Some(iso) = &mut self.active_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, settings.color);
+            iso.set_color_negative(&self.gpu.queue, settings.color_negative);
+            iso.set_opacity(&self.gpu.queue, settings.opacity);
+            iso.set_sign_mode(&self.gpu.queue, 0);
+        }
+        if let Some(iso) = &mut self.active_negative_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, settings.color);
+            iso.set_color_negative(&self.gpu.queue, settings.color_negative);
+            iso.set_opacity(&self.gpu.queue, settings.opacity);
+            iso.set_sign_mode(&self.gpu.queue, 1);
+        }
+        if let Some(volume) = &mut self.volume_raycast_pipeline {
+            volume.set_colormap(&self.gpu.queue, settings.colormap_mode);
+            volume.set_signed_mapping(
+                &self.gpu.queue,
+                matches!(settings.sign_mode, crate::volumetric::FieldSignMode::Both),
+            );
+        }
+    }
+
+    pub fn set_active_field_render_mode(
+        &mut self,
+        render_mode: crate::volumetric::FieldRenderMode,
+    ) -> bool {
+        let Some(settings) = &mut self.active_field_render_settings else {
+            return false;
+        };
+        settings.render_mode = render_mode;
+        self.volume_render_mode = match render_mode {
+            crate::volumetric::FieldRenderMode::Isosurface => RendererVolumeMode::Isosurface,
+            crate::volumetric::FieldRenderMode::Volume => RendererVolumeMode::Volume,
+            crate::volumetric::FieldRenderMode::Both => RendererVolumeMode::Both,
+        };
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.representations = field_representations(*settings, &snapshot.slices);
+            let includes_isosurface = matches!(
+                render_mode,
+                crate::volumetric::FieldRenderMode::Isosurface
+                    | crate::volumetric::FieldRenderMode::Both
+            );
+            snapshot.positive_isovalue = (includes_isosurface
+                && !matches!(
+                    settings.sign_mode,
+                    crate::volumetric::FieldSignMode::Negative
+                ))
+            .then_some(settings.positive_isovalue);
+            snapshot.negative_isovalue = (includes_isosurface
+                && !matches!(
+                    settings.sign_mode,
+                    crate::volumetric::FieldSignMode::Positive
+                ))
+            .then_some(settings.negative_isovalue);
+        }
+        true
+    }
+
+    pub fn set_active_field_sign_mode(
+        &mut self,
+        sign_mode: crate::volumetric::FieldSignMode,
+    ) -> bool {
+        let resources_available = match sign_mode {
+            crate::volumetric::FieldSignMode::Positive => {
+                self.active_field_layer_pipeline.is_some()
+            }
+            crate::volumetric::FieldSignMode::Negative => {
+                self.active_negative_field_layer_pipeline.is_some()
+            }
+            crate::volumetric::FieldSignMode::Both => {
+                self.active_field_layer_pipeline.is_some()
+                    && self.active_negative_field_layer_pipeline.is_some()
+            }
+        };
+        if !resources_available {
+            return false;
+        }
+        let Some(settings) = &mut self.active_field_render_settings else {
+            return false;
+        };
+        settings.sign_mode = sign_mode;
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.representations = field_representations(*settings, &snapshot.slices);
+            let includes_isosurface = matches!(
+                settings.render_mode,
+                crate::volumetric::FieldRenderMode::Isosurface
+                    | crate::volumetric::FieldRenderMode::Both
+            );
+            snapshot.positive_isovalue = (includes_isosurface
+                && !matches!(sign_mode, crate::volumetric::FieldSignMode::Negative))
+            .then_some(settings.positive_isovalue);
+            snapshot.negative_isovalue = (includes_isosurface
+                && !matches!(sign_mode, crate::volumetric::FieldSignMode::Positive))
+            .then_some(settings.negative_isovalue);
+        }
+        if let Some(volume) = &mut self.volume_raycast_pipeline {
+            volume.set_signed_mapping(
+                &self.gpu.queue,
+                matches!(sign_mode, crate::volumetric::FieldSignMode::Both),
+            );
+        }
+        true
+    }
+
+    pub fn update_active_volume_transfer(
+        &mut self,
+        display_range: [f32; 2],
+        opacity_scale: f32,
+    ) -> bool {
+        let Some(settings) = self.active_field_render_settings else {
+            return false;
+        };
+        let Some(volume) = &mut self.volume_raycast_pipeline else {
+            return false;
+        };
+        volume.update_transfer_function(
+            &self.gpu.queue,
+            display_range,
+            (settings.opacity * opacity_scale).clamp(0.0, 1.0),
+        );
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.display_range = Some(display_range);
+            snapshot.opacity_scale = opacity_scale;
+        }
+        true
+    }
+
+    pub fn update_active_volume_density_cutoff(&mut self, density_cutoff: f32) -> bool {
+        let Some(volume) = &mut self.volume_raycast_pipeline else {
+            return false;
+        };
+        volume.set_density_cutoff(&self.gpu.queue, density_cutoff);
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.density_cutoff = density_cutoff;
+        }
+        true
+    }
+
+    pub fn set_active_isosurface_colors(&mut self, positive: [f32; 4], negative: [f32; 4]) -> bool {
+        let Some(settings) = &mut self.active_field_render_settings else {
+            return false;
+        };
+        settings.color = positive;
+        settings.color_negative = negative;
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.positive_color = positive;
+            snapshot.negative_color = negative;
+        }
+        if let Some(iso) = &mut self.active_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, positive);
+            iso.set_color_negative(&self.gpu.queue, negative);
+        }
+        if let Some(iso) = &mut self.active_negative_field_layer_pipeline {
+            iso.set_color(&self.gpu.queue, positive);
+            iso.set_color_negative(&self.gpu.queue, negative);
+        }
+        true
     }
 
     /// Update isovalue threshold and trigger compute pass.
     pub fn update_isovalue(&mut self, grid_dims: [usize; 3], threshold: f32) {
-        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
-            self.isosurface_dispatch_size =
-                iso_pipe.update_threshold(&self.gpu.queue, grid_dims, threshold);
+        self.update_signed_isovalues(grid_dims, threshold, threshold);
+    }
 
-            // Dispatch compute pass immediately to update the mesh buffers
-            let mut encoder =
-                self.gpu
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Isosurface Compute Encoder"),
-                    });
-            iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);
-            self.gpu.queue.submit(std::iter::once(encoder.finish()));
+    pub fn update_signed_isovalues(
+        &mut self,
+        grid_dims: [usize; 3],
+        positive_threshold: f32,
+        negative_threshold: f32,
+    ) {
+        if self.active_field_layer_pipeline.is_none()
+            && self.active_negative_field_layer_pipeline.is_none()
+        {
+            return;
         }
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Signed Isosurface Compute Encoder"),
+            });
+        if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
+            self.isosurface_dispatch_size =
+                iso_pipe.update_threshold(&self.gpu.queue, grid_dims, positive_threshold);
+            iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);
+        }
+        if let Some(iso_pipe) = &mut self.active_negative_field_layer_pipeline {
+            let dispatch_size =
+                iso_pipe.update_threshold(&self.gpu.queue, grid_dims, negative_threshold);
+            iso_pipe.dispatch_compute(&mut encoder, dispatch_size);
+        }
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    pub fn update_active_isovalues_if_capacity(
+        &mut self,
+        grid_dims: [usize; 3],
+        positive_threshold: f32,
+        negative_threshold: f32,
+        positive_vertices: u32,
+        negative_vertices: u32,
+    ) -> bool {
+        let Some(settings) = self.active_field_render_settings else {
+            return false;
+        };
+        let positive_fits = matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) || self
+            .active_field_layer_pipeline
+            .as_ref()
+            .is_some_and(|pipeline| positive_vertices <= pipeline.vertex_capacity());
+        let negative_fits = matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) || self
+            .active_negative_field_layer_pipeline
+            .as_ref()
+            .is_some_and(|pipeline| negative_vertices <= pipeline.vertex_capacity());
+        if !positive_fits || !negative_fits {
+            return false;
+        }
+        self.update_signed_isovalues(grid_dims, positive_threshold, negative_threshold);
+        if let Some(settings) = &mut self.active_field_render_settings {
+            settings.isovalue = positive_threshold;
+            settings.positive_isovalue = positive_threshold;
+            settings.negative_isovalue = negative_threshold;
+        }
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            if snapshot.positive_isovalue.is_some() {
+                snapshot.positive_isovalue = Some(positive_threshold);
+            }
+            if snapshot.negative_isovalue.is_some() {
+                snapshot.negative_isovalue = Some(negative_threshold);
+            }
+        }
+        true
     }
 
     /// Update isosurface solid color.
     pub fn set_isosurface_color(&mut self, color: [f32; 4]) {
-        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+        if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             iso_pipe.set_color(&self.gpu.queue, color);
+        }
+        if let Some(iso_pipe) = &mut self.active_negative_field_layer_pipeline {
+            iso_pipe.set_color_negative(&self.gpu.queue, color);
         }
     }
 
     /// Update isosurface opacity.
-    pub fn set_isosurface_opacity(&mut self, opacity: f32) {
-        if let Some(iso_pipe) = &mut self.isosurface_pipeline {
+    pub fn set_isosurface_opacity(&mut self, opacity: f32) -> bool {
+        if self.active_field_render_settings.is_none() {
+            return false;
+        }
+        if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             iso_pipe.set_opacity(&self.gpu.queue, opacity);
         }
+        if let Some(iso_pipe) = &mut self.active_negative_field_layer_pipeline {
+            iso_pipe.set_opacity(&self.gpu.queue, opacity);
+        }
+        if let Some(settings) = &mut self.active_field_render_settings {
+            settings.opacity = opacity;
+            settings.color[3] = opacity;
+            settings.color_negative[3] = opacity;
+        }
+        let volume_mapping = self.active_field_snapshot.as_mut().map(|snapshot| {
+            snapshot.positive_color[3] = opacity;
+            snapshot.negative_color[3] = opacity;
+            (
+                snapshot.display_range.unwrap_or(snapshot.scalar_range),
+                snapshot.opacity_scale,
+            )
+        });
+        if let (Some(volume), Some((display_range, opacity_scale))) =
+            (&mut self.volume_raycast_pipeline, volume_mapping)
+        {
+            volume.update_transfer_function(
+                &self.gpu.queue,
+                display_range,
+                (opacity * opacity_scale).clamp(0.0, 1.0),
+            );
+        }
+        true
     }
 }
 
@@ -3017,6 +4980,67 @@ mod publication_export_tests {
         assert!(ndc.x.abs() <= inner + 1.0e-5, "x={}", ndc.x);
         assert!(ndc.y.abs() <= inner + 1.0e-5, "y={}", ndc.y);
         assert!((0.0..=1.0).contains(&ndc.z), "z={}", ndc.z);
+    }
+
+    #[test]
+    fn field_publication_plan_retiles_after_counting_resident_and_tile_local_resources() {
+        let request = PublicationExportRequest {
+            width: 2560,
+            height: 1600,
+            publication_bond_instance_count: 10,
+            needs_transparent_depth: true,
+            has_measurement_overlays: false,
+            has_hopping_overlays: false,
+            has_isosurface: true,
+            has_volume: true,
+            has_phonon_presentation: false,
+            has_atom_drag: false,
+            show_bz: false,
+            has_measurement_state: false,
+            has_selection_highlights: false,
+            has_wannier_overlay: false,
+            has_active_phonon_state: false,
+        };
+        let limits = PublicationExportLimits {
+            max_texture_dimension_2d: 8192,
+            max_buffer_size: 256 * 1024 * 1024,
+            publication_msaa_x4: true,
+        };
+        let resources = FieldPublicationResources {
+            layer_count: 1,
+            has_slice: true,
+            has_contour: true,
+            footprint: FieldResourceFootprint {
+                resident_field_bytes: MAX_ACTIVE_FIELD_GPU_BYTES,
+                ..FieldResourceFootprint::default()
+            },
+            field_scene_hash: "field-publication-plan-test".to_owned(),
+        };
+        let full_frame_plan = PublicationRenderPlan {
+            requested_samples: 4,
+            selected_samples: 4,
+            tile_dimensions: [request.width, request.height],
+            tile_layout: [1, 1],
+            tile_overlap_pixels: 0,
+        };
+        let full_frame_estimate = add_field_publication_resource_estimate(
+            publication_export_resource_estimate(request, full_frame_plan).unwrap(),
+            &resources,
+        )
+        .unwrap();
+        assert!(
+            full_frame_estimate.transient_gpu_bytes > MAX_PUBLICATION_TOTAL_GPU_BYTES,
+            "the regression fixture must require field-aware tiling"
+        );
+
+        let plan = publication_render_plan(request, limits, Some(&resources)).unwrap();
+        assert!(plan.tile_layout[0] > 1 || plan.tile_layout[1] > 1);
+        let estimate = add_field_publication_resource_estimate(
+            publication_export_resource_estimate(request, plan).unwrap(),
+            &resources,
+        )
+        .unwrap();
+        assert!(estimate.transient_gpu_bytes <= MAX_PUBLICATION_TOTAL_GPU_BYTES);
     }
 
     #[test]

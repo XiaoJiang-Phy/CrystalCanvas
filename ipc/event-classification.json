@@ -1,5 +1,6 @@
 {
   "events": {
+    "field_scene_changed": "renderer_sync",
     "menu-action": "application_menu",
     "state_changed": "state_sync",
     "tauri://drag-drop": "native_window",

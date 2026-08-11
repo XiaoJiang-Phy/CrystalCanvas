@@ -140,10 +140,10 @@ where
                 )));
             }
         };
-        <T as serde::Deserialize>::deserialize(
-            serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&value),
-        )
-            .map_err(|error| IpcError::invalid_argument(format!("invalid {}: {}", parameter, error)))
+        <T as serde::Deserialize>::deserialize(serde::de::value::StrDeserializer::<
+            serde::de::value::Error,
+        >::new(&value))
+        .map_err(|error| IpcError::invalid_argument(format!("invalid {}: {}", parameter, error)))
     }
 }
 
@@ -269,7 +269,9 @@ impl IpcError {
     pub fn from_try_lock<T>(error: std::sync::TryLockError<T>, resource: &str) -> Self {
         match error {
             std::sync::TryLockError::WouldBlock => Self::busy(format!("{} is busy", resource)),
-            std::sync::TryLockError::Poisoned(_) => Self::lock(format!("{} lock poisoned", resource)),
+            std::sync::TryLockError::Poisoned(_) => {
+                Self::lock(format!("{} lock poisoned", resource))
+            }
         }
     }
 

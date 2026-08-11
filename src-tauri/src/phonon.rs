@@ -299,7 +299,10 @@ pub fn parse_phonon_file(path: &str) -> Result<PhononData, String> {
     } else if content.contains("diagonalizing") || content.contains("freq (") {
         parse_dynmat_dat(&content)
     } else {
-        Err("Unrecognized phonon file format. Supported: Molden (.mold), QE dynmat (.dat)".to_string())
+        Err(
+            "Unrecognized phonon file format. Supported: Molden (.mold), QE dynmat (.dat)"
+                .to_string(),
+        )
     }
 }
 
@@ -309,9 +312,10 @@ mod tests {
 
     #[test]
     fn test_parse_molden_ceo2() {
-        let content = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/data/CeO/dynmat.mold"),
-        )
+        let content = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/data/CeO/dynmat.mold"
+        ))
         .expect("Failed to read dynmat.mold");
 
         let data = parse_molden_phonon(&content).expect("Failed to parse Molden");
@@ -358,9 +362,10 @@ mod tests {
 
     #[test]
     fn test_parse_dynmat_dat_ceo2() {
-        let content = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/data/CeO/CeO.dynmat.dat"),
-        )
+        let content = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/data/CeO/CeO.dynmat.dat"
+        ))
         .expect("Failed to read CeO.dynmat.dat");
 
         let data = parse_dynmat_dat(&content).expect("Failed to parse dynmat.dat");
@@ -379,7 +384,10 @@ mod tests {
     #[test]
     fn test_auto_detect_format() {
         let mold_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/data/CeO/dynmat.mold");
-        let dat_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/data/CeO/CeO.dynmat.dat");
+        let dat_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/data/CeO/CeO.dynmat.dat"
+        );
 
         let mold_data = parse_phonon_file(mold_path).expect("Failed to auto-parse .mold");
         let dat_data = parse_phonon_file(dat_path).expect("Failed to auto-parse .dat");

@@ -1,7 +1,10 @@
 //! Narrow glTF 2.0 binary writer for one-way CrystalCanvas structure scenes.
 
 use crate::ipc::{IpcError, IpcResult};
-use crate::scene_export::{PublicationGlbAdmission, PublicationSceneSnapshot};
+use crate::scene_export::{
+    FIELD_CONTOUR, FIELD_ISOSURFACE, FIELD_SLICE, PortableFieldRepresentation,
+    PublicationFieldPrimitive, PublicationFieldSceneSnapshot, PublicationSceneSnapshot,
+};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -26,8 +29,24 @@ const CELL_EDGE_RADIUS_ANGSTROM: f32 = 0.02;
 const SPHERE_LATITUDES: usize = 12;
 const SPHERE_LONGITUDES: usize = 16;
 const CYLINDER_SEGMENTS: usize = 16;
+const FIELD_VERTEX_GLB_BYTES: usize = 44;
+const FIELD_JSON_BYTES_PER_PRIMITIVE: usize = 2 * 1024;
+pub(crate) const FIELD_MATERIAL_MAPPING_LIT: &str = "core_gltf_pbr_lit";
+pub(crate) const FIELD_MATERIAL_MAPPING_UNLIT_FALLBACK: &str =
+    "core_gltf_pbr_lit_fallback_from_unlit";
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub(crate) const fn portable_field_material_mapping(
+    material_mode: crate::renderer::field_scene::FieldMaterialMode,
+) -> &'static str {
+    match material_mode {
+        crate::renderer::field_scene::FieldMaterialMode::Lit => FIELD_MATERIAL_MAPPING_LIT,
+        crate::renderer::field_scene::FieldMaterialMode::Unlit => {
+            FIELD_MATERIAL_MAPPING_UNLIT_FALLBACK
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct GlbSemanticInventory {
     pub intrinsic_atoms: usize,
     pub atom_instances: usize,
@@ -35,6 +54,15 @@ pub struct GlbSemanticInventory {
     pub cell_edges: usize,
     pub materials: usize,
     pub meshes: usize,
+    pub field_primitives: usize,
+    pub field_vertices: usize,
+    pub geometry_bounds: Option<GlbGeometryBounds>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct GlbGeometryBounds {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
 pub struct BlenderGlbArtifact {
@@ -64,16 +92,48 @@ pub fn build_blender_glb(
     snapshot: &PublicationSceneSnapshot,
     export_id: &str,
 ) -> IpcResult<BlenderGlbArtifact> {
+    build_blender_glb_inner(snapshot, None, export_id)
+}
+
+fn build_blender_glb_inner(
+    snapshot: &PublicationSceneSnapshot,
+    field_scene: Option<&PublicationFieldSceneSnapshot>,
+    export_id: &str,
+) -> IpcResult<BlenderGlbArtifact> {
     if export_id.is_empty() {
         return Err(IpcError::render(
             "publication GLB export identity is missing",
         ));
     }
     validate_snapshot_admission(snapshot)?;
+    if let Some(field_scene) = field_scene {
+        validate_field_scene_admission(field_scene)?;
+    }
     let admission = snapshot.glb_admission;
-    let mut writer = GlbWriter::new(admission)?;
+    let field_count = field_scene.map_or(0, |scene| scene.field_primitives.len());
+    let field_binary_bytes = field_scene
+        .into_iter()
+        .flat_map(|scene| &scene.field_primitives)
+        .try_fold(0usize, |total, primitive| {
+            primitive
+                .positions
+                .len()
+                .checked_mul(FIELD_VERTEX_GLB_BYTES)
+                .and_then(|bytes| total.checked_add(bytes))
+        })
+        .ok_or_else(|| IpcError::render("publication field binary byte count overflow"))?;
+    let binary_capacity = (64 * 1024usize)
+        .checked_add(field_binary_bytes)
+        .ok_or_else(|| IpcError::render("publication GLB binary capacity overflow"))?;
+    let max_glb_bytes = if field_scene.is_some() {
+        MAX_PUBLICATION_GLB_BYTES
+    } else {
+        admission.max_glb_bytes
+    };
+    let mut writer = GlbWriter::new(max_glb_bytes, binary_capacity)?;
     let (sphere_pos, sphere_norm, sphere_idx) = writer.shared_sphere()?;
     let (cylinder_pos, cylinder_norm, cylinder_idx) = writer.shared_cylinder()?;
+    writer.reserve_field_arrays(field_count)?;
     let mut materials = Vec::<Value>::new();
     materials
         .try_reserve_exact(MAX_PUBLICATION_MATERIALS)
@@ -86,7 +146,12 @@ pub fn build_blender_glb(
     let mut mesh_indices = BTreeMap::<MeshKey, usize>::new();
     let mut nodes = Vec::<Value>::new();
     nodes
-        .try_reserve_exact(admission.nodes)
+        .try_reserve_exact(
+            admission
+                .nodes
+                .checked_add(field_count)
+                .ok_or_else(|| IpcError::render("publication GLB node capacity overflow"))?,
+        )
         .map_err(|_| IpcError::render("unable to allocate GLB nodes"))?;
 
     for atom in &snapshot.atoms {
@@ -167,11 +232,31 @@ pub fn build_blender_glb(
             "publication GLB node scene changed after admission",
         ));
     }
-    let node_indices: Vec<u32> = (0..nodes.len())
-        .map(u32::try_from)
+    let field_vertices = if let Some(field_scene) = field_scene {
+        append_field_primitives(
+            field_scene,
+            &mut writer,
+            &mut materials,
+            &mut meshes,
+            &mut nodes,
+        )?
+    } else {
+        0
+    };
+    let node_indices: Vec<Value> = (0..nodes.len())
+        .map(|index| {
+            u32::try_from(index)
+                .map(Value::from)
+                .map_err(|_| IpcError::render("publication GLB node count exceeds u32"))
+        })
         .collect::<Result<_, _>>()
         .map_err(|_| IpcError::render("publication GLB node count exceeds u32"))?;
-    let root = json!({
+    let material_count = materials.len();
+    let mesh_count = meshes.len();
+    let buffer_views = std::mem::take(&mut writer.buffer_views);
+    let accessors = std::mem::take(&mut writer.accessors);
+    let bin_length = writer.bin.len();
+    let mut root = json!({
         "asset": {"version": "2.0", "generator": "CrystalCanvas", "extras": {"crystalcanvas": {
             "export_id": export_id,
             "coordinate_length_unit": "angstrom",
@@ -182,28 +267,491 @@ pub fn build_blender_glb(
             "alpha_policy": "blend_when_alpha_less_than_one"
         }}},
         "scene": 0,
-        "scenes": [{"nodes": node_indices}],
-        "nodes": nodes,
-        "meshes": meshes,
-        "materials": materials,
-        "cameras": [camera],
-        "buffers": [{"byteLength": writer.bin.len()}],
-        "bufferViews": writer.buffer_views,
-        "accessors": writer.accessors,
     });
+    root["scenes"] = Value::Array(vec![Value::Object(serde_json::Map::from_iter([(
+        "nodes".to_owned(),
+        Value::Array(node_indices),
+    )]))]);
+    root["nodes"] = Value::Array(nodes);
+    root["meshes"] = Value::Array(meshes);
+    root["materials"] = Value::Array(materials);
+    root["cameras"] = Value::Array(vec![camera]);
+    root["buffers"] = Value::Array(vec![json!({"byteLength": bin_length})]);
+    root["bufferViews"] = Value::Array(buffer_views);
+    root["accessors"] = Value::Array(accessors);
+    if let Some(field_scene) = field_scene {
+        root["asset"]["extras"]["crystalcanvas"]["field_scene_hash"] =
+            json!(field_scene.field_scene_hash);
+    }
     let bytes = writer.finish(root)?;
-    validate_glb_bytes(&bytes).map_err(IpcError::render)?;
+    let validated = parse_validated_glb(&bytes).map_err(IpcError::render)?;
+    let geometry_bounds =
+        glb_geometry_bounds_from_validated(&validated).map_err(IpcError::render)?;
     Ok(BlenderGlbArtifact {
         semantic_inventory: GlbSemanticInventory {
             intrinsic_atoms: snapshot.intrinsic_atom_count,
             atom_instances: snapshot.atoms.len(),
             bonds: snapshot.bonds.len(),
             cell_edges: snapshot.cell_edges.len(),
-            materials: material_indices.len(),
-            meshes: mesh_indices.len(),
+            materials: material_count,
+            meshes: mesh_count,
+            field_primitives: field_count,
+            field_vertices,
+            geometry_bounds,
         },
         bytes,
     })
+}
+
+/// Builds the stable v0.7 GLB with portable, CPU-realized field triangles.
+/// The writer receives only portable CPU triangles; GPU-only resources are absent.
+pub fn build_blender_glb_field_scene(
+    snapshot: &PublicationFieldSceneSnapshot,
+    export_id: &str,
+) -> IpcResult<BlenderGlbArtifact> {
+    build_blender_glb_inner(&snapshot.structure, Some(snapshot), export_id)
+}
+
+fn append_field_primitives(
+    snapshot: &PublicationFieldSceneSnapshot,
+    writer: &mut GlbWriter,
+    materials: &mut Vec<Value>,
+    meshes: &mut Vec<Value>,
+    nodes: &mut Vec<Value>,
+) -> IpcResult<usize> {
+    let mut field_vertices = 0usize;
+    for primitive in &snapshot.field_primitives {
+        let field_layer = snapshot
+            .field_layers
+            .iter()
+            .find(|layer| {
+                layer.layer_id == primitive.layer_id
+                    && layer.source_layer_revision == primitive.source_layer_revision
+            })
+            .ok_or_else(|| {
+                IpcError::render("publication field primitive has no provenance layer")
+            })?;
+        let material_mapping =
+            portable_field_material_mapping(field_layer.presentation.field_material_mode);
+        if materials.len() >= MAX_PUBLICATION_MATERIALS
+            || meshes.len() >= MAX_PUBLICATION_MESHES
+            || nodes.len() >= MAX_PUBLICATION_GLB_NODES
+        {
+            return Err(IpcError::render(
+                "publication field primitive exceeds GLB admission",
+            ));
+        }
+        let position = writer.push_position_f32x3(&primitive.positions)?;
+        let normal = writer.push_f32x3(&primitive.normals, ARRAY_BUFFER, None)?;
+        let color = writer.push_f32x4(&primitive.colors, ARRAY_BUFFER)?;
+        let indices = writer.push_sequential_u32(primitive.positions.len())?;
+        let material = materials.len();
+        materials.push(json!({
+            "name": "CrystalCanvas Field Material",
+            "pbrMetallicRoughness": {"baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 0.0, "roughnessFactor": 0.5},
+            "alphaMode": if primitive.colors.iter().any(|color| color[3] < 1.0) { "BLEND" } else { "OPAQUE" },
+            "doubleSided": true,
+            "extras": {"crystalcanvas": {"material_mapping": material_mapping}}
+        }));
+        let node_name = match primitive.representation {
+            PortableFieldRepresentation::Isosurface => FIELD_ISOSURFACE,
+            PortableFieldRepresentation::Slice => FIELD_SLICE,
+            PortableFieldRepresentation::Contour => FIELD_CONTOUR,
+        };
+        let representation = primitive.representation.portable_name();
+        let mesh = meshes.len();
+        meshes.push(json!({"name": node_name, "primitives": [{
+            "attributes": {"POSITION": position, "NORMAL": normal, "COLOR_0": color},
+            "indices": indices, "material": material, "mode": 4
+        }]}));
+        nodes.push(json!({"name": node_name, "mesh": mesh, "extras": {"crystalcanvas": {
+            "representation": representation,
+            "layer_id": primitive.layer_id,
+            "source_layer_revision": primitive.source_layer_revision,
+            "isovalue": primitive.isovalue,
+            "contour_level": primitive.contour_level,
+            "slice_plane": primitive.slice_plane,
+            "scalar_unit": primitive.scalar_unit,
+            "material_mapping": material_mapping,
+            "contour_radius_angstrom": if matches!(primitive.representation, PortableFieldRepresentation::Contour) { 0.02 } else { 0.0 },
+            "clipping": primitive.clip_planes
+        }}}));
+        field_vertices = field_vertices
+            .checked_add(primitive.positions.len())
+            .ok_or_else(|| IpcError::render("field vertex count overflow"))?;
+    }
+    Ok(field_vertices)
+}
+
+fn validate_field_primitive(primitive: &PublicationFieldPrimitive) -> IpcResult<()> {
+    if primitive.positions.is_empty()
+        || primitive.positions.len() % 3 != 0
+        || primitive.positions.len() != primitive.normals.len()
+        || primitive.positions.len() != primitive.colors.len()
+        || primitive.scalar_unit.is_empty()
+        || !primitive
+            .positions
+            .iter()
+            .chain(&primitive.normals)
+            .all(|value| value.iter().all(|component| component.is_finite()))
+        || !primitive
+            .colors
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        || primitive.isovalue.is_some_and(|value| !value.is_finite())
+        || primitive
+            .contour_level
+            .is_some_and(|value| !value.is_finite())
+    {
+        return Err(IpcError::render(
+            "publication field primitive contains invalid data",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_node_transforms(nodes: &[Value]) -> Result<(), String> {
+    for node in nodes {
+        if node.get("matrix").is_some()
+            && (node.get("translation").is_some()
+                || node.get("rotation").is_some()
+                || node.get("scale").is_some())
+        {
+            return Err("publication GLB node mixes matrix and TRS transforms".to_owned());
+        }
+        if let Some(value) = node.get("matrix") {
+            let _ = json_finite_array::<16>(value, "node matrix")?;
+        }
+        if let Some(value) = node.get("translation") {
+            let _ = json_finite_array::<3>(value, "node translation")?;
+        }
+        if let Some(value) = node.get("rotation") {
+            let rotation = json_finite_array::<4>(value, "node rotation")?;
+            let norm_squared = rotation.iter().map(|value| value * value).sum::<f32>();
+            if (norm_squared - 1.0).abs() > 1.0e-4 {
+                return Err("publication GLB node rotation is not normalized".to_owned());
+            }
+        }
+        if let Some(value) = node.get("scale") {
+            let _ = json_finite_array::<3>(value, "node scale")?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_flat_scene_graph(
+    root: &Value,
+    nodes: &[Value],
+    meshes: &[Value],
+) -> Result<(), String> {
+    if root.get("scene").and_then(Value::as_u64) != Some(0) {
+        return Err("publication GLB default scene is invalid".to_owned());
+    }
+    let scenes = root
+        .get("scenes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB scenes are missing".to_owned())?;
+    if scenes.len() != 1 {
+        return Err("publication GLB scene inventory is invalid".to_owned());
+    }
+    let scene_nodes = scenes[0]
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB scene nodes are missing".to_owned())?;
+    if scene_nodes.len() != nodes.len() {
+        return Err("publication GLB scene does not contain every node".to_owned());
+    }
+    for (expected, index) in scene_nodes.iter().enumerate() {
+        if json_value_usize(index, "scene node")? != expected {
+            return Err("publication GLB scene nodes are not canonical".to_owned());
+        }
+    }
+    for node in nodes {
+        if node.get("children").is_some() {
+            return Err("publication GLB node hierarchy is unsupported".to_owned());
+        }
+        if let Some(mesh) = node.get("mesh") {
+            if json_value_usize(mesh, "node mesh")? >= meshes.len() {
+                return Err("publication GLB node mesh is invalid".to_owned());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_material_values(materials: &[Value]) -> Result<(), String> {
+    for material in materials {
+        if let Some(values) = material.pointer("/pbrMetallicRoughness/baseColorFactor") {
+            let color = json_finite_array::<4>(values, "material baseColorFactor")?;
+            if !color.iter().all(|value| (0.0..=1.0).contains(value)) {
+                return Err("publication GLB material color is outside [0, 1]".to_owned());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_f32x3_accessor(
+    accessor: &GlbAccessorView,
+    bin: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    if accessor.component_type != 5126 || accessor.kind != "VEC3" {
+        return Err(format!("publication GLB {label} accessor is invalid"));
+    }
+    for index in 0..accessor.count {
+        for axis in 0..3 {
+            let value = read_f32_component(bin, accessor.offset, index, 12, axis, label)?;
+            if !value.is_finite() {
+                return Err(format!(
+                    "publication GLB {label} contains a non-finite value"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_f32x4_accessor(
+    accessor: &GlbAccessorView,
+    bin: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    if accessor.component_type != 5126 || accessor.kind != "VEC4" {
+        return Err(format!("publication GLB {label} accessor is invalid"));
+    }
+    for index in 0..accessor.count {
+        for component in 0..4 {
+            let value = read_f32_component(bin, accessor.offset, index, 16, component, label)?;
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(format!("publication GLB {label} contains an invalid value"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_f32_component(
+    bin: &[u8],
+    base_offset: usize,
+    index: usize,
+    stride: usize,
+    component: usize,
+    label: &str,
+) -> Result<f32, String> {
+    let offset = base_offset
+        .checked_add(
+            index
+                .checked_mul(stride)
+                .ok_or_else(|| format!("publication GLB {label} offset overflows"))?,
+        )
+        .and_then(|offset| offset.checked_add(component.checked_mul(4)?))
+        .ok_or_else(|| format!("publication GLB {label} offset overflows"))?;
+    let bytes: [u8; 4] = bin
+        .get(offset..offset + 4)
+        .ok_or_else(|| format!("publication GLB {label} is truncated"))?
+        .try_into()
+        .map_err(|_| format!("publication GLB {label} is truncated"))?;
+    Ok(f32::from_le_bytes(bytes))
+}
+
+fn json_finite_array<const N: usize>(value: &Value, field: &str) -> Result<[f32; N], String> {
+    let values = value
+        .as_array()
+        .filter(|values| values.len() == N)
+        .ok_or_else(|| format!("publication GLB {field} is invalid"))?;
+    let mut result = [0.0; N];
+    for (index, value) in values.iter().enumerate() {
+        let component = value
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| format!("publication GLB {field} is invalid"))?
+            as f32;
+        if !component.is_finite() {
+            return Err(format!("publication GLB {field} is invalid"));
+        }
+        result[index] = component;
+    }
+    Ok(result)
+}
+
+fn node_transform(node: &Value) -> Result<Mat4, String> {
+    let transform = if let Some(matrix) = node.get("matrix") {
+        Mat4::from_cols_array(&json_finite_array::<16>(matrix, "node matrix")?)
+    } else {
+        let translation = node
+            .get("translation")
+            .map(|value| json_finite_array::<3>(value, "node translation"))
+            .transpose()?
+            .unwrap_or([0.0; 3]);
+        let rotation = node
+            .get("rotation")
+            .map(|value| json_finite_array::<4>(value, "node rotation"))
+            .transpose()?
+            .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        let scale = node
+            .get("scale")
+            .map(|value| json_finite_array::<3>(value, "node scale"))
+            .transpose()?
+            .unwrap_or([1.0; 3]);
+        Mat4::from_scale_rotation_translation(
+            Vec3::from_array(scale),
+            Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]),
+            Vec3::from_array(translation),
+        )
+    };
+    if !transform.is_finite() {
+        return Err("publication GLB node transform is invalid".to_owned());
+    }
+    Ok(transform)
+}
+
+fn glb_geometry_bounds_from_validated(
+    validated: &ValidatedGlb<'_>,
+) -> Result<Option<GlbGeometryBounds>, String> {
+    let views = validated
+        .root
+        .get("bufferViews")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB buffer views are missing".to_owned())?;
+    let accessors = validated
+        .root
+        .get("accessors")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB accessors are missing".to_owned())?;
+    let meshes = validated
+        .root
+        .get("meshes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB meshes are missing".to_owned())?;
+    let nodes = validated
+        .root
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB nodes are missing".to_owned())?;
+    let mut minimum = [f32::INFINITY; 3];
+    let mut maximum = [f32::NEG_INFINITY; 3];
+    let mut found = false;
+    for node in nodes {
+        let Some(mesh_index) = node.get("mesh") else {
+            continue;
+        };
+        let mesh_index = json_value_usize(mesh_index, "mesh")?;
+        let mesh = meshes
+            .get(mesh_index)
+            .ok_or_else(|| "publication GLB node mesh is invalid".to_owned())?;
+        let transform = node_transform(node)?;
+        for primitive in mesh
+            .get("primitives")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "publication GLB mesh primitives are missing".to_owned())?
+        {
+            let position_index = primitive
+                .get("attributes")
+                .and_then(|attributes| attributes.get("POSITION"))
+                .ok_or_else(|| "publication GLB POSITION is missing".to_owned())
+                .and_then(|value| json_value_usize(value, "POSITION"))?;
+            let accessor = accessors
+                .get(position_index)
+                .ok_or_else(|| "publication GLB POSITION accessor is invalid".to_owned())?;
+            let view_index = json_usize(accessor, "bufferView")?;
+            let view = views
+                .get(view_index)
+                .ok_or_else(|| "publication GLB POSITION bufferView is invalid".to_owned())?;
+            let view_offset = json_optional_usize(view, "byteOffset")?.unwrap_or(0);
+            let accessor_offset = json_optional_usize(accessor, "byteOffset")?.unwrap_or(0);
+            let offset = view_offset
+                .checked_add(accessor_offset)
+                .ok_or_else(|| "publication GLB POSITION offset overflows".to_owned())?;
+            let count = json_usize(accessor, "count")?;
+            if accessor.get("componentType").and_then(Value::as_u64) != Some(5126)
+                || accessor.get("type").and_then(Value::as_str) != Some("VEC3")
+            {
+                return Err("publication GLB POSITION accessor is invalid".to_owned());
+            }
+            for index in 0..count {
+                let local = [
+                    read_f32_component(validated.bin, offset, index, 12, 0, "POSITION")?,
+                    read_f32_component(validated.bin, offset, index, 12, 1, "POSITION")?,
+                    read_f32_component(validated.bin, offset, index, 12, 2, "POSITION")?,
+                ];
+                let world = transform.transform_point3(Vec3::from_array(local));
+                if !world.is_finite() {
+                    return Err("publication GLB transformed geometry is non-finite".to_owned());
+                }
+                let world = world.to_array();
+                for axis in 0..3 {
+                    minimum[axis] = minimum[axis].min(world[axis]);
+                    maximum[axis] = maximum[axis].max(world[axis]);
+                }
+                found = true;
+            }
+        }
+    }
+    Ok(found.then_some(GlbGeometryBounds {
+        min: minimum,
+        max: maximum,
+    }))
+}
+
+fn validate_field_scene_admission(snapshot: &PublicationFieldSceneSnapshot) -> IpcResult<()> {
+    let field_vertices =
+        snapshot
+            .field_primitives
+            .iter()
+            .try_fold(0usize, |total, primitive| {
+                validate_field_primitive(primitive)?;
+                total
+                    .checked_add(primitive.positions.len())
+                    .ok_or_else(|| IpcError::render("publication field vertex count overflow"))
+            })?;
+    let field_nodes = snapshot.field_primitives.len();
+    let total_nodes = snapshot
+        .structure
+        .glb_admission
+        .nodes
+        .checked_add(field_nodes)
+        .ok_or_else(|| IpcError::render("publication field node count overflow"))?;
+    let field_binary = field_vertices
+        .checked_mul(FIELD_VERTEX_GLB_BYTES)
+        .ok_or_else(|| IpcError::render("publication field binary byte count overflow"))?;
+    let field_json = field_nodes
+        .checked_mul(FIELD_JSON_BYTES_PER_PRIMITIVE)
+        .ok_or_else(|| IpcError::render("publication field JSON byte count overflow"))?;
+    let final_glb = snapshot
+        .structure
+        .glb_admission
+        .max_glb_bytes
+        .checked_add(field_binary)
+        .and_then(|value| value.checked_add(field_json))
+        .ok_or_else(|| IpcError::render("publication field GLB byte budget overflow"))?;
+    // The single-pass writer transiently owns its BIN, serialized JSON, final GLB,
+    // and the immutable field geometry. This conservative bound is admitted first.
+    let peak_cpu = final_glb
+        .checked_mul(4)
+        .and_then(|value| {
+            field_vertices
+                .checked_mul(40)
+                .and_then(|geometry| value.checked_add(geometry))
+        })
+        .ok_or_else(|| IpcError::render("publication field CPU budget overflow"))?;
+    let total_json = snapshot
+        .structure
+        .glb_admission
+        .max_glb_bytes
+        .checked_add(field_json)
+        .ok_or_else(|| IpcError::render("publication field JSON budget overflow"))?;
+    if total_nodes > MAX_PUBLICATION_GLB_NODES
+        || final_glb > MAX_PUBLICATION_GLB_BYTES
+        || total_json > MAX_PUBLICATION_GLB_JSON_BYTES
+        || peak_cpu > MAX_PUBLICATION_GLB_PEAK_CPU_BYTES
+    {
+        return Err(IpcError::render(
+            "publication field scene exceeds the admitted export budget",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_snapshot_admission(snapshot: &PublicationSceneSnapshot) -> IpcResult<()> {
@@ -219,6 +767,10 @@ fn validate_snapshot_admission(snapshot: &PublicationSceneSnapshot) -> IpcResult
         .checked_mul(GLB_JSON_BYTES_PER_NODE)
         .and_then(|bytes| bytes.checked_add(GLB_FIXED_BYTES))
         .ok_or_else(|| IpcError::render("publication GLB byte budget overflow"))?;
+    let minimum_json_bytes = nodes
+        .checked_mul(GLB_JSON_BYTES_PER_NODE)
+        .and_then(|bytes| bytes.checked_add(GLB_FIXED_BYTES))
+        .ok_or_else(|| IpcError::render("publication GLB JSON budget overflow"))?;
     let minimum_peak_bytes = minimum_glb_bytes
         .checked_mul(3)
         .and_then(|bytes| bytes.checked_add(GLB_FIXED_BYTES))
@@ -229,6 +781,7 @@ fn validate_snapshot_admission(snapshot: &PublicationSceneSnapshot) -> IpcResult
         || nodes > MAX_PUBLICATION_GLB_NODES
         || admission.max_glb_bytes < minimum_glb_bytes
         || admission.max_glb_bytes > MAX_PUBLICATION_GLB_BYTES
+        || minimum_json_bytes > MAX_PUBLICATION_GLB_JSON_BYTES
         || admission.max_peak_cpu_bytes < minimum_peak_bytes
         || admission.max_peak_cpu_bytes > MAX_PUBLICATION_GLB_PEAK_CPU_BYTES
     {
@@ -430,13 +983,13 @@ struct GlbWriter {
     bin: Vec<u8>,
     buffer_views: Vec<Value>,
     accessors: Vec<Value>,
-    admission: PublicationGlbAdmission,
+    max_glb_bytes: usize,
 }
 
 impl GlbWriter {
-    fn new(admission: PublicationGlbAdmission) -> IpcResult<Self> {
+    fn new(max_glb_bytes: usize, binary_capacity: usize) -> IpcResult<Self> {
         let mut bin = Vec::new();
-        bin.try_reserve_exact(64 * 1024)
+        bin.try_reserve_exact(binary_capacity)
             .map_err(|_| IpcError::render("unable to allocate GLB binary buffer"))?;
         let mut buffer_views = Vec::new();
         buffer_views
@@ -450,8 +1003,21 @@ impl GlbWriter {
             bin,
             buffer_views,
             accessors,
-            admission,
+            max_glb_bytes,
         })
+    }
+
+    fn reserve_field_arrays(&mut self, field_count: usize) -> IpcResult<()> {
+        let additional = field_count
+            .checked_mul(4)
+            .ok_or_else(|| IpcError::render("field GLB accessor capacity overflow"))?;
+        self.buffer_views
+            .try_reserve_exact(additional)
+            .map_err(|_| IpcError::render("unable to reserve field GLB buffer views"))?;
+        self.accessors
+            .try_reserve_exact(additional)
+            .map_err(|_| IpcError::render("unable to reserve field GLB accessors"))?;
+        Ok(())
     }
 
     fn align(&mut self) {
@@ -508,13 +1074,44 @@ impl GlbWriter {
         )
     }
 
+    fn push_f32x4(&mut self, values: &[[f32; 4]], target: u32) -> IpcResult<usize> {
+        let offset = self.bin.len();
+        let byte_len = values
+            .len()
+            .checked_mul(16)
+            .ok_or_else(|| IpcError::render("GLB geometry byte count overflow"))?;
+        self.ensure_bin_capacity(byte_len)?;
+        for value in values {
+            for component in value {
+                self.bin.extend_from_slice(&component.to_le_bytes());
+            }
+        }
+        self.push_view_accessor(offset, values.len(), 5126, "VEC4", target, None)
+    }
+
+    fn push_sequential_u32(&mut self, count: usize) -> IpcResult<usize> {
+        let offset = self.bin.len();
+        let byte_len = count
+            .checked_mul(4)
+            .ok_or_else(|| IpcError::render("field index byte count overflow"))?;
+        self.ensure_bin_capacity(byte_len)?;
+        for index in 0..count {
+            self.bin.extend_from_slice(
+                &u32::try_from(index)
+                    .map_err(|_| IpcError::render("field index exceeds u32"))?
+                    .to_le_bytes(),
+            );
+        }
+        self.push_view_accessor(offset, count, 5125, "SCALAR", ELEMENT_ARRAY_BUFFER, None)
+    }
+
     fn ensure_bin_capacity(&self, additional: usize) -> IpcResult<()> {
         let next_len = self
             .bin
             .len()
             .checked_add(additional)
             .ok_or_else(|| IpcError::render("GLB binary byte count overflow"))?;
-        if next_len > self.admission.max_glb_bytes {
+        if next_len > self.max_glb_bytes {
             return Err(IpcError::render("publication GLB binary exceeds admission"));
         }
         Ok(())
@@ -680,20 +1277,22 @@ impl GlbWriter {
     }
 
     fn finish(mut self, root: Value) -> IpcResult<Vec<u8>> {
-        let json_bytes = serde_json::to_vec(&root)
+        let mut json_padded = serde_json::to_vec(&root)
             .map_err(|error| IpcError::render(format!("unable to serialize GLB JSON: {error}")))?;
-        let mut json_padded = json_bytes;
         while json_padded.len() % 4 != 0 {
             json_padded.push(b' ');
         }
+        let json_length = json_padded.len();
+        drop(root);
         self.align();
+        let GlbWriter { bin, .. } = self;
         let total = 12usize
             .checked_add(8)
-            .and_then(|value| value.checked_add(json_padded.len()))
+            .and_then(|value| value.checked_add(json_length))
             .and_then(|value| value.checked_add(8))
-            .and_then(|value| value.checked_add(self.bin.len()))
+            .and_then(|value| value.checked_add(bin.len()))
             .ok_or_else(|| IpcError::render("GLB size overflow"))?;
-        if total > self.admission.max_glb_bytes {
+        if total > self.max_glb_bytes {
             return Err(IpcError::render(
                 "publication GLB exceeds the admitted byte budget",
             ));
@@ -707,19 +1306,19 @@ impl GlbWriter {
         bytes.extend_from_slice(&GLB_VERSION.to_le_bytes());
         bytes.extend_from_slice(&total_u32.to_le_bytes());
         bytes.extend_from_slice(
-            &(u32::try_from(json_padded.len())
-                .map_err(|_| IpcError::render("GLB JSON too large"))?)
-            .to_le_bytes(),
+            &(u32::try_from(json_length).map_err(|_| IpcError::render("GLB JSON too large"))?)
+                .to_le_bytes(),
         );
         bytes.extend_from_slice(&JSON_CHUNK.to_le_bytes());
         bytes.extend_from_slice(&json_padded);
+        drop(json_padded);
         bytes.extend_from_slice(
-            &(u32::try_from(self.bin.len())
-                .map_err(|_| IpcError::render("GLB binary too large"))?)
-            .to_le_bytes(),
+            &(u32::try_from(bin.len()).map_err(|_| IpcError::render("GLB binary too large"))?)
+                .to_le_bytes(),
         );
         bytes.extend_from_slice(&BIN_CHUNK.to_le_bytes());
-        bytes.extend_from_slice(&self.bin);
+        bytes.extend_from_slice(&bin);
+        drop(bin);
         Ok(bytes)
     }
 }
@@ -753,7 +1352,12 @@ struct GlbAccessorView {
     kind: &'static str,
 }
 
-pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
+struct ValidatedGlb<'a> {
+    root: Value,
+    bin: &'a [u8],
+}
+
+fn parse_validated_glb(glb: &[u8]) -> Result<ValidatedGlb<'_>, String> {
     if glb.len() < 20 || &glb[..4] != GLB_MAGIC {
         return Err("publication GLB bytes are invalid".to_owned());
     }
@@ -820,7 +1424,7 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
         .get("bufferViews")
         .and_then(Value::as_array)
         .ok_or_else(|| "publication GLB buffer views are missing".to_owned())?;
-    if buffer_views.len() != PUBLICATION_GLB_BUFFER_VIEW_COUNT {
+    if buffer_views.len() < PUBLICATION_GLB_BUFFER_VIEW_COUNT {
         return Err("publication GLB bufferView schema is invalid".to_owned());
     }
     let mut views = Vec::new();
@@ -830,6 +1434,9 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
     for view in buffer_views {
         if json_usize(view, "buffer")? != 0 {
             return Err("publication GLB bufferView buffer is invalid".to_owned());
+        }
+        if view.get("byteStride").is_some() {
+            return Err("publication GLB bufferView byteStride is unsupported".to_owned());
         }
         let offset = json_optional_usize(view, "byteOffset")?.unwrap_or(0);
         let length = json_usize(view, "byteLength")?;
@@ -848,7 +1455,7 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
         .get("accessors")
         .and_then(Value::as_array)
         .ok_or_else(|| "publication GLB accessors are missing".to_owned())?;
-    if accessors.len() != PUBLICATION_GLB_ACCESSOR_COUNT {
+    if accessors.len() < PUBLICATION_GLB_ACCESSOR_COUNT {
         return Err("publication GLB accessor schema is invalid".to_owned());
     }
     let mut parsed_accessors = Vec::new();
@@ -869,11 +1476,12 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
         let component_count = match kind {
             "SCALAR" => 1usize,
             "VEC3" => 3usize,
+            "VEC4" => 4usize,
             _ => return Err("publication GLB accessor type is unsupported".to_owned()),
         };
         let component_size = match component_type {
             5123 => 2usize,
-            5126 => 4usize,
+            5125 | 5126 => 4usize,
             _ => return Err("publication GLB accessor componentType is unsupported".to_owned()),
         };
         let count = json_usize(accessor, "count")?;
@@ -901,6 +1509,7 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
             kind: match kind {
                 "SCALAR" => "SCALAR",
                 "VEC3" => "VEC3",
+                "VEC4" => "VEC4",
                 _ => unreachable!(),
             },
         });
@@ -919,13 +1528,16 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
     if meshes.len() > MAX_PUBLICATION_MESHES {
         return Err("publication GLB mesh schema is invalid".to_owned());
     }
-    if root
+    let nodes = root
         .get("nodes")
         .and_then(Value::as_array)
-        .map_or(true, |nodes| nodes.len() > MAX_PUBLICATION_GLB_NODES)
-    {
+        .ok_or_else(|| "publication GLB nodes are missing".to_owned())?;
+    if nodes.len() > MAX_PUBLICATION_GLB_NODES {
         return Err("publication GLB node schema is invalid".to_owned());
     }
+    validate_flat_scene_graph(&root, nodes, meshes)?;
+    validate_node_transforms(nodes)?;
+    validate_material_values(materials)?;
     for mesh in meshes {
         for primitive in mesh
             .get("primitives")
@@ -940,15 +1552,28 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
                 .ok_or_else(|| "publication GLB primitive attributes are missing".to_owned())?;
             let position = accessor_at(&parsed_accessors, json_usize(attributes, "POSITION")?)?;
             let normal = accessor_at(&parsed_accessors, json_usize(attributes, "NORMAL")?)?;
+            let color = attributes
+                .get("COLOR_0")
+                .map(|_| {
+                    json_usize(attributes, "COLOR_0")
+                        .and_then(|index| accessor_at(&parsed_accessors, index).map(Some))
+                })
+                .transpose()?
+                .flatten();
             let indices = accessor_at(&parsed_accessors, json_usize(primitive, "indices")?)?;
             if position.component_type != 5126
                 || position.kind != "VEC3"
                 || normal.component_type != 5126
                 || normal.kind != "VEC3"
                 || normal.count != position.count
-                || indices.component_type != 5123
+                || (indices.component_type != 5123 && indices.component_type != 5125)
                 || indices.kind != "SCALAR"
                 || json_usize(primitive, "material")? >= materials.len()
+                || color.is_some_and(|color| {
+                    color.component_type != 5126
+                        || color.kind != "VEC4"
+                        || color.count != position.count
+                })
             {
                 return Err("publication GLB primitive accessor is invalid".to_owned());
             }
@@ -958,34 +1583,60 @@ pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
                 position,
                 bin,
             )?;
+            validate_f32x3_accessor(normal, bin, "NORMAL")?;
+            if let Some(color) = color {
+                validate_f32x4_accessor(color, bin, "COLOR_0")?;
+            }
             for index in 0..indices.count {
                 let offset = indices
                     .offset
                     .checked_add(
                         index
-                            .checked_mul(2)
+                            .checked_mul(if indices.component_type == 5123 { 2 } else { 4 })
                             .ok_or_else(|| "publication GLB index offset overflows".to_owned())?,
                     )
                     .ok_or_else(|| "publication GLB index offset overflows".to_owned())?;
-                let bytes: [u8; 2] = bin
-                    .get(offset..offset + 2)
-                    .ok_or_else(|| "publication GLB index is truncated".to_owned())?
-                    .try_into()
-                    .map_err(|_| "publication GLB index is truncated".to_owned())?;
-                if usize::from(u16::from_le_bytes(bytes)) >= position.count {
+                let value = if indices.component_type == 5123 {
+                    let bytes: [u8; 2] = bin
+                        .get(offset..offset + 2)
+                        .ok_or_else(|| "publication GLB index is truncated".to_owned())?
+                        .try_into()
+                        .map_err(|_| "publication GLB index is truncated".to_owned())?;
+                    usize::from(u16::from_le_bytes(bytes))
+                } else {
+                    let bytes: [u8; 4] = bin
+                        .get(offset..offset + 4)
+                        .ok_or_else(|| "publication GLB index is truncated".to_owned())?
+                        .try_into()
+                        .map_err(|_| "publication GLB index is truncated".to_owned())?;
+                    usize::try_from(u32::from_le_bytes(bytes)).map_err(|_| {
+                        "publication GLB index exceeds addressable memory".to_owned()
+                    })?
+                };
+                if value >= position.count {
                     return Err("publication GLB index exceeds POSITION count".to_owned());
                 }
             }
         }
     }
-    Ok(())
+    Ok(ValidatedGlb { root, bin })
+}
+
+pub fn validate_glb_bytes(glb: &[u8]) -> Result<(), String> {
+    parse_validated_glb(glb).map(|_| ())
 }
 
 fn json_usize(value: &Value, field: &str) -> Result<usize, String> {
+    let value = value
+        .get(field)
+        .ok_or_else(|| format!("publication GLB {field} is invalid"))?;
+    json_value_usize(value, field)
+}
+
+fn json_value_usize(value: &Value, field: &str) -> Result<usize, String> {
     usize::try_from(
         value
-            .get(field)
-            .and_then(Value::as_u64)
+            .as_u64()
             .ok_or_else(|| format!("publication GLB {field} is invalid"))?,
     )
     .map_err(|_| format!("publication GLB {field} exceeds addressable memory"))
@@ -1067,41 +1718,408 @@ fn validate_position_bounds(
 }
 
 fn json_finite_vec3(value: &Value, field: &str) -> Result<[f32; 3], String> {
-    let values = value
-        .get(field)
-        .and_then(Value::as_array)
-        .filter(|values| values.len() == 3)
-        .ok_or_else(|| format!("publication GLB POSITION {field} is invalid"))?;
-    let mut result = [0.0; 3];
-    for (index, value) in values.iter().enumerate() {
-        let component = value
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| format!("publication GLB POSITION {field} is invalid"))?
-            as f32;
-        if !component.is_finite() {
-            return Err(format!("publication GLB POSITION {field} is invalid"));
+    json_finite_array::<3>(
+        value
+            .get(field)
+            .ok_or_else(|| format!("publication GLB POSITION {field} is invalid"))?,
+        &format!("POSITION {field}"),
+    )
+}
+
+fn json_finite_number(value: &Value, field: &str) -> Result<f32, String> {
+    let number = value
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| format!("publication GLB {field} is invalid"))? as f32;
+    number
+        .is_finite()
+        .then_some(number)
+        .ok_or_else(|| format!("publication GLB {field} is invalid"))
+}
+
+fn structure_node_counts(nodes: &[Value]) -> Result<(usize, usize, usize, usize), String> {
+    let mut atom_instances = 0usize;
+    let mut bonds = 0usize;
+    let mut cell_edges = 0usize;
+    let mut field_nodes = 0usize;
+    for node in nodes {
+        if node.get("camera").is_some() {
+            continue;
         }
-        result[index] = component;
+        let extras = node.pointer("/extras/crystalcanvas");
+        if extras
+            .and_then(|value| value.get("representation"))
+            .is_some()
+        {
+            field_nodes = field_nodes
+                .checked_add(1)
+                .ok_or_else(|| "publication GLB field node count overflows".to_owned())?;
+            continue;
+        }
+        match extras
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+        {
+            Some("bond") => {
+                bonds = bonds
+                    .checked_add(1)
+                    .ok_or_else(|| "publication GLB bond count overflows".to_owned())?;
+            }
+            Some("unit_cell_edge") => {
+                cell_edges = cell_edges
+                    .checked_add(1)
+                    .ok_or_else(|| "publication GLB cell-edge count overflows".to_owned())?;
+            }
+            Some(other) => {
+                return Err(format!(
+                    "publication GLB contains an unsupported structure node kind `{other}`"
+                ));
+            }
+            None if extras
+                .and_then(|value| value.get("source_atom_index"))
+                .is_some() =>
+            {
+                atom_instances = atom_instances
+                    .checked_add(1)
+                    .ok_or_else(|| "publication GLB atom count overflows".to_owned())?;
+            }
+            None => {
+                return Err("publication GLB contains an unclassified structure node".to_owned());
+            }
+        }
     }
-    Ok(result)
+    Ok((atom_instances, bonds, cell_edges, field_nodes))
+}
+
+fn validate_recipe_camera(
+    root: &Value,
+    nodes: &[Value],
+    camera: &crate::export_recipe::RecipeCamera,
+) -> Result<(), String> {
+    let cameras = root
+        .get("cameras")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB cameras are missing".to_owned())?;
+    if cameras.len() != 1 {
+        return Err("publication GLB camera inventory is invalid".to_owned());
+    }
+    let mut camera_node = None;
+    for node in nodes {
+        if node.get("camera").is_some() {
+            if camera_node.replace(node).is_some() {
+                return Err("publication GLB camera node inventory is invalid".to_owned());
+            }
+        }
+    }
+    let camera_node =
+        camera_node.ok_or_else(|| "publication GLB camera node inventory is invalid".to_owned())?;
+    if json_usize(camera_node, "camera")? != 0
+        || !camera_node
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name == "CrystalCanvas Camera")
+    {
+        return Err("publication GLB camera node inventory is invalid".to_owned());
+    }
+    let expected_camera = crate::renderer::camera::Camera {
+        eye: Vec3::from_array(camera.eye),
+        target: Vec3::from_array(camera.target),
+        up: Vec3::from_array(camera.up),
+        fovy_deg: camera.fovy_deg,
+        aspect: crate::export_recipe::recipe_glb_camera_aspect(&camera.aspect_policy)?,
+        znear: camera.znear,
+        zfar: camera.zfar,
+        is_perspective: camera.projection == "perspective",
+        orthographic_scale: camera.orthographic_scale,
+    };
+    let (expected_json, expected_world) =
+        camera_json(&expected_camera).map_err(|error| error.message)?;
+    let actual = &cameras[0];
+    if actual.get("type") != expected_json.get("type") {
+        return Err("publication GLB camera projection differs from its recipe".to_owned());
+    }
+    let actual_projection = actual
+        .get(camera.projection.as_str())
+        .ok_or_else(|| "publication GLB camera projection is missing".to_owned())?;
+    let expected_projection = expected_json
+        .get(camera.projection.as_str())
+        .ok_or_else(|| "publication recipe camera projection is missing".to_owned())?;
+    for field in ["znear", "zfar"] {
+        let actual_value = json_finite_number(
+            actual_projection
+                .get(field)
+                .ok_or_else(|| format!("publication GLB camera {field} is missing"))?,
+            &format!("camera {field}"),
+        )?;
+        let expected_value = json_finite_number(
+            expected_projection
+                .get(field)
+                .ok_or_else(|| format!("publication recipe camera {field} is missing"))?,
+            &format!("recipe camera {field}"),
+        )?;
+        if (actual_value - expected_value).abs() > 1.0e-5 {
+            return Err("publication GLB camera clipping differs from its recipe".to_owned());
+        }
+    }
+    if camera.projection == "perspective" {
+        let actual_yfov = json_finite_number(
+            actual_projection
+                .get("yfov")
+                .ok_or_else(|| "publication GLB camera yfov is missing".to_owned())?,
+            "camera yfov",
+        )?;
+        if (actual_yfov - camera.fovy_deg.to_radians()).abs() > 1.0e-5 {
+            return Err("publication GLB camera field of view differs from its recipe".to_owned());
+        }
+        let aspect = json_finite_number(
+            actual_projection
+                .get("aspectRatio")
+                .ok_or_else(|| "publication GLB camera aspect ratio is missing".to_owned())?,
+            "camera aspect ratio",
+        )?;
+        let expected_aspect = json_finite_number(
+            expected_projection
+                .get("aspectRatio")
+                .ok_or_else(|| "publication recipe camera aspect ratio is missing".to_owned())?,
+            "recipe camera aspect ratio",
+        )?;
+        if (aspect - expected_aspect).abs() > 1.0e-5 {
+            return Err("publication GLB camera aspect ratio is invalid".to_owned());
+        }
+    } else {
+        let actual_ymag = json_finite_number(
+            actual_projection
+                .get("ymag")
+                .ok_or_else(|| "publication GLB camera ymag is missing".to_owned())?,
+            "camera ymag",
+        )?;
+        if (actual_ymag - camera.orthographic_scale * 0.5).abs() > 1.0e-5 {
+            return Err("publication GLB camera scale differs from its recipe".to_owned());
+        }
+        let xmag = json_finite_number(
+            actual_projection
+                .get("xmag")
+                .ok_or_else(|| "publication GLB camera xmag is missing".to_owned())?,
+            "camera xmag",
+        )?;
+        let expected_xmag = json_finite_number(
+            expected_projection
+                .get("xmag")
+                .ok_or_else(|| "publication recipe camera xmag is missing".to_owned())?,
+            "recipe camera xmag",
+        )?;
+        if (xmag - expected_xmag).abs() > 1.0e-5 {
+            return Err("publication GLB camera xmag is invalid".to_owned());
+        }
+    }
+    let actual_world = node_transform(camera_node)?;
+    if actual_world
+        .to_cols_array()
+        .iter()
+        .zip(expected_world.iter())
+        .any(|(actual, expected)| (actual - expected).abs() > 1.0e-5)
+    {
+        return Err("publication GLB camera transform differs from its recipe".to_owned());
+    }
+    Ok(())
 }
 
 pub fn validate_glb_export_identity(glb: &[u8], export_id: &str) -> Result<(), String> {
-    validate_glb_bytes(glb)?;
-    let json_length = u32::from_le_bytes(
-        glb[12..16]
-            .try_into()
-            .map_err(|_| "publication GLB JSON length is invalid".to_owned())?,
-    ) as usize;
-    let root: Value = serde_json::from_slice(&glb[20..20 + json_length])
-        .map_err(|_| "publication GLB JSON is invalid".to_owned())?;
-    let glb_export_id = root
+    let validated = parse_validated_glb(glb)?;
+    let glb_export_id = validated
+        .root
         .pointer("/asset/extras/crystalcanvas/export_id")
         .and_then(Value::as_str)
         .ok_or_else(|| "publication GLB export identity is missing".to_owned())?;
     if glb_export_id != export_id {
         return Err("publication GLB and recipe export identities differ".to_owned());
+    }
+    Ok(())
+}
+
+/// Verifies that a field-aware GLB and its sidecar describe the same realized scene.
+pub fn validate_glb_recipe_semantics(
+    glb: &[u8],
+    recipe: &crate::export_recipe::PublicationGlbRecipe,
+) -> Result<(), String> {
+    let validated = parse_validated_glb(glb)?;
+    let root = &validated.root;
+    let glb_export_id = root
+        .pointer("/asset/extras/crystalcanvas/export_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "publication GLB export identity is missing".to_owned())?;
+    if glb_export_id != recipe.export_id {
+        return Err("publication GLB and recipe export identities differ".to_owned());
+    }
+    let materials = root
+        .get("materials")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB materials are missing".to_owned())?;
+    let meshes = root
+        .get("meshes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB meshes are missing".to_owned())?;
+    if materials.len() != recipe.semantic_inventory.materials
+        || meshes.len() != recipe.semantic_inventory.meshes
+    {
+        return Err("publication GLB semantic inventory differs from its recipe".to_owned());
+    }
+    let accessors = root
+        .get("accessors")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB accessors are missing".to_owned())?;
+    let nodes = root
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "publication GLB nodes are missing".to_owned())?;
+    validate_recipe_camera(&root, nodes, &recipe.camera)?;
+    let (atom_instances, bonds, cell_edges, field_nodes) = structure_node_counts(nodes)?;
+    if recipe.semantic_inventory.intrinsic_atoms != recipe.source.intrinsic_atom_count
+        || atom_instances != recipe.semantic_inventory.atom_instances
+        || bonds != recipe.semantic_inventory.bonds
+        || cell_edges != recipe.semantic_inventory.cell_edges
+        || field_nodes != recipe.semantic_inventory.field_primitives
+    {
+        return Err(
+            "publication GLB structure semantic inventory differs from its recipe".to_owned(),
+        );
+    }
+    let actual_geometry_bounds = glb_geometry_bounds_from_validated(&validated)?;
+    if actual_geometry_bounds != recipe.semantic_inventory.geometry_bounds {
+        return Err("publication GLB geometry bounds differ from its recipe".to_owned());
+    }
+    let crate::export_recipe::ExportRecipeKind::BlenderFieldScene = recipe.kind else {
+        if recipe.field_scene.is_some()
+            || recipe.semantic_inventory.field_primitives != 0
+            || recipe.semantic_inventory.field_vertices != 0
+        {
+            return Err("publication Blender structure recipe contains field metadata".to_owned());
+        }
+        return Ok(());
+    };
+    let field_scene = recipe
+        .field_scene
+        .as_ref()
+        .ok_or_else(|| "publication Blender field recipe is missing its field scene".to_owned())?;
+    if root
+        .pointer("/asset/extras/crystalcanvas/field_scene_hash")
+        .and_then(Value::as_str)
+        != Some(field_scene.field_scene_hash.as_str())
+    {
+        return Err("publication GLB and recipe field-scene hashes differ".to_owned());
+    }
+    let mut expected_index = 0usize;
+    let mut field_vertices = 0usize;
+    for node in nodes {
+        let extras = node.pointer("/extras/crystalcanvas");
+        let Some(representation) = extras
+            .and_then(|value| value.get("representation"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let expected = field_scene
+            .primitives
+            .get(expected_index)
+            .ok_or_else(|| "publication GLB contains an unexpected field primitive".to_owned())?;
+        let expected_representation = expected.representation.as_str();
+        let expected_layer = field_scene
+            .layers
+            .iter()
+            .find(|layer| {
+                layer.layer_id == expected.layer_id
+                    && layer.source_layer_revision == expected.source_layer_revision
+            })
+            .ok_or_else(|| {
+                "publication recipe field primitive has no provenance layer".to_owned()
+            })?;
+        if representation != expected_representation
+            || extras
+                .and_then(|value| value.get("layer_id"))
+                .and_then(Value::as_u64)
+                != Some(expected.layer_id)
+            || extras
+                .and_then(|value| value.get("source_layer_revision"))
+                .and_then(Value::as_u64)
+                != Some(expected.source_layer_revision)
+            || extras
+                .and_then(|value| value.get("scalar_unit"))
+                .and_then(Value::as_str)
+                != Some(expected.scalar_unit.as_str())
+            || extras.and_then(|value| value.get("isovalue"))
+                != Some(
+                    &serde_json::to_value(expected.isovalue)
+                        .map_err(|_| "publication recipe isovalue is invalid".to_owned())?,
+                )
+            || extras.and_then(|value| value.get("contour_level"))
+                != Some(
+                    &serde_json::to_value(expected.contour_level)
+                        .map_err(|_| "publication recipe contour level is invalid".to_owned())?,
+                )
+            || extras.and_then(|value| value.get("slice_plane"))
+                != Some(
+                    &serde_json::to_value(&expected.slice_plane)
+                        .map_err(|_| "publication recipe slice plane is invalid".to_owned())?,
+                )
+            || extras.and_then(|value| value.get("clipping"))
+                != Some(
+                    &serde_json::to_value(&expected_layer.clip_planes)
+                        .map_err(|_| "publication recipe clipping is invalid".to_owned())?,
+                )
+            || extras
+                .and_then(|value| value.get("material_mapping"))
+                .and_then(Value::as_str)
+                != Some(
+                    expected_layer
+                        .presentation
+                        .portable_material_mapping
+                        .as_str(),
+                )
+        {
+            return Err("publication GLB field primitive differs from its recipe".to_owned());
+        }
+        let mesh_index = json_usize(node, "mesh")?;
+        let mesh = meshes
+            .get(mesh_index)
+            .ok_or_else(|| "publication GLB field mesh is invalid".to_owned())?;
+        let primitives = mesh
+            .get("primitives")
+            .and_then(Value::as_array)
+            .filter(|items| items.len() == 1)
+            .ok_or_else(|| "publication GLB field mesh primitive is invalid".to_owned())?;
+        let glb_primitive = &primitives[0];
+        let position_index = glb_primitive
+            .get("attributes")
+            .and_then(|value| value.get("POSITION"))
+            .ok_or_else(|| "publication GLB field POSITION is missing".to_owned())
+            .and_then(|value| json_value_usize(value, "POSITION"))?;
+        let position = accessors
+            .get(position_index)
+            .ok_or_else(|| "publication GLB field POSITION accessor is invalid".to_owned())?;
+        field_vertices = field_vertices
+            .checked_add(json_usize(position, "count")?)
+            .ok_or_else(|| "publication GLB field vertex count overflows".to_owned())?;
+        let material_index = json_usize(glb_primitive, "material")?;
+        if materials
+            .get(material_index)
+            .and_then(|value| value.pointer("/extras/crystalcanvas/material_mapping"))
+            .and_then(Value::as_str)
+            != Some(
+                expected_layer
+                    .presentation
+                    .portable_material_mapping
+                    .as_str(),
+            )
+        {
+            return Err("publication GLB field material differs from its recipe".to_owned());
+        }
+        expected_index += 1;
+    }
+    if expected_index != field_scene.primitives.len()
+        || expected_index != recipe.semantic_inventory.field_primitives
+        || field_vertices != recipe.semantic_inventory.field_vertices
+    {
+        return Err("publication GLB field semantic inventory differs from its recipe".to_owned());
     }
     Ok(())
 }

@@ -49,25 +49,36 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
     let _ = read_line(&mut lines)?;
 
     let (ln, s) = read_line(&mut lines)?;
-    let num_wann: usize = s.trim().parse()
+    let num_wann: usize = s
+        .trim()
+        .parse()
         .map_err(|_| format!("Line {}: invalid num_wann '{}'", ln, s.trim()))?;
 
     if num_wann == 0 || num_wann > MAX_NUM_WANN {
-        return Err(format!("Line {}: num_wann={} out of range [1, {}]", ln, num_wann, MAX_NUM_WANN));
+        return Err(format!(
+            "Line {}: num_wann={} out of range [1, {}]",
+            ln, num_wann, MAX_NUM_WANN
+        ));
     }
 
     let (ln, s) = read_line(&mut lines)?;
-    let num_rpts: usize = s.trim().parse()
+    let num_rpts: usize = s
+        .trim()
+        .parse()
         .map_err(|_| format!("Line {}: invalid num_rpts '{}'", ln, s.trim()))?;
     if num_rpts == 0 || num_rpts > MAX_NUM_RPTS {
-        return Err(format!("Line {}: num_rpts={} out of range [1, {}]", ln, num_rpts, MAX_NUM_RPTS));
+        return Err(format!(
+            "Line {}: num_rpts={} out of range [1, {}]",
+            ln, num_rpts, MAX_NUM_RPTS
+        ));
     }
 
     let mut degeneracies = Vec::with_capacity(num_rpts);
     while degeneracies.len() < num_rpts {
         let (ln, line) = read_line(&mut lines)?;
         for token in line.split_whitespace() {
-            let d: u32 = token.parse()
+            let d: u32 = token
+                .parse()
                 .map_err(|_| format!("Line {}: invalid degeneracy '{}'", ln, token))?;
             degeneracies.push(d);
             if degeneracies.len() == num_rpts {
@@ -76,7 +87,8 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
         }
     }
 
-    let expected = num_rpts.checked_mul(num_wann)
+    let expected = num_rpts
+        .checked_mul(num_wann)
         .and_then(|v| v.checked_mul(num_wann))
         .ok_or_else(|| format!("Overflow: {} × {}² exceeds usize", num_rpts, num_wann))?;
 
@@ -92,16 +104,29 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
 
         let tokens: Vec<&str> = line.split_whitespace().collect();
         if tokens.len() < 7 {
-            return Err(format!("Line {}: expected 7 columns, got {}", ln, tokens.len()));
+            return Err(format!(
+                "Line {}: expected 7 columns, got {}",
+                ln,
+                tokens.len()
+            ));
         }
 
-        let rx: i32 = tokens[0].parse().map_err(|_| format!("Line {}: invalid Rx", ln))?;
-        let ry: i32 = tokens[1].parse().map_err(|_| format!("Line {}: invalid Ry", ln))?;
-        let rz: i32 = tokens[2].parse().map_err(|_| format!("Line {}: invalid Rz", ln))?;
+        let rx: i32 = tokens[0]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid Rx", ln))?;
+        let ry: i32 = tokens[1]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid Ry", ln))?;
+        let rz: i32 = tokens[2]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid Rz", ln))?;
 
-        let m1: usize = tokens[3].parse().map_err(|_| format!("Line {}: invalid m", ln))?;
-        let n1: usize = tokens[4].parse().map_err(|_| format!("Line {}: invalid n", ln))?;
-
+        let m1: usize = tokens[3]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid m", ln))?;
+        let n1: usize = tokens[4]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid n", ln))?;
 
         if m1 < 1 || m1 > num_wann {
             return Err(format!("Line {}: m={} out of [1, {}]", ln, m1, num_wann));
@@ -110,8 +135,12 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
             return Err(format!("Line {}: n={} out of [1, {}]", ln, n1, num_wann));
         }
 
-        let re: f64 = tokens[5].parse().map_err(|_| format!("Line {}: invalid Re(t)", ln))?;
-        let im: f64 = tokens[6].parse().map_err(|_| format!("Line {}: invalid Im(t)", ln))?;
+        let re: f64 = tokens[5]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid Re(t)", ln))?;
+        let im: f64 = tokens[6]
+            .parse()
+            .map_err(|_| format!("Line {}: invalid Im(t)", ln))?;
         if !re.is_finite() || !im.is_finite() {
             return Err(format!("Line {}: hopping components must be finite", ln));
         }
@@ -119,7 +148,12 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
         let rpt_idx = hoppings.len() / (num_wann * num_wann);
 
         if rpt_idx >= degeneracies.len() {
-            return Err(format!("Line {}: R-point index {} exceeds degeneracy table size {}", ln, rpt_idx, degeneracies.len()));
+            return Err(format!(
+                "Line {}: R-point index {} exceeds degeneracy table size {}",
+                ln,
+                rpt_idx,
+                degeneracies.len()
+            ));
         }
 
         let t_mag = (re * re + im * im).sqrt();
@@ -142,9 +176,14 @@ pub fn parse_wannier_hr(path: &str) -> Result<WannierHrData, String> {
     }
 
     if hoppings.len() != expected {
-        return Err(format!("Expected {} hoppings ({}×{}²), found {}", expected, num_rpts, num_wann, hoppings.len()));
+        return Err(format!(
+            "Expected {} hoppings ({}×{}²), found {}",
+            expected,
+            num_rpts,
+            num_wann,
+            hoppings.len()
+        ));
     }
-
 
     let mut seen = std::collections::HashSet::with_capacity(num_rpts);
     let mut r_shells = Vec::with_capacity(num_rpts);
@@ -180,9 +219,9 @@ mod tests {
 
     #[test]
     fn test_wannier_hr_parse_graphene() {
-
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
+            .parent()
+            .unwrap()
             .join("tests/fixtures/graphene_hr.dat");
 
         let data = parse_wannier_hr(path.to_str().unwrap()).unwrap();

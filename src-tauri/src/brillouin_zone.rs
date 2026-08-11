@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Xiao Jiang and CrystalCanvas Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BravaisType {
@@ -49,7 +49,7 @@ impl BrillouinZone {
         let recip = Self::compute_reciprocal_lattice(real_lattice);
         let planes = Self::generate_bisecting_planes(&recip);
         let (vertices, edges, faces) = Self::wigner_seitz_cut(&planes, &recip);
-        
+
         Self {
             recip_lattice: recip,
             vertices,
@@ -76,9 +76,7 @@ impl BrillouinZone {
                 a[0] * b[1] - a[1] * b[0],
             ]
         };
-        let dot = |a: &[f64; 3], b: &[f64; 3]| {
-            a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-        };
+        let dot = |a: &[f64; 3], b: &[f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         let normal = cross(&a1, &a2);
         let area_sq = dot(&normal, &normal);
         if !area_sq.is_finite() || area_sq < 1e-24 {
@@ -121,13 +119,19 @@ impl BrillouinZone {
         let n = vertices.len();
         let edges: Vec<[usize; 2]> = (0..n).map(|i| [i, (i + 1) % n]).collect();
         let face_indices: Vec<usize> = (0..n).collect();
-        let faces = if n >= 3 { vec![face_indices] } else { Vec::new() };
+        let faces = if n >= 3 {
+            vec![face_indices]
+        } else {
+            Vec::new()
+        };
 
         let recip_lattice = [b1, b2, normal_unit];
 
         log::info!(
             "[new_2d] BZ constructed: {} vertices, {} edges, vacuum_axis={}",
-            n, edges.len(), vacuum_axis
+            n,
+            edges.len(),
+            vacuum_axis
         );
 
         Self {
@@ -146,7 +150,8 @@ impl BrillouinZone {
     /// for $(n_1, n_2) \in [-2, 2]^2 \setminus \{(0,0)\}$ and clips a large initial polygon
     /// by the perpendicular bisector half-plane $\mathbf{r} \cdot \hat{G} \le |\mathbf{G}|/2$.
     fn wigner_seitz_2d(b1: &[f64; 2], b2: &[f64; 2]) -> Vec<[f64; 2]> {
-        let b_max = (b1[0] * b1[0] + b1[1] * b1[1]).sqrt()
+        let b_max = (b1[0] * b1[0] + b1[1] * b1[1])
+            .sqrt()
             .max((b2[0] * b2[0] + b2[1] * b2[1]).sqrt());
         let s = b_max * 3.0;
         let mut poly: Vec<[f64; 2]> = vec![[-s, -s], [s, -s], [s, s], [-s, s]];
@@ -239,9 +244,7 @@ impl BrillouinZone {
                 u[0] * v[1] - u[1] * v[0],
             ]
         };
-        let dot = |u: [f64; 3], v: [f64; 3]| -> f64 {
-            u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
-        };
+        let dot = |u: [f64; 3], v: [f64; 3]| -> f64 { u[0] * v[0] + u[1] * v[1] + u[2] * v[2] };
 
         let b1 = cross(a[1], a[2]);
         let b2 = cross(a[2], a[0]);
@@ -287,20 +290,67 @@ impl BrillouinZone {
         planes
     }
 
-    fn wigner_seitz_cut(planes: &[Plane], recip: &[[f64; 3]; 3]) -> (Vec<[f64; 3]>, Vec<[usize; 2]>, Vec<Vec<usize>>) {
+    fn wigner_seitz_cut(
+        planes: &[Plane],
+        recip: &[[f64; 3]; 3],
+    ) -> (Vec<[f64; 3]>, Vec<[usize; 2]>, Vec<Vec<usize>>) {
         let mut max_b = 0.0_f64;
         for r in recip {
-            let m = (r[0]*r[0] + r[1]*r[1] + r[2]*r[2]).sqrt();
-            if m > max_b { max_b = m; }
+            let m = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
+            if m > max_b {
+                max_b = m;
+            }
         }
         let size = (max_b * 10.0).max(10.0);
         let mut faces_poly = vec![
-            Polygon { vertices: vec![[-size, -size, size], [size, -size, size], [size, size, size], [-size, size, size]] }, // +z
-            Polygon { vertices: vec![[-size, size, -size], [size, size, -size], [size, -size, -size], [-size, -size, -size]] }, // -z
-            Polygon { vertices: vec![[size, -size, -size], [size, size, -size], [size, size, size], [size, -size, size]] }, // +x
-            Polygon { vertices: vec![[-size, -size, size], [-size, size, size], [-size, size, -size], [-size, -size, -size]] }, // -x
-            Polygon { vertices: vec![[-size, size, size], [size, size, size], [size, size, -size], [-size, size, -size]] }, // +y
-            Polygon { vertices: vec![[-size, -size, -size], [size, -size, -size], [size, -size, size], [-size, -size, size]] }, // -y
+            Polygon {
+                vertices: vec![
+                    [-size, -size, size],
+                    [size, -size, size],
+                    [size, size, size],
+                    [-size, size, size],
+                ],
+            }, // +z
+            Polygon {
+                vertices: vec![
+                    [-size, size, -size],
+                    [size, size, -size],
+                    [size, -size, -size],
+                    [-size, -size, -size],
+                ],
+            }, // -z
+            Polygon {
+                vertices: vec![
+                    [size, -size, -size],
+                    [size, size, -size],
+                    [size, size, size],
+                    [size, -size, size],
+                ],
+            }, // +x
+            Polygon {
+                vertices: vec![
+                    [-size, -size, size],
+                    [-size, size, size],
+                    [-size, size, -size],
+                    [-size, -size, -size],
+                ],
+            }, // -x
+            Polygon {
+                vertices: vec![
+                    [-size, size, size],
+                    [size, size, size],
+                    [size, size, -size],
+                    [-size, size, -size],
+                ],
+            }, // +y
+            Polygon {
+                vertices: vec![
+                    [-size, -size, -size],
+                    [size, -size, -size],
+                    [size, -size, size],
+                    [-size, -size, size],
+                ],
+            }, // -y
         ];
 
         let dot = |u: &[f64; 3], v: &[f64; 3]| u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
@@ -313,7 +363,9 @@ impl BrillouinZone {
                 let mut clipped_vertices = Vec::new();
                 let v = &poly.vertices;
                 let n = v.len();
-                if n == 0 { continue; }
+                if n == 0 {
+                    continue;
+                }
 
                 let mut dists = Vec::with_capacity(n);
                 for pt in v {
@@ -323,7 +375,7 @@ impl BrillouinZone {
                 for i in 0..n {
                     let curr = i;
                     let next = (i + 1) % n;
-                    
+
                     let d_curr = dists[curr];
                     let d_next = dists[next];
 
@@ -333,7 +385,7 @@ impl BrillouinZone {
                     if curr_in {
                         clipped_vertices.push(v[curr]);
                     }
-                    
+
                     if curr_in != next_in {
                         let t = d_curr / (d_curr - d_next);
                         let pt = [
@@ -345,9 +397,11 @@ impl BrillouinZone {
                         new_face_vertices.push(pt);
                     }
                 }
-                
+
                 if clipped_vertices.len() >= 3 {
-                    next_faces.push(Polygon { vertices: clipped_vertices });
+                    next_faces.push(Polygon {
+                        vertices: clipped_vertices,
+                    });
                 }
             }
 
@@ -359,7 +413,7 @@ impl BrillouinZone {
                         let dx = pt[0] - valid_pt[0];
                         let dy = pt[1] - valid_pt[1];
                         let dz = pt[2] - valid_pt[2];
-                        if dx*dx + dy*dy + dz*dz < 1e-12 {
+                        if dx * dx + dy * dy + dz * dz < 1e-12 {
                             is_dup = true;
                             break;
                         }
@@ -368,7 +422,7 @@ impl BrillouinZone {
                         valid_new_face.push(*pt);
                     }
                 }
-                
+
                 if valid_new_face.len() >= 3 {
                     let mut centroid = [0.0, 0.0, 0.0];
                     for pt in &valid_new_face {
@@ -387,19 +441,23 @@ impl BrillouinZone {
                         valid_new_face[0][2] - centroid[2],
                     ];
                     let mut t1 = v0;
-                    let t1_mag = (t1[0]*t1[0] + t1[1]*t1[1] + t1[2]*t1[2]).sqrt();
+                    let t1_mag = (t1[0] * t1[0] + t1[1] * t1[1] + t1[2] * t1[2]).sqrt();
                     if t1_mag > 1e-8 {
-                        t1[0] /= t1_mag; t1[1] /= t1_mag; t1[2] /= t1_mag;
+                        t1[0] /= t1_mag;
+                        t1[1] /= t1_mag;
+                        t1[2] /= t1_mag;
                     }
-                    
+
                     let mut t2 = [
-                        plane.normal[1]*t1[2] - plane.normal[2]*t1[1],
-                        plane.normal[2]*t1[0] - plane.normal[0]*t1[2],
-                        plane.normal[0]*t1[1] - plane.normal[1]*t1[0],
+                        plane.normal[1] * t1[2] - plane.normal[2] * t1[1],
+                        plane.normal[2] * t1[0] - plane.normal[0] * t1[2],
+                        plane.normal[0] * t1[1] - plane.normal[1] * t1[0],
                     ];
-                    let t2_mag = (t2[0]*t2[0] + t2[1]*t2[1] + t2[2]*t2[2]).sqrt();
+                    let t2_mag = (t2[0] * t2[0] + t2[1] * t2[1] + t2[2] * t2[2]).sqrt();
                     if t2_mag > 1e-8 {
-                        t2[0] /= t2_mag; t2[1] /= t2_mag; t2[2] /= t2_mag;
+                        t2[0] /= t2_mag;
+                        t2[1] /= t2_mag;
+                        t2[2] /= t2_mag;
                     }
 
                     valid_new_face.sort_by(|a, b| {
@@ -407,7 +465,9 @@ impl BrillouinZone {
                         let vb = [b[0] - centroid[0], b[1] - centroid[1], b[2] - centroid[2]];
                         let angle_a = f64::atan2(dot(&va, &t2), dot(&va, &t1));
                         let angle_b = f64::atan2(dot(&vb, &t2), dot(&vb, &t1));
-                        angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+                        angle_a
+                            .partial_cmp(&angle_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     });
 
                     let e1 = [
@@ -421,15 +481,17 @@ impl BrillouinZone {
                         valid_new_face[2][2] - valid_new_face[1][2],
                     ];
                     let n_cross = [
-                        e1[1]*e2[2] - e1[2]*e2[1],
-                        e1[2]*e2[0] - e1[0]*e2[2],
-                        e1[0]*e2[1] - e1[1]*e2[0],
+                        e1[1] * e2[2] - e1[2] * e2[1],
+                        e1[2] * e2[0] - e1[0] * e2[2],
+                        e1[0] * e2[1] - e1[1] * e2[0],
                     ];
                     if dot(&n_cross, &plane.normal) < 0.0 {
-                         valid_new_face.reverse();
+                        valid_new_face.reverse();
                     }
 
-                    next_faces.push(Polygon { vertices: valid_new_face });
+                    next_faces.push(Polygon {
+                        vertices: valid_new_face,
+                    });
                 }
             }
             faces_poly = next_faces;
@@ -444,7 +506,7 @@ impl BrillouinZone {
                 let dx = v_query[0] - v[0];
                 let dy = v_query[1] - v[1];
                 let dz = v_query[2] - v[2];
-                if dx*dx + dy*dy + dz*dz < 1e-10 {
+                if dx * dx + dy * dy + dz * dz < 1e-10 {
                     return i;
                 }
             }
@@ -457,7 +519,7 @@ impl BrillouinZone {
             for v in &poly.vertices {
                 face_idxs.push(get_or_add_vertex(*v, &mut final_vertices));
             }
-            
+
             if face_idxs.len() >= 3 {
                 for i in 0..face_idxs.len() {
                     let v1 = face_idxs[i];

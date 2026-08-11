@@ -165,7 +165,7 @@ fn recipe_validation_rejects_malformed_render_2_sampling_and_tile_metadata() {
         );
     }
     assert!(
-        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9"),
+        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 10"),
         "RELEASE-2 extends the combined rendering recipe with framing and cell-line contrast, so the baseline is schema v9"
     );
 }
@@ -189,13 +189,22 @@ fn publication_pipelines_are_created_once_before_tiling() {
         .find("for tile_row in")
         .expect("publication export must iterate tiles");
     assert!(
-        pipeline_creations.len() == 1,
-        "publication export must create exactly one pipeline set, found {}",
+        (1..=2).contains(&pipeline_creations.len()),
+        "publication export must create one primary pipeline set and at most one MSAA depth-replay set, found {}",
         pipeline_creations.len()
     );
     assert!(
         pipeline_creations[0].0 < tile_loop,
         "publication pipelines must be created before the tile loop"
+    );
+    assert!(
+        pipeline_creations
+            .iter()
+            .all(|creation| creation.0 < tile_loop)
+            && (!export.contains("publication_volume_replay_pipelines")
+                || export.contains("config.selected_samples > 1")
+                    && export.contains("config.admission.request.has_volume")),
+        "the optional replay pipeline must be pre-tile and restricted to MSAA volume export"
     );
     assert!(
         tile.contains("publication_pipelines: &PublicationPipelines"),

@@ -25,7 +25,9 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
     // Lines 3-5: Lattice vectors
     let mut lattice = [[0.0; 3]; 3];
     for i in 0..3 {
-        let line = lines.next().ok_or(format!("Missing lattice vector {}", i + 1))?;
+        let line = lines
+            .next()
+            .ok_or(format!("Missing lattice vector {}", i + 1))?;
         let parts: Vec<f64> = line
             .split_whitespace()
             .filter_map(|s| s.parse().ok())
@@ -42,8 +44,14 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
     let line6 = lines.next().ok_or("Missing species/counts line")?;
 
     let mut elements = Vec::new();
-    let counts = if line6.split_whitespace().any(|s| s.chars().any(|c| c.is_alphabetic())) {
-        let elements_found = line6.split_whitespace().map(|s| s.to_string()).collect::<Vec<_>>();
+    let counts = if line6
+        .split_whitespace()
+        .any(|s| s.chars().any(|c| c.is_alphabetic()))
+    {
+        let elements_found = line6
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         let count_line = lines.next().ok_or("Missing counts line")?;
         elements = elements_found;
         count_line
@@ -51,7 +59,10 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
             .filter_map(|s| s.parse::<usize>().ok())
             .collect::<Vec<_>>()
     } else {
-        let counts_found = line6.split_whitespace().filter_map(|s| s.parse::<usize>().ok()).collect::<Vec<_>>();
+        let counts_found = line6
+            .split_whitespace()
+            .filter_map(|s| s.parse::<usize>().ok())
+            .collect::<Vec<_>>();
         for i in 0..counts_found.len() {
             elements.push(format!("X{}", i + 1));
         }
@@ -63,10 +74,16 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
     }
 
     // Next line: Selective dynamics (optional) or Coordinate mode
-    let mut mode_line = lines.next().ok_or("Missing coordinate mode line")?.to_lowercase();
+    let mut mode_line = lines
+        .next()
+        .ok_or("Missing coordinate mode line")?
+        .to_lowercase();
     if mode_line.starts_with('s') {
         // Skip selective dynamics line if present
-        mode_line = lines.next().ok_or("Missing coordinate mode line")?.to_lowercase();
+        mode_line = lines
+            .next()
+            .ok_or("Missing coordinate mode line")?
+            .to_lowercase();
     }
 
     let is_cartesian = mode_line.starts_with('c') || mode_line.starts_with('k');
@@ -90,9 +107,15 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
     state.cell_b = norm(&v2);
     state.cell_c = norm(&v3);
 
-    state.cell_alpha = (dot(&v2, &v3) / (state.cell_b * state.cell_c)).acos().to_degrees();
-    state.cell_beta = (dot(&v1, &v3) / (state.cell_a * state.cell_c)).acos().to_degrees();
-    state.cell_gamma = (dot(&v1, &v2) / (state.cell_a * state.cell_b)).acos().to_degrees();
+    state.cell_alpha = (dot(&v2, &v3) / (state.cell_b * state.cell_c))
+        .acos()
+        .to_degrees();
+    state.cell_beta = (dot(&v1, &v3) / (state.cell_a * state.cell_c))
+        .acos()
+        .to_degrees();
+    state.cell_gamma = (dot(&v1, &v2) / (state.cell_a * state.cell_b))
+        .acos()
+        .to_degrees();
 
     // Parse coordinates
     let mut atom_index = 0;
@@ -101,7 +124,10 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
         let at_num = crate::io::import::get_atomic_number(elem);
 
         for _ in 0..count {
-            let line = lines.next().ok_or(format!("Missing atom coordinate line for atom {}", atom_index + 1))?;
+            let line = lines.next().ok_or(format!(
+                "Missing atom coordinate line for atom {}",
+                atom_index + 1
+            ))?;
             let parts: Vec<f64> = line
                 .split_whitespace()
                 .filter_map(|s| s.parse().ok())
@@ -111,10 +137,14 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
             }
 
             let pos = [parts[0], parts[1], parts[2]];
-            
+
             if is_cartesian {
                 // We'll convert cartesian to fractional later
-                state.cart_positions.push([(pos[0] * scale) as f32, (pos[1] * scale) as f32, (pos[2] * scale) as f32]);
+                state.cart_positions.push([
+                    (pos[0] * scale) as f32,
+                    (pos[1] * scale) as f32,
+                    (pos[2] * scale) as f32,
+                ]);
                 state.fract_x.push(0.0); // Placeholder
                 state.fract_y.push(0.0);
                 state.fract_z.push(0.0);
@@ -136,9 +166,9 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
         // Convert cartesian to fractional
         // (Wait, CrystalState::fractional_to_cartesian is already implemented,
         // but we need cartesian_to_fractional here if input is cartesian)
-        // For simplicity, let's just implement the inverse matrix logic here or 
+        // For simplicity, let's just implement the inverse matrix logic here or
         // rely on a future utility.
-        
+
         let mut cart_state = state.clone();
         cart_state.cartesian_to_fractional();
         state = cart_state;
@@ -153,8 +183,10 @@ pub fn parse_poscar_str(content: &str) -> Result<CrystalState, String> {
 impl CrystalState {
     /// Inverts the orthogonalization matrix to convert cartesian to fractional
     pub fn cartesian_to_fractional(&mut self) {
-        if self.cart_positions.is_empty() { return; }
-        
+        if self.cart_positions.is_empty() {
+            return;
+        }
+
         let a = self.cell_a;
         let b = self.cell_b;
         let c = self.cell_c;
@@ -172,7 +204,12 @@ impl CrystalState {
         let m02 = c * cos_beta;
         let m11 = b * sin_gamma;
         let m12 = c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
-        let m22 = c * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma + 2.0 * cos_alpha * cos_beta * cos_gamma).max(0.0).sqrt()) / sin_gamma;
+        let m22 = c
+            * ((1.0 - cos_alpha * cos_alpha - cos_beta * cos_beta - cos_gamma * cos_gamma
+                + 2.0 * cos_alpha * cos_beta * cos_gamma)
+                .max(0.0)
+                .sqrt())
+            / sin_gamma;
 
         // Invert the 3x3 upper triangular matrix
         let inv_m00 = 1.0 / m00;

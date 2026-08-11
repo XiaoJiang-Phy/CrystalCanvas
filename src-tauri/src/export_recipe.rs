@@ -3,8 +3,9 @@
 use crate::crystal_state::CrystalState;
 use crate::renderer::publication_look::{PublicationLookProfile, PublicationLookProfileId};
 use crate::renderer::renderer::{
-    MAX_PUBLICATION_RECIPE_BYTES, PublicationBackground, PublicationExportAdmissionReceipt,
-    PublicationExportSourceState, Renderer, cell_line_style_for_background,
+    FieldPublicationSnapshot, MAX_PUBLICATION_RECIPE_BYTES, PublicationBackground,
+    PublicationExportAdmissionReceipt, PublicationExportSourceState, Renderer,
+    cell_line_style_for_background, evaluate_field_publication_export_admission,
     evaluate_publication_export_admission, validate_publication_export_receipt_fields,
 };
 use crate::settings::AppSettings;
@@ -21,7 +22,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const EXPORT_RECIPE_SCHEMA: &str = "crystalcanvas.export-recipe";
-pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9;
+pub const EXPORT_RECIPE_SCHEMA_VERSION: u32 = 10;
 
 const MAX_RECIPE_STRUCTURE_NAME_BYTES: usize = 4 * 1024;
 const MAX_RECIPE_CUSTOM_ATOM_COLORS: usize = 118;
@@ -35,15 +36,39 @@ const JPEG_QUALITY: u8 = 95;
 const JPEG_CHROMA_SUBSAMPLING: &str = "4:4:4";
 const PNG_COMPRESSION: &str = "balanced";
 const PNG_FILTER: &str = "adaptive";
+const GLB_CAMERA_ASPECT_POLICY_PREFIX: &str = "current_renderer_camera_aspect_v1:";
+const PUBLICATION_PAIR_COMMIT_SCHEMA: &str = "crystalcanvas.publication-pair-commit";
+const PUBLICATION_PAIR_COMMIT_VERSION: u32 = 1;
+const MAX_PUBLICATION_PAIR_COMMIT_BYTES: usize = 8 * 1024;
 
 static TEMP_FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 static SRGB_ICC_PROFILE: OnceLock<Vec<u8>> = OnceLock::new();
+
+fn glb_camera_aspect_policy(aspect: f32) -> Result<String, String> {
+    if !aspect.is_finite() || aspect <= 0.0 {
+        return Err("GLB camera aspect ratio is invalid".to_owned());
+    }
+    Ok(format!("{GLB_CAMERA_ASPECT_POLICY_PREFIX}{aspect:.9}"))
+}
+
+pub(crate) fn recipe_glb_camera_aspect(policy: &str) -> Result<f32, String> {
+    let aspect = policy
+        .strip_prefix(GLB_CAMERA_ASPECT_POLICY_PREFIX)
+        .ok_or_else(|| "GLB camera aspect policy is unsupported".to_owned())?
+        .parse::<f32>()
+        .map_err(|_| "GLB camera aspect policy is invalid".to_owned())?;
+    if !aspect.is_finite() || aspect <= 0.0 {
+        return Err("GLB camera aspect policy is invalid".to_owned());
+    }
+    Ok(aspect)
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportRecipeKind {
     PublicationRaster,
     BlenderStructureScene,
+    BlenderFieldScene,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -81,7 +106,82 @@ pub struct PublicationGlbRecipe {
     pub scale_policy: String,
     pub material_mapping: String,
     pub semantic_inventory: crate::blender_export::GlbSemanticInventory,
+    pub field_scene: Option<RecipeBlenderFieldScene>,
     pub artifact: Option<RecipeArtifact>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct PublicationPairCommit {
+    schema: String,
+    schema_version: u32,
+    primary_file_name: String,
+    primary_sha256: String,
+    sidecar_file_name: String,
+    sidecar_sha256: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeBlenderFieldScene {
+    pub blender_scale: f64,
+    pub source_coordinate_unit: String,
+    pub coordinate_space: String,
+    pub matrix_layout: String,
+    pub field_scene_hash: String,
+    pub layers: Vec<RecipeBlenderFieldLayer>,
+    pub primitives: Vec<RecipeBlenderFieldPrimitive>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeBlenderFieldLayer {
+    pub layer_id: u64,
+    pub source_layer_revision: u64,
+    pub source_artifact_sha256: String,
+    pub normalized_layer_sha256: String,
+    pub scalar_unit: String,
+    pub source_coordinate_unit: String,
+    pub coordinate_to_angstrom: f64,
+    pub normalization_conversion: String,
+    pub scalar_unit_scale: f64,
+    pub clip_planes: Vec<RecipeFieldClipPlane>,
+    pub presentation: RecipeFieldPresentation,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldPresentation {
+    pub render_mode: String,
+    pub sign_mode: String,
+    pub positive_isovalue: f32,
+    pub negative_isovalue: f32,
+    pub positive_color: [f32; 4],
+    pub negative_color: [f32; 4],
+    pub surface_opacity: f32,
+    pub colormap_mode: u32,
+    pub display_range: Option<[f32; 2]>,
+    pub opacity_scale: f32,
+    pub density_cutoff: f32,
+    pub transfer_function: RecipeFieldTransferFunction,
+    pub use_explicit_transfer_function: bool,
+    pub material_mode: String,
+    pub portable_material_mapping: String,
+    pub slices: Vec<RecipeFieldSlice>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeBlenderFieldPrimitive {
+    pub representation: String,
+    pub layer_id: u64,
+    pub source_layer_revision: u64,
+    pub scalar_unit: String,
+    pub isovalue: Option<f32>,
+    pub contour_level: Option<f32>,
+    pub slice_plane: Option<RecipeFieldSlicePlane>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldSlicePlane {
+    pub normal: [f64; 3],
+    pub signed_offset_angstrom: f64,
+    pub interpolation: String,
 }
 
 impl PublicationGlbRecipe {
@@ -96,10 +196,10 @@ impl PublicationGlbRecipe {
             application_version: env!("CARGO_PKG_VERSION").to_owned(), generated_at_unix_ms: unix_time_ms()?, success: true,
             export_id: format!("{}-{}", canonical_structure_sha256(source), unix_time_ms()?),
             source: RecipeSource { structure_name: source.name.clone(), source_version: source.version, intrinsic_atom_count: scene.intrinsic_atom_count, structure_hash: Some(canonical_structure_sha256(source)), structure_hash_algorithm: Some("sha256-canonical-crystal-state-v1".to_owned()), source_length_unit: "angstrom".to_owned(), coordinate_space: "cartesian_right_handed_y_up".to_owned() },
-            camera: RecipeCamera { eye: camera.eye.to_array(), target: camera.target.to_array(), up: camera.up.to_array(), projection: if camera.is_perspective { "perspective".to_owned() } else { "orthographic".to_owned() }, fovy_deg: camera.fovy_deg, orthographic_scale: camera.orthographic_scale, znear: camera.znear, zfar: camera.zfar, aspect_policy: "current_renderer_camera".to_owned(), fit_visible_structure_to_export: false, publication_framing_margin: 0.0 },
+            camera: RecipeCamera { eye: camera.eye.to_array(), target: camera.target.to_array(), up: camera.up.to_array(), projection: if camera.is_perspective { "perspective".to_owned() } else { "orthographic".to_owned() }, fovy_deg: camera.fovy_deg, orthographic_scale: camera.orthographic_scale, znear: camera.znear, zfar: camera.zfar, aspect_policy: glb_camera_aspect_policy(camera.aspect)?, fit_visible_structure_to_export: false, publication_framing_margin: 0.0 },
             look_profile: PublicationLookRecipe::from_profile(scene.look_profile), coordinate_length_unit: "angstrom".to_owned(), meters_per_exported_unit: 1.0e-10,
             matrix_layout: "column_major".to_owned(), scale_policy: "scientific_visualization".to_owned(), material_mapping: "gltf_pbr_metallic_roughness; sRGB input colors are converted once to linear-sRGB factors; alpha is OPAQUE at 1.0 and BLEND below 1.0; renderer lighting and tone mapping are not baked".to_owned(),
-            semantic_inventory: crate::blender_export::GlbSemanticInventory { intrinsic_atoms: scene.intrinsic_atom_count, atom_instances: scene.atoms.len(), bonds: scene.bonds.len(), cell_edges: scene.cell_edges.len(), materials: 0, meshes: 0 }, artifact: None,
+            semantic_inventory: crate::blender_export::GlbSemanticInventory { intrinsic_atoms: scene.intrinsic_atom_count, atom_instances: scene.atoms.len(), bonds: scene.bonds.len(), cell_edges: scene.cell_edges.len(), materials: 0, meshes: 0, field_primitives: 0, field_vertices: 0, geometry_bounds: None }, field_scene: None, artifact: None,
         };
         recipe.validate()?;
         Ok(recipe)
@@ -107,7 +207,10 @@ impl PublicationGlbRecipe {
     pub fn validate(&self) -> Result<(), String> {
         if self.schema != EXPORT_RECIPE_SCHEMA
             || self.schema_version != EXPORT_RECIPE_SCHEMA_VERSION
-            || self.kind != ExportRecipeKind::BlenderStructureScene
+            || !matches!(
+                self.kind,
+                ExportRecipeKind::BlenderStructureScene | ExportRecipeKind::BlenderFieldScene
+            )
             || !self.success
             || self.export_id.is_empty()
             || self.source.source_length_unit != "angstrom"
@@ -120,6 +223,71 @@ impl PublicationGlbRecipe {
             return Err("publication GLB recipe metadata is invalid".to_owned());
         }
         self.look_profile.validate()?;
+        match (&self.kind, &self.field_scene) {
+            (ExportRecipeKind::BlenderStructureScene, None) => {}
+            (ExportRecipeKind::BlenderFieldScene, Some(field_scene)) => {
+                if field_scene.blender_scale != 1.0
+                    || field_scene.source_coordinate_unit != "angstrom"
+                    || field_scene.coordinate_space != self.source.coordinate_space
+                    || field_scene.matrix_layout != "column_major"
+                    || field_scene.field_scene_hash.len() != 64
+                    || (field_scene.layers.is_empty()
+                        && self.semantic_inventory.field_primitives != 0)
+                    || field_scene.primitives.len() != self.semantic_inventory.field_primitives
+                {
+                    return Err("publication Blender field recipe metadata is invalid".to_owned());
+                }
+                for layer in &field_scene.layers {
+                    if !is_sha256(&layer.source_artifact_sha256)
+                        || !is_sha256(&layer.normalized_layer_sha256)
+                        || layer.scalar_unit.is_empty()
+                        || !matches!(layer.source_coordinate_unit.as_str(), "angstrom" | "bohr")
+                        || !layer.coordinate_to_angstrom.is_finite()
+                        || layer.coordinate_to_angstrom <= 0.0
+                        || layer.normalization_conversion.is_empty()
+                        || !layer.scalar_unit_scale.is_finite()
+                        || layer.scalar_unit_scale <= 0.0
+                        || layer.clip_planes.iter().any(|plane| {
+                            !plane.normal.iter().all(|value| value.is_finite())
+                                || !plane.signed_offset_angstrom.is_finite()
+                        })
+                    {
+                        return Err("publication Blender field provenance is invalid".to_owned());
+                    }
+                }
+                if field_scene.primitives.iter().any(|primitive| {
+                    primitive.scalar_unit.is_empty()
+                        || !field_scene.layers.iter().any(|layer| {
+                            layer.layer_id == primitive.layer_id
+                                && layer.source_layer_revision == primitive.source_layer_revision
+                        })
+                        || primitive.isovalue.is_some_and(|value| !value.is_finite())
+                        || primitive
+                            .contour_level
+                            .is_some_and(|value| !value.is_finite())
+                }) {
+                    return Err(
+                        "publication Blender field primitive provenance is invalid".to_owned()
+                    );
+                }
+                if field_scene.layers.iter().any(|layer| {
+                    !matches!(
+                        (
+                            layer.presentation.material_mode.as_str(),
+                            layer.presentation.portable_material_mapping.as_str()
+                        ),
+                        ("lit", crate::blender_export::FIELD_MATERIAL_MAPPING_LIT)
+                            | (
+                                "unlit",
+                                crate::blender_export::FIELD_MATERIAL_MAPPING_UNLIT_FALLBACK
+                            )
+                    )
+                }) {
+                    return Err("publication Blender field material mapping is invalid".to_owned());
+                }
+            }
+            _ => return Err("publication Blender field recipe kind is inconsistent".to_owned()),
+        }
         if !self
             .camera
             .eye
@@ -155,6 +323,159 @@ impl PublicationGlbRecipe {
         }
         Ok(())
     }
+
+    pub fn from_field_scene(
+        source: &CrystalState,
+        scene: &crate::scene_export::PublicationFieldSceneSnapshot,
+    ) -> Result<Self, String> {
+        let mut recipe = Self::from_scene(source, &scene.structure)?;
+        recipe.kind = ExportRecipeKind::BlenderFieldScene;
+        let mut layers = Vec::new();
+        layers
+            .try_reserve_exact(scene.field_layers.len())
+            .map_err(|_| "unable to allocate Blender field sidecar".to_owned())?;
+        for layer in &scene.field_layers {
+            let mut clip_planes = Vec::new();
+            clip_planes
+                .try_reserve_exact(layer.clip_planes.len())
+                .map_err(|_| "unable to allocate Blender clipping sidecar".to_owned())?;
+            for plane in &layer.clip_planes {
+                clip_planes.push(RecipeFieldClipPlane {
+                    normal: plane.normal,
+                    signed_offset_angstrom: plane.signed_offset_angstrom,
+                    keep_positive: plane.keep_positive,
+                });
+            }
+            layers.push(RecipeBlenderFieldLayer {
+                layer_id: layer.layer_id,
+                source_layer_revision: layer.source_layer_revision,
+                source_artifact_sha256: layer.source_artifact_sha256.clone(),
+                normalized_layer_sha256: layer.normalized_layer_sha256.clone(),
+                scalar_unit: layer.scalar_unit.clone(),
+                source_coordinate_unit: layer.source_coordinate_unit.clone(),
+                coordinate_to_angstrom: layer.coordinate_to_angstrom,
+                normalization_conversion: layer.normalization_conversion.clone(),
+                scalar_unit_scale: layer.scalar_unit_scale,
+                clip_planes,
+                presentation: recipe_field_presentation(layer)?,
+            });
+        }
+        let mut primitives = Vec::new();
+        primitives
+            .try_reserve_exact(scene.field_primitives.len())
+            .map_err(|_| "unable to allocate Blender field primitive sidecar".to_owned())?;
+        for primitive in &scene.field_primitives {
+            primitives.push(RecipeBlenderFieldPrimitive {
+                representation: primitive.representation.portable_name().to_owned(),
+                layer_id: primitive.layer_id,
+                source_layer_revision: primitive.source_layer_revision,
+                scalar_unit: primitive.scalar_unit.clone(),
+                isovalue: primitive.isovalue,
+                contour_level: primitive.contour_level,
+                slice_plane: primitive.slice_plane.map(recipe_field_slice_plane),
+            });
+        }
+        recipe.field_scene = Some(RecipeBlenderFieldScene {
+            blender_scale: 1.0,
+            source_coordinate_unit: "angstrom".to_owned(),
+            coordinate_space: recipe.source.coordinate_space.clone(),
+            matrix_layout: "column_major".to_owned(),
+            field_scene_hash: scene.field_scene_hash.clone(),
+            layers,
+            primitives,
+        });
+        recipe.semantic_inventory.field_primitives = scene.field_primitives.len();
+        recipe.validate()?;
+        Ok(recipe)
+    }
+}
+
+fn recipe_field_slice_plane(
+    plane: crate::renderer::field_scene::FieldSlicePlane,
+) -> RecipeFieldSlicePlane {
+    RecipeFieldSlicePlane {
+        normal: plane.normal,
+        signed_offset_angstrom: plane.signed_offset_angstrom,
+        interpolation: match plane.interpolation {
+            crate::renderer::field_scene::FieldSliceInterpolation::Trilinear => "trilinear",
+        }
+        .to_owned(),
+    }
+}
+
+fn recipe_field_presentation(
+    layer: &crate::scene_export::PublicationFieldLayerProvenance,
+) -> Result<RecipeFieldPresentation, String> {
+    let presentation = &layer.presentation;
+    let render = layer.render_settings;
+    let copy_points = |points: &[crate::renderer::field_scene::FieldTransferControlPoint]| {
+        points
+            .iter()
+            .map(|point| RecipeFieldTransferControlPoint {
+                position: point.position,
+                color_linear_rgba: point.color_linear_rgba,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut slices = Vec::new();
+    slices
+        .try_reserve_exact(presentation.slices.len())
+        .map_err(|_| "unable to allocate Blender slice provenance".to_owned())?;
+    for slice in &presentation.slices {
+        slices.push(RecipeFieldSlice {
+            normal: slice.plane.normal,
+            signed_offset_angstrom: slice.plane.signed_offset_angstrom,
+            interpolation: match slice.plane.interpolation {
+                crate::renderer::field_scene::FieldSliceInterpolation::Trilinear => "trilinear",
+            }
+            .to_owned(),
+            dimensions: slice.dimensions,
+            contour_levels: slice.contour_levels.clone(),
+        });
+    }
+    Ok(RecipeFieldPresentation {
+        render_mode: match render.render_mode {
+            crate::volumetric::FieldRenderMode::Isosurface => "isosurface",
+            crate::volumetric::FieldRenderMode::Volume => "volume_raycast",
+            crate::volumetric::FieldRenderMode::Both => "both",
+        }
+        .to_owned(),
+        sign_mode: match render.sign_mode {
+            crate::volumetric::FieldSignMode::Positive => "positive",
+            crate::volumetric::FieldSignMode::Negative => "negative",
+            crate::volumetric::FieldSignMode::Both => "both",
+        }
+        .to_owned(),
+        positive_isovalue: render.positive_isovalue,
+        negative_isovalue: render.negative_isovalue,
+        positive_color: render.color,
+        negative_color: render.color_negative,
+        surface_opacity: render.opacity,
+        colormap_mode: render.colormap_mode,
+        display_range: presentation.display_range,
+        opacity_scale: presentation.opacity_scale,
+        density_cutoff: presentation.density_cutoff,
+        transfer_function: RecipeFieldTransferFunction {
+            color_space: presentation.transfer_function.color_space.clone(),
+            negative_control_points: copy_points(
+                &presentation.transfer_function.negative_control_points,
+            ),
+            positive_control_points: copy_points(
+                &presentation.transfer_function.positive_control_points,
+            ),
+        },
+        use_explicit_transfer_function: presentation.use_explicit_transfer_function,
+        material_mode: match presentation.field_material_mode {
+            crate::renderer::field_scene::FieldMaterialMode::Lit => "lit",
+            crate::renderer::field_scene::FieldMaterialMode::Unlit => "unlit",
+        }
+        .to_owned(),
+        portable_material_mapping: crate::blender_export::portable_field_material_mapping(
+            presentation.field_material_mode,
+        )
+        .to_owned(),
+        slices,
+    })
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -345,6 +666,75 @@ pub struct RecipeRendering {
     pub max_storage_buffer_size: u64,
     pub supports_compute_shaders: bool,
     pub publication_admission: PublicationExportAdmissionReceipt,
+    #[serde(default)]
+    pub field_scene: Option<RecipeFieldPublicationScene>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldPublicationScene {
+    pub layers: Vec<RecipeFieldLayer>,
+    pub composition_method: String,
+    pub composition_order: String,
+    #[serde(default)]
+    pub field_scene_hash: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldLayer {
+    pub layer_id: u64,
+    pub source_layer_revision: u64,
+    #[serde(default)]
+    pub source_origin_angstrom: Option<[f64; 3]>,
+    pub scalar_unit: String,
+    pub scalar_range: [f32; 2],
+    pub display_range: Option<[f32; 2]>,
+    pub representations: Vec<String>,
+    pub positive_isovalue: Option<f32>,
+    pub negative_isovalue: Option<f32>,
+    pub positive_color: [f32; 4],
+    pub negative_color: [f32; 4],
+    pub clip_planes: Vec<RecipeFieldClipPlane>,
+    pub slices: Vec<RecipeFieldSlice>,
+    pub transfer_function: RecipeFieldTransferFunction,
+    pub use_explicit_transfer_function: bool,
+    pub colormap_mode: u32,
+    pub opacity_scale: f32,
+    pub density_cutoff: f32,
+    #[serde(default = "default_recipe_field_material_mode")]
+    pub field_material_mode: String,
+}
+
+fn default_recipe_field_material_mode() -> String {
+    "lit".to_owned()
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldClipPlane {
+    pub normal: [f64; 3],
+    pub signed_offset_angstrom: f64,
+    pub keep_positive: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldSlice {
+    pub normal: [f64; 3],
+    pub signed_offset_angstrom: f64,
+    pub interpolation: String,
+    pub dimensions: [usize; 2],
+    pub contour_levels: Vec<f32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldTransferFunction {
+    pub color_space: String,
+    pub negative_control_points: Vec<RecipeFieldTransferControlPoint>,
+    pub positive_control_points: Vec<RecipeFieldTransferControlPoint>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RecipeFieldTransferControlPoint {
+    pub position: f32,
+    pub color_linear_rgba: [f32; 4],
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -402,6 +792,285 @@ pub struct RecipeArtifact {
     pub sha256: String,
 }
 
+fn recipe_field_scene(
+    snapshot: &FieldPublicationSnapshot,
+) -> Result<RecipeFieldPublicationScene, String> {
+    let mut layers = Vec::new();
+    layers
+        .try_reserve_exact(snapshot.field_snapshots.len())
+        .map_err(|_| "unable to allocate publication field recipe".to_owned())?;
+    for field in &snapshot.field_snapshots {
+        let mut representations = Vec::new();
+        representations
+            .try_reserve_exact(field.representations.len())
+            .map_err(|_| "unable to allocate field representations".to_owned())?;
+        for representation in &field.representations {
+            representations.push(
+                match representation {
+                    crate::renderer::field_scene::FieldRepresentation::PositiveIsosurface => {
+                        "positive_isosurface"
+                    }
+                    crate::renderer::field_scene::FieldRepresentation::NegativeIsosurface => {
+                        "negative_isosurface"
+                    }
+                    crate::renderer::field_scene::FieldRepresentation::VolumeRaycast => {
+                        "volume_raycast"
+                    }
+                    crate::renderer::field_scene::FieldRepresentation::Slice => "slice",
+                    crate::renderer::field_scene::FieldRepresentation::Contour => "contour",
+                }
+                .to_owned(),
+            );
+        }
+        let convert_points = |points: &[crate::renderer::field_scene::FieldTransferControlPoint]| -> Result<Vec<RecipeFieldTransferControlPoint>, String> {
+            let mut recipe_points = Vec::new();
+            recipe_points.try_reserve_exact(points.len()).map_err(|_| "unable to allocate field transfer recipe".to_owned())?;
+            for point in points {
+                recipe_points.push(RecipeFieldTransferControlPoint { position: point.position, color_linear_rgba: point.color_linear_rgba });
+            }
+            Ok(recipe_points)
+        };
+        let mut clip_planes = Vec::new();
+        clip_planes
+            .try_reserve_exact(field.clip_planes.len())
+            .map_err(|_| "unable to allocate field clip recipe".to_owned())?;
+        for plane in &field.clip_planes {
+            clip_planes.push(RecipeFieldClipPlane {
+                normal: plane.normal,
+                signed_offset_angstrom: plane.signed_offset_angstrom,
+                keep_positive: plane.keep_positive,
+            });
+        }
+        let mut slices = Vec::new();
+        slices
+            .try_reserve_exact(field.slices.len())
+            .map_err(|_| "unable to allocate publication field slices".to_owned())?;
+        for slice in &field.slices {
+            let mut contour_levels = Vec::new();
+            contour_levels
+                .try_reserve_exact(slice.contour_levels.len())
+                .map_err(|_| "unable to allocate publication contour levels".to_owned())?;
+            contour_levels.extend_from_slice(&slice.contour_levels);
+            slices.push(RecipeFieldSlice {
+                normal: slice.plane.normal,
+                signed_offset_angstrom: slice.plane.signed_offset_angstrom,
+                interpolation: match slice.plane.interpolation {
+                    crate::renderer::field_scene::FieldSliceInterpolation::Trilinear => "trilinear",
+                }
+                .to_owned(),
+                dimensions: slice.dimensions,
+                contour_levels,
+            });
+        }
+        layers.push(RecipeFieldLayer {
+            layer_id: field.layer_id,
+            source_layer_revision: field.source_layer_revision,
+            source_origin_angstrom: field.source_origin_angstrom,
+            scalar_unit: field.scalar_unit.clone(),
+            scalar_range: field.scalar_range,
+            display_range: field.display_range,
+            representations,
+            positive_isovalue: field.positive_isovalue,
+            negative_isovalue: field.negative_isovalue,
+            positive_color: field.positive_color,
+            negative_color: field.negative_color,
+            clip_planes,
+            slices,
+            transfer_function: RecipeFieldTransferFunction {
+                color_space: field.transfer_function.color_space.clone(),
+                negative_control_points: convert_points(
+                    &field.transfer_function.negative_control_points,
+                )?,
+                positive_control_points: convert_points(
+                    &field.transfer_function.positive_control_points,
+                )?,
+            },
+            use_explicit_transfer_function: field.use_explicit_transfer_function,
+            colormap_mode: field.colormap_mode,
+            opacity_scale: field.opacity_scale,
+            density_cutoff: field.density_cutoff,
+            field_material_mode: match field.field_material_mode {
+                crate::renderer::field_scene::FieldMaterialMode::Lit => "lit",
+                crate::renderer::field_scene::FieldMaterialMode::Unlit => "unlit",
+            }
+            .to_owned(),
+        });
+    }
+    let composition_method = match snapshot.composition_method {
+        crate::renderer::field_scene::FieldTransparencyMethod::WeightedBlendedOit => {
+            "weighted_blended_oit"
+        }
+        crate::renderer::field_scene::FieldTransparencyMethod::PremultipliedAlphaFallback => {
+            "premultiplied_alpha_fallback"
+        }
+    }
+    .to_owned();
+    let composition_order = match snapshot.composition_method {
+        crate::renderer::field_scene::FieldTransparencyMethod::WeightedBlendedOit => {
+            "order_independent"
+        }
+        crate::renderer::field_scene::FieldTransparencyMethod::PremultipliedAlphaFallback => {
+            "stable_layer_id_ascending_then_translucent_structure"
+        }
+    }
+    .to_owned();
+    Ok(RecipeFieldPublicationScene {
+        layers,
+        composition_method,
+        composition_order,
+        field_scene_hash: snapshot.field_scene_hash.clone(),
+    })
+}
+
+fn validate_recipe_field_scene(
+    field_scene: Option<&RecipeFieldPublicationScene>,
+    admission: &PublicationExportAdmissionReceipt,
+) -> Result<(), String> {
+    if admission.field_admitted != field_scene.is_some()
+        || admission.field_scene_hash.as_deref()
+            != field_scene.map(|scene| scene.field_scene_hash.as_str())
+    {
+        return Err("publication field recipe does not match admission".to_owned());
+    }
+    let Some(field_scene) = field_scene else {
+        return Ok(());
+    };
+    if field_scene.layers.len() != usize::from(admission.field_layer_count)
+        || !matches!(
+            field_scene.composition_method.as_str(),
+            "weighted_blended_oit" | "premultiplied_alpha_fallback"
+        )
+        || !matches!(
+            (
+                field_scene.composition_method.as_str(),
+                field_scene.composition_order.as_str()
+            ),
+            ("weighted_blended_oit", "order_independent")
+                | (
+                    "premultiplied_alpha_fallback",
+                    "stable_layer_id_ascending_then_translucent_structure"
+                )
+        )
+    {
+        return Err("publication field scene metadata is invalid".to_owned());
+    }
+    let mut has_isosurface = false;
+    let mut has_volume = false;
+    for layer in &field_scene.layers {
+        let positive = layer
+            .representations
+            .iter()
+            .any(|item| item == "positive_isosurface");
+        let negative = layer
+            .representations
+            .iter()
+            .any(|item| item == "negative_isosurface");
+        has_isosurface |= positive || negative;
+        has_volume |= layer
+            .representations
+            .iter()
+            .any(|item| item == "volume_raycast");
+        if !matches!(
+            layer.scalar_unit.as_str(),
+            "electron_per_cubic_angstrom" | "electron_per_bohr_cubed" | "arbitrary"
+        ) || !layer.scalar_range.iter().all(|value| value.is_finite())
+            || layer.scalar_range[0] > layer.scalar_range[1]
+            || layer.representations.is_empty()
+            || (positive
+                && !layer
+                    .positive_isovalue
+                    .is_some_and(|value| value.is_finite() && value > 0.0))
+            || (negative
+                && !layer
+                    .negative_isovalue
+                    .is_some_and(|value| value.is_finite() && value > 0.0))
+            || layer.clip_planes.len() > crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES
+            || layer.slices.len() > crate::renderer::field_scene::MAX_FIELD_SLICES
+            || layer.transfer_function.color_space != "LinearRgb"
+            || ![layer.positive_color, layer.negative_color]
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            || layer.colormap_mode > 9
+            || !layer.opacity_scale.is_finite()
+            || !(0.0..=10.0).contains(&layer.opacity_scale)
+            || !layer.density_cutoff.is_finite()
+            || layer.density_cutoff < 0.0
+            || layer.display_range.is_some_and(|range| {
+                !range.iter().all(|value| value.is_finite()) || range[0] >= range[1]
+            })
+        {
+            return Err("publication field layer is invalid".to_owned());
+        }
+        for plane in &layer.clip_planes {
+            if !plane.signed_offset_angstrom.is_finite()
+                || !plane.normal.iter().all(|value| value.is_finite())
+            {
+                return Err("publication field clip plane is invalid".to_owned());
+            }
+        }
+        for points in [
+            &layer.transfer_function.negative_control_points,
+            &layer.transfer_function.positive_control_points,
+        ] {
+            if points.len() < 2
+                || points.len() > crate::renderer::field_scene::MAX_FIELD_TRANSFER_POINTS
+            {
+                return Err("publication field transfer control point count is invalid".to_owned());
+            }
+            let mut previous = -1.0_f32;
+            for point in points {
+                if !point.position.is_finite()
+                    || !(0.0..=1.0).contains(&point.position)
+                    || point.position <= previous
+                    || !point
+                        .color_linear_rgba
+                        .iter()
+                        .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+                {
+                    return Err("publication field transfer control points are invalid".to_owned());
+                }
+                previous = point.position;
+            }
+        }
+        for slice in &layer.slices {
+            if slice.interpolation != "trilinear"
+                || slice.dimensions[0] == 0
+                || slice.dimensions[1] == 0
+                || slice.dimensions.iter().any(|dimension| {
+                    *dimension > crate::renderer::field_scene::MAX_FIELD_SLICE_DIMENSION
+                })
+                || slice.dimensions[0]
+                    .checked_mul(slice.dimensions[1])
+                    .is_none_or(|count| {
+                        count
+                            > crate::renderer::field_scene::MAX_FIELD_SLICE_DIMENSION
+                                * crate::renderer::field_scene::MAX_FIELD_SLICE_DIMENSION
+                    })
+                || slice.contour_levels.len()
+                    > crate::renderer::field_scene::MAX_FIELD_CONTOUR_LEVELS
+                || !slice.normal.iter().all(|value| value.is_finite())
+                || !slice.signed_offset_angstrom.is_finite()
+            {
+                return Err("publication field slice is invalid".to_owned());
+            }
+            let mut previous = f32::NEG_INFINITY;
+            for &level in &slice.contour_levels {
+                if !level.is_finite() || level <= previous {
+                    return Err("publication field contour levels are invalid".to_owned());
+                }
+                previous = level;
+            }
+        }
+    }
+    if has_isosurface != admission.request.has_isosurface
+        || has_volume != admission.request.has_volume
+    {
+        return Err("publication field representations do not match admission".to_owned());
+    }
+    Ok(())
+}
+
 impl PublicationRasterRecipe {
     pub fn from_current_scene(
         source: &CrystalState,
@@ -435,9 +1104,22 @@ impl PublicationRasterRecipe {
             },
             publication_bond_instance_count,
         );
-        let admission =
-            evaluate_publication_export_admission(request, renderer.publication_export_limits())
-                .map_err(|error| error.to_string())?;
+        let field_snapshot = renderer.field_publication_snapshot();
+        let admission = match field_snapshot.as_ref() {
+            Some(snapshot) => evaluate_field_publication_export_admission(
+                request,
+                renderer.publication_export_limits(),
+                snapshot,
+            ),
+            None => {
+                evaluate_publication_export_admission(request, renderer.publication_export_limits())
+            }
+        }
+        .map_err(|error| error.to_string())?;
+        let recipe_field_scene = field_snapshot
+            .as_ref()
+            .map(recipe_field_scene)
+            .transpose()?;
         let publication_bond_instances = if renderer.show_bonds {
             crate::renderer::instance::build_publication_bond_instances_with_count(
                 source,
@@ -523,8 +1205,8 @@ impl PublicationRasterRecipe {
                 unit_cell: renderer.show_cell,
                 measurements: false,
                 hoppings: false,
-                isosurface: false,
-                volume: false,
+                isosurface: request.has_isosurface,
+                volume: request.has_volume,
                 stable_periodic_image_policy: "current_renderer_visible_images".to_owned(),
             },
             materials: RecipeMaterials {
@@ -573,6 +1255,7 @@ impl PublicationRasterRecipe {
                 max_storage_buffer_size: config.max_storage_buffer_size,
                 supports_compute_shaders: config.supports_compute_shaders,
                 publication_admission: admission,
+                field_scene: recipe_field_scene,
             },
             output: RecipeOutput {
                 width,
@@ -678,11 +1361,24 @@ impl PublicationRasterRecipe {
         ) {
             return Err("camera projection is unsupported".to_owned());
         }
-        if self.camera.aspect_policy != "fit_visible_structure_to_export_aspect_with_margin_v1"
-            || !self.camera.fit_visible_structure_to_export
-            || self.camera.publication_framing_margin != 0.08
-        {
-            return Err("camera aspect policy is unsupported".to_owned());
+        match self.kind {
+            ExportRecipeKind::PublicationRaster => {
+                if self.camera.aspect_policy
+                    != "fit_visible_structure_to_export_aspect_with_margin_v1"
+                    || !self.camera.fit_visible_structure_to_export
+                    || self.camera.publication_framing_margin != 0.08
+                {
+                    return Err("camera aspect policy is unsupported".to_owned());
+                }
+            }
+            ExportRecipeKind::BlenderStructureScene | ExportRecipeKind::BlenderFieldScene => {
+                recipe_glb_camera_aspect(&self.camera.aspect_policy)?;
+                if self.camera.fit_visible_structure_to_export
+                    || self.camera.publication_framing_margin != 0.0
+                {
+                    return Err("GLB camera framing policy is invalid".to_owned());
+                }
+            }
         }
         let eye_target_distance_squared = self
             .camera
@@ -705,15 +1401,18 @@ impl PublicationRasterRecipe {
         if !self.scene.atoms
             || self.scene.measurements
             || self.scene.hoppings
-            || self.scene.isosurface
-            || self.scene.volume
             || self.scene.stable_periodic_image_policy != "current_renderer_visible_images"
             || self.scene.measurements != request.has_measurement_overlays
             || self.scene.hoppings != request.has_hopping_overlays
             || self.scene.isosurface != request.has_isosurface
             || self.scene.volume != request.has_volume
         {
-            return Err("recipe scene violates the structure-only publication policy".to_owned());
+            return Err("recipe scene does not match its admitted publication scene".to_owned());
+        }
+        if (request.has_isosurface || request.has_volume)
+            != self.rendering.publication_admission.field_admitted
+        {
+            return Err("field publication scene is not bound to its admission".to_owned());
         }
 
         let material_finite = std::iter::once(&self.materials.atom_radius_scale)
@@ -788,6 +1487,10 @@ impl PublicationRasterRecipe {
         }
         validate_publication_export_receipt_fields(&self.rendering.publication_admission)
             .map_err(|error| error.to_string())?;
+        validate_recipe_field_scene(
+            self.rendering.field_scene.as_ref(),
+            &self.rendering.publication_admission,
+        )?;
         if self.rendering.publication_admission.request.width != self.output.width
             || self.rendering.publication_admission.request.height != self.output.height
             || self
@@ -918,13 +1621,62 @@ pub fn publication_sidecar_path(primary_path: &Path) -> Result<PathBuf, String> 
     Ok(primary_path.with_file_name(sidecar_name))
 }
 
+pub fn publication_pair_commit_path(primary_path: &Path) -> Result<PathBuf, String> {
+    let file_stem = primary_path
+        .file_stem()
+        .ok_or_else(|| "export path must include a file name".to_owned())?;
+    let mut marker_name = OsString::from(file_stem);
+    marker_name.push(".crystalcanvas.commit.json");
+    Ok(primary_path.with_file_name(marker_name))
+}
+
+/// Verifies that both sibling artifacts were committed as one hash-bound pair.
+pub fn validate_publication_pair(primary_path: &Path) -> Result<PathBuf, String> {
+    let sidecar_path = publication_sidecar_path(primary_path)?;
+    let marker_path = publication_pair_commit_path(primary_path)?;
+    let marker_file = File::open(&marker_path)
+        .map_err(|error| format!("unable to read publication pair commit marker: {error}"))?;
+    let mut marker_bytes = Vec::new();
+    marker_bytes
+        .try_reserve_exact(MAX_PUBLICATION_PAIR_COMMIT_BYTES + 1)
+        .map_err(|_| "unable to allocate publication pair commit marker buffer".to_owned())?;
+    marker_file
+        .take((MAX_PUBLICATION_PAIR_COMMIT_BYTES + 1) as u64)
+        .read_to_end(&mut marker_bytes)
+        .map_err(|error| format!("unable to read publication pair commit marker: {error}"))?;
+    if marker_bytes.len() > MAX_PUBLICATION_PAIR_COMMIT_BYTES {
+        return Err("publication pair commit marker exceeds the maximum supported size".to_owned());
+    }
+    let marker: PublicationPairCommit = serde_json::from_slice(&marker_bytes)
+        .map_err(|error| format!("unable to parse publication pair commit marker: {error}"))?;
+    if marker.schema != PUBLICATION_PAIR_COMMIT_SCHEMA
+        || marker.schema_version != PUBLICATION_PAIR_COMMIT_VERSION
+        || primary_path.file_name().and_then(|name| name.to_str())
+            != Some(marker.primary_file_name.as_str())
+        || sidecar_path.file_name().and_then(|name| name.to_str())
+            != Some(marker.sidecar_file_name.as_str())
+        || !is_sha256(&marker.primary_sha256)
+        || !is_sha256(&marker.sidecar_sha256)
+    {
+        return Err("publication pair commit marker is invalid".to_owned());
+    }
+    if hex_sha256_file(primary_path)? != marker.primary_sha256
+        || hex_sha256_file(&sidecar_path)? != marker.sidecar_sha256
+    {
+        return Err("publication pair artifacts do not match the commit marker".to_owned());
+    }
+    Ok(sidecar_path)
+}
+
 pub(crate) fn validate_publication_raster_targets(
     primary_path: &Path,
 ) -> Result<&'static str, String> {
     let format = raster_format_from_path(primary_path)?;
     let sidecar_path = publication_sidecar_path(primary_path)?;
+    let marker_path = publication_pair_commit_path(primary_path)?;
     ensure_output_path_available(primary_path, "publication image")?;
     ensure_output_path_available(&sidecar_path, "export recipe")?;
+    ensure_output_path_available(&marker_path, "publication pair commit marker")?;
 
     let parent = primary_path.parent().unwrap_or_else(|| Path::new("."));
     let metadata = std::fs::metadata(parent)
@@ -955,8 +1707,10 @@ pub fn write_publication_raster_pair(
         .into_owned();
 
     let sidecar_path = publication_sidecar_path(primary_path)?;
+    let marker_path = publication_pair_commit_path(primary_path)?;
     let image_temp = temporary_sibling(primary_path, "image")?;
     let recipe_temp = temporary_sibling(&sidecar_path, "recipe")?;
+    let marker_temp = temporary_sibling(&marker_path, "commit")?;
     let format = raster_format_from_recipe(&recipe.output.raster_format)?;
     if let Err(error) = encode_raster_to_staged_file(
         &recipe.output,
@@ -1019,8 +1773,34 @@ pub fn write_publication_raster_pair(
             "publication image",
         ));
     }
+    if let Err(error) = stage_pair_commit_file(
+        &marker_temp,
+        primary_path,
+        &image_temp,
+        &sidecar_path,
+        &recipe_temp,
+    ) {
+        let error =
+            with_staged_cleanup_error(error, &marker_temp, "publication pair commit marker");
+        let error = with_staged_cleanup_error(error, &recipe_temp, "export recipe");
+        return Err(with_staged_cleanup_error(
+            error,
+            &image_temp,
+            "publication image",
+        ));
+    }
 
-    commit_staged_pair(&image_temp, &recipe_temp, primary_path, &sidecar_path)?;
+    commit_staged_pair(
+        &image_temp,
+        &recipe_temp,
+        &marker_temp,
+        primary_path,
+        &sidecar_path,
+        &marker_path,
+        "publication image",
+        "export recipe",
+        "publication pair commit marker",
+    )?;
     sync_parent_directory(primary_path)?;
 
     Ok(sidecar_path)
@@ -1036,8 +1816,10 @@ pub(crate) fn validate_publication_glb_targets(primary_path: &Path) -> Result<()
         return Err("publication Blender export requires a .glb path".to_owned());
     }
     let sidecar_path = publication_sidecar_path(primary_path)?;
+    let marker_path = publication_pair_commit_path(primary_path)?;
     ensure_output_path_available(primary_path, "publication GLB")?;
     ensure_output_path_available(&sidecar_path, "publication GLB recipe")?;
+    ensure_output_path_available(&marker_path, "publication pair commit marker")?;
     let parent = primary_path.parent().unwrap_or_else(|| Path::new("."));
     if !std::fs::metadata(parent)
         .map_err(|error| format!("unable to inspect publication output directory: {error}"))?
@@ -1055,10 +1837,13 @@ pub fn write_publication_glb_pair(
 ) -> Result<PathBuf, String> {
     validate_publication_glb_targets(primary_path)?;
     recipe.validate()?;
-    crate::blender_export::validate_glb_export_identity(glb, &recipe.export_id)?;
+    // validate_glb_recipe_semantics subsumes validate_glb_export_identity in one parsed document.
+    crate::blender_export::validate_glb_recipe_semantics(glb, &recipe)?;
     let sidecar_path = publication_sidecar_path(primary_path)?;
+    let marker_path = publication_pair_commit_path(primary_path)?;
     let glb_temp = temporary_sibling(primary_path, "glb")?;
     let recipe_temp = temporary_sibling(&sidecar_path, "recipe")?;
+    let marker_temp = temporary_sibling(&marker_path, "commit")?;
     let stage = |path: &Path, bytes: &[u8], label: &str| -> Result<(), String> {
         let mut file = OpenOptions::new()
             .write(true)
@@ -1081,7 +1866,13 @@ pub fn write_publication_glb_pair(
             .into_owned(),
         sha256: hex_sha256(glb),
     });
-    recipe.validate()?;
+    if let Err(error) = recipe.validate() {
+        return Err(with_staged_cleanup_error(
+            error,
+            &glb_temp,
+            "publication GLB",
+        ));
+    }
     let stage_recipe = || -> Result<(), String> {
         let file = OpenOptions::new()
             .write(true)
@@ -1101,21 +1892,33 @@ pub fn write_publication_glb_pair(
         let _ = std::fs::remove_file(&recipe_temp);
         return Err(error);
     }
-    if let Err(error) = commit_no_replace(&glb_temp, primary_path, "publication GLB") {
-        let _ = std::fs::remove_file(&glb_temp);
-        let _ = std::fs::remove_file(&recipe_temp);
-        return Err(error);
+    if let Err(error) = stage_pair_commit_file(
+        &marker_temp,
+        primary_path,
+        &glb_temp,
+        &sidecar_path,
+        &recipe_temp,
+    ) {
+        let error =
+            with_staged_cleanup_error(error, &marker_temp, "publication pair commit marker");
+        let error = with_staged_cleanup_error(error, &recipe_temp, "publication GLB recipe");
+        return Err(with_staged_cleanup_error(
+            error,
+            &glb_temp,
+            "publication GLB",
+        ));
     }
-    if let Err(error) = commit_no_replace(&recipe_temp, &sidecar_path, "publication GLB recipe") {
-        let rollback = std::fs::remove_file(primary_path);
-        let _ = std::fs::remove_file(&recipe_temp);
-        return Err(match rollback {
-            Ok(()) => error,
-            Err(rollback_error) => format!(
-                "{error}; unable to remove_file incomplete publication GLB: {rollback_error}"
-            ),
-        });
-    }
+    commit_staged_pair(
+        &glb_temp,
+        &recipe_temp,
+        &marker_temp,
+        primary_path,
+        &sidecar_path,
+        &marker_path,
+        "publication GLB",
+        "publication GLB recipe",
+        "publication pair commit marker",
+    )?;
     sync_parent_directory(primary_path)?;
     Ok(sidecar_path)
 }
@@ -1554,6 +2357,43 @@ fn stage_recipe_file(
     }
 }
 
+fn stage_pair_commit_file(
+    marker_temp: &Path,
+    primary_path: &Path,
+    primary_temp: &Path,
+    sidecar_path: &Path,
+    sidecar_temp: &Path,
+) -> Result<(), String> {
+    let primary_file_name = primary_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "publication primary path must include a UTF-8 file name".to_owned())?;
+    let sidecar_file_name = sidecar_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "publication sidecar path must include a UTF-8 file name".to_owned())?;
+    let marker = PublicationPairCommit {
+        schema: PUBLICATION_PAIR_COMMIT_SCHEMA.to_owned(),
+        schema_version: PUBLICATION_PAIR_COMMIT_VERSION,
+        primary_file_name: primary_file_name.to_owned(),
+        primary_sha256: hex_sha256_file(primary_temp)?,
+        sidecar_file_name: sidecar_file_name.to_owned(),
+        sidecar_sha256: hex_sha256_file(sidecar_temp)?,
+    };
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(marker_temp)
+        .map_err(|error| format!("unable to stage publication pair commit marker: {error}"))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, &marker)
+        .map_err(|error| format!("unable to serialize publication pair commit marker: {error}"))?;
+    writer
+        .flush()
+        .and_then(|()| writer.get_ref().sync_all())
+        .map_err(|error| format!("unable to stage publication pair commit marker: {error}"))
+}
+
 fn sync_bounded_writer(
     mut writer: BoundedFileWriter<BufWriter<File>>,
     label: &str,
@@ -1599,30 +2439,54 @@ fn commit_no_replace(staged_path: &Path, final_path: &Path, label: &str) -> Resu
 }
 
 fn commit_staged_pair(
-    image_temp: &Path,
-    recipe_temp: &Path,
+    primary_temp: &Path,
+    sidecar_temp: &Path,
+    marker_temp: &Path,
     primary_path: &Path,
     sidecar_path: &Path,
+    marker_path: &Path,
+    primary_label: &str,
+    sidecar_label: &str,
+    marker_label: &str,
 ) -> Result<(), String> {
-    if let Err(error) = commit_no_replace(image_temp, primary_path, "publication image") {
-        let error = with_staged_cleanup_error(error, image_temp, "publication image");
+    if let Err(error) = commit_no_replace(primary_temp, primary_path, primary_label) {
+        let error = with_staged_cleanup_error(error, primary_temp, primary_label);
         return Err(with_staged_cleanup_error(
-            error,
-            recipe_temp,
-            "export recipe",
+            with_staged_cleanup_error(error, sidecar_temp, sidecar_label),
+            marker_temp,
+            marker_label,
         ));
     }
-    if let Err(error) = commit_no_replace(recipe_temp, sidecar_path, "export recipe") {
-        let error = with_staged_cleanup_error(error, recipe_temp, "export recipe");
-        let error = with_staged_cleanup_error(error, image_temp, "publication image");
-        let error = format!(
-            "{error}; partial commit preserved the publication image at {}",
-            primary_path.display()
-        );
+    if let Err(error) = commit_no_replace(sidecar_temp, sidecar_path, sidecar_label) {
+        let error = with_staged_cleanup_error(error, sidecar_temp, sidecar_label);
+        let error = with_staged_cleanup_error(error, primary_temp, primary_label);
+        let error = with_staged_cleanup_error(error, marker_temp, marker_label);
+        let error = match temporary_sibling(primary_path, "unpaired").and_then(|recovery_path| {
+            commit_no_replace(primary_path, &recovery_path, primary_label).map(|()| recovery_path)
+        }) {
+            Ok(recovery_path) => format!(
+                "{error}; moved the unpaired {primary_label} to {}",
+                recovery_path.display()
+            ),
+            Err(quarantine_error) => format!(
+                "{error}; the {primary_label} remains at {} because it could not be quarantined: {quarantine_error}",
+                primary_path.display()
+            ),
+        };
         return Err(with_directory_sync_error(error, primary_path));
     }
-    let error = with_staged_cleanup_error(String::new(), image_temp, "publication image");
-    let error = with_staged_cleanup_error(error, recipe_temp, "export recipe");
+    if let Err(error) = commit_no_replace(marker_temp, marker_path, marker_label) {
+        let error = with_staged_cleanup_error(error, marker_temp, marker_label);
+        return Err(with_directory_sync_error(
+            format!(
+                "{error}; primary and sidecar are intentionally invalid until a matching commit marker is published"
+            ),
+            primary_path,
+        ));
+    }
+    let error = with_staged_cleanup_error(String::new(), primary_temp, primary_label);
+    let error = with_staged_cleanup_error(error, sidecar_temp, sidecar_label);
+    let error = with_staged_cleanup_error(error, marker_temp, marker_label);
     if error.is_empty() {
         Ok(())
     } else {
@@ -1820,23 +2684,55 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_commit_race_preserves_the_committed_image_without_path_based_rollback() {
+    fn sidecar_commit_race_quarantines_the_unpaired_primary() {
         let directory = tempfile::tempdir().unwrap();
         let image_temp = directory.path().join(".figure.image");
         let recipe_temp = directory.path().join(".figure.recipe");
         let primary_path = directory.path().join("figure.png");
         let sidecar_path = directory.path().join("figure.crystalcanvas.json");
+        let marker_path = directory.path().join("figure.crystalcanvas.commit.json");
+        let marker_temp = directory.path().join(".figure.commit");
         stage_new_file(&image_temp, b"new image", "test image").unwrap();
         stage_new_file(&recipe_temp, b"new recipe", "test recipe").unwrap();
         std::fs::write(&sidecar_path, b"racing recipe").unwrap();
+        stage_pair_commit_file(
+            &marker_temp,
+            &primary_path,
+            &image_temp,
+            &sidecar_path,
+            &recipe_temp,
+        )
+        .unwrap();
 
-        let error = commit_staged_pair(&image_temp, &recipe_temp, &primary_path, &sidecar_path)
-            .unwrap_err();
+        let error = commit_staged_pair(
+            &image_temp,
+            &recipe_temp,
+            &marker_temp,
+            &primary_path,
+            &sidecar_path,
+            &marker_path,
+            "publication image",
+            "export recipe",
+            "publication pair commit marker",
+        )
+        .unwrap_err();
 
-        assert!(error.contains("partial commit preserved"));
-        assert_eq!(std::fs::read(&primary_path).unwrap(), b"new image");
+        assert!(error.contains("moved the unpaired publication image"));
+        assert!(!primary_path.exists());
         assert_eq!(std::fs::read(&sidecar_path).unwrap(), b"racing recipe");
         assert!(!image_temp.exists());
         assert!(!recipe_temp.exists());
+        assert!(!marker_temp.exists());
+        assert!(!marker_path.exists());
+        let recovery_path = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".unpaired."))
+            })
+            .unwrap();
+        assert_eq!(std::fs::read(recovery_path).unwrap(), b"new image");
     }
 }

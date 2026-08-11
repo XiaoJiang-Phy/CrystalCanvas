@@ -29,7 +29,10 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn get_config_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         use tauri::Manager;
-        let mut path = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
+        let mut path = app_handle
+            .path()
+            .app_config_dir()
+            .map_err(|e| e.to_string())?;
         path.push("settings.json");
         Ok(path)
     }

@@ -18,12 +18,10 @@ async fn test_deepseek_live_api() {
     let provider = create_provider(&config);
 
     // Give it a generic default cell so reasoner understands
-    let state = CrystalState {
-        cell_a: 5.0,
-        cell_b: 5.0,
-        cell_c: 5.0,
-        ..Default::default()
-    };
+    let mut state = CrystalState::default();
+    state.cell_a = 5.0;
+    state.cell_b = 5.0;
+    state.cell_c = 5.0;
 
     let context = build_crystal_context(&state, None);
 

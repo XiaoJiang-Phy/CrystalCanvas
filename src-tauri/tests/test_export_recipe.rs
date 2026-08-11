@@ -12,6 +12,7 @@ use crystal_canvas::renderer::renderer::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 fn valid_recipe() -> PublicationRasterRecipe {
     valid_recipe_for(1, 1)
@@ -124,6 +125,7 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
             max_storage_buffer_size: 128 * 1024 * 1024,
             supports_compute_shaders: true,
             publication_admission,
+            field_scene: None,
         },
         output: RecipeOutput {
             width,
@@ -150,6 +152,34 @@ fn valid_recipe_for(width: u32, height: u32) -> PublicationRasterRecipe {
             sha256: "0".repeat(64),
         }),
     }
+}
+
+fn release_artifact_directory() -> PathBuf {
+    PathBuf::from(
+        std::env::var("CRYSTALCANVAS_RELEASE_ARTIFACT_DIR")
+            .expect("set CRYSTALCANVAS_RELEASE_ARTIFACT_DIR to generate a release fixture"),
+    )
+}
+
+#[test]
+#[ignore = "writes an explicit software-only v0.8 release fixture"]
+fn writes_release_v0_8_software_raster_fixture() {
+    let directory = release_artifact_directory();
+    std::fs::create_dir_all(&directory).expect("release fixture directory must be creatable");
+    let primary_path = directory.join("software-contract-raster.png");
+    let sidecar_path = publication_sidecar_path(&primary_path).unwrap();
+    let marker_path =
+        crystal_canvas::export_recipe::publication_pair_commit_path(&primary_path).unwrap();
+    assert!(
+        !primary_path.exists() && !sidecar_path.exists() && !marker_path.exists(),
+        "release fixture generation never overwrites an existing artifact triplet"
+    );
+    let mut recipe = valid_recipe();
+    recipe.application_version = env!("CARGO_PKG_VERSION").to_owned();
+    recipe.source.structure_name = "software-contract-raster".to_owned();
+    recipe.artifact = None;
+    write_publication_raster_pair(&primary_path, vec![0, 0, 0, 0], recipe)
+        .expect("software raster fixture must be emitted as a complete artifact triplet");
 }
 
 #[test]

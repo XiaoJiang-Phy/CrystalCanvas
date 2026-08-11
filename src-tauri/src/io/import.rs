@@ -13,7 +13,7 @@ pub fn load_file(path: &str) -> Result<CrystalState, String> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
-    
+
     let filename = p
         .file_name()
         .and_then(|s| s.to_str())
@@ -33,7 +33,11 @@ pub fn load_file(path: &str) -> Result<CrystalState, String> {
             // Check literal filenames for cases where extension is missing/different
             if filename == "poscar" || filename == "contcar" || filename.starts_with("poscar_") {
                 crate::io::poscar_parser::parse_poscar(path)
-            } else if filename.ends_with(".in") || filename.ends_with(".pwi") || filename == "scf" || filename == "input" {
+            } else if filename.ends_with(".in")
+                || filename.ends_with(".pwi")
+                || filename == "scf"
+                || filename == "input"
+            {
                 crate::io::qe_parser::parse_scf_in(path)
             } else {
                 // If the file starts with &CONTROL or &SYSTEM, it's likely QE input
@@ -43,7 +47,10 @@ pub fn load_file(path: &str) -> Result<CrystalState, String> {
                         return crate::io::qe_parser::parse_scf_in(path);
                     }
                 }
-                Err(format!("Unsupported file extension or unknown format: {}", ext))
+                Err(format!(
+                    "Unsupported file extension or unknown format: {}",
+                    ext
+                ))
             }
         }
     }
@@ -151,17 +158,14 @@ pub(crate) fn get_atomic_number(elem: &str) -> u8 {
 
 pub(crate) fn get_element_symbol(at_num: u8) -> String {
     let elements = [
-        "X", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg",
-        "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr",
-        "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br",
-        "Kr", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd",
-        "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La",
-        "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er",
-        "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au",
-        "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
-        "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md",
-        "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn",
-        "Nh", "Fl", "Mc", "Lv", "Ts", "Og"
+        "X", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P",
+        "S", "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+        "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh",
+        "Pd", "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
+        "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re",
+        "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
+        "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr", "Rf", "Db",
+        "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
     ];
     if (at_num as usize) < elements.len() {
         elements[at_num as usize].to_string()

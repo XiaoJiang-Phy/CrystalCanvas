@@ -707,8 +707,9 @@ test('UI-1F preserves scientific symbols and the existing renderer/listener owne
     assert.match(brillouin_zone, /N<sub>k<\/sub>/);
     assert.match(wannier, /R\s*=\s*\[/);
     assert.match(wannier, /\|t\|/);
-    assert.equal((volumetric.match(/safeListen\(/g) || []).length, 1, 'volumetric panel must keep one event owner');
+    assert.equal((volumetric.match(/safeListen\(/g) || []).length, 2, 'volumetric panel must keep one owner for each backend field event');
     assert.match(volumetric, /safeListen\('volumetric_loaded'/);
+    assert.match(volumetric, /safeListen\('field_scene_changed'/);
     assert.match(volumetric, /return\s*\(\)\s*=>\s*\{\s*unlisten\(\);\s*\}/);
 });
 
@@ -792,9 +793,9 @@ test('UI-1F keeps operation-specific busy labels without changing renderer comma
     const expected_command_counts = [
         [bond, 'get_bond_analysis', 1],
         [volumetric, 'load_volumetric_file', 1],
-        [volumetric, 'set_isovalue', 2],
-        [volumetric, 'set_volume_render_mode', 2],
-        [volumetric, 'set_isosurface_sign_mode', 2],
+        [volumetric, 'set_isovalue', 1],
+        [volumetric, 'set_volume_render_mode', 1],
+        [volumetric, 'set_isosurface_sign_mode', 1],
         [volumetric, 'set_isosurface_opacity', 1],
         [volumetric, 'set_volume_colormap', 1],
         [volumetric, 'set_volume_density_cutoff', 1],
@@ -875,8 +876,8 @@ test('UI-1F commits discrete renderer state only after its IPC request is issued
     assert.match(phonon.slice(mode_select_start, mode_select_end), /disabled=\{[^}]+\}/,
         'phonon mode selector must be disabled while a control operation is pending');
 
-    assert_command_precedes_state(volumetric, 'set_volume_render_mode', 'setVolumeRenderMode(mode)', 2);
-    assert_command_precedes_state(volumetric, 'set_isosurface_sign_mode', 'setSignMode(mode)', 2);
+    assert_command_precedes_state(volumetric, 'set_volume_render_mode', 'setVolumeRenderMode(mode)');
+    assert_command_precedes_state(volumetric, 'set_isosurface_sign_mode', 'setSignMode(mode)');
     assert_command_precedes_state(volumetric, 'set_volume_colormap', 'setVolumeColormap(mode)');
     assert.match(volumetric, /pendingControl/, 'volume selects must reject overlapping requests');
 
@@ -938,7 +939,9 @@ test('UI-1F retains its five lazy chunks and frame/listener boundaries during re
         assert.match(panel_index, new RegExp(`${panel}: \\(\\) => import\\('\\./${panel}'\\)`));
         assert.doesNotMatch(panel_index, new RegExp(`import\\s+${panel}\\s+from`));
     }
-    assert.equal((volumetric.match(/safeListen\(/g) || []).length, 1);
+    assert.equal((volumetric.match(/safeListen\(/g) || []).length, 2);
+    assert.match(volumetric, /safeListen\('volumetric_loaded'/);
+    assert.match(volumetric, /safeListen\('field_scene_changed'/);
     assert.match(volumetric, /return\s*\(\)\s*=>\s*\{\s*unlisten\(\);\s*\}/);
 });
 
@@ -969,17 +972,32 @@ test('UI-1F does not unmount scientific panel state when the inspector closes', 
     );
 });
 
-test('UI-1F mirrors the initial Renderer-derived density cutoff after volumetric load', () => {
+test('UI-1F accepts the backend-committed initial field without a second renderer mutation', () => {
     const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
     const listener = volumetric.slice(
         volumetric.indexOf("safeListen('volumetric_loaded'"),
         volumetric.indexOf('const handleRenderMode'),
     );
 
-    assert.match(
+    assert.match(listener, /safeInvoke\('get_field_scene_info'\)[\s\S]*?applyFieldScene\(scene\)/,
+        'the load listener must mirror the field scene committed by the backend');
+    assert.doesNotMatch(
         listener,
-        /safeInvoke\('set_isovalue',[\s\S]*?(?:\.then\([\s\S]*?setDensityCutoff\(defaultIsovalue\)|await[\s\S]*?setDensityCutoff\(defaultIsovalue\))/,
-        'initial isovalue must mirror the cutoff that the Renderer derives in Both mode',
+        /safeInvoke\('(set_isovalue|set_volume_render_mode|set_isosurface_sign_mode)'/,
+        'the load listener must not rebuild renderer state already committed by the backend',
+    );
+});
+
+test('UI-1F rebinds the active field after the load command resets local mirrors', () => {
+    const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
+    const load_action = volumetric.slice(
+        volumetric.indexOf("safeDialogOpen({ title: 'Open Volumetric File'"),
+        volumetric.indexOf('<ActionButton label="Add Field Layer..."'),
+    );
+    assert.match(
+        load_action,
+        /safeInvoke\('load_volumetric_file',[\s\S]*?applyVolumetricInfo\(info\)[\s\S]*?safeInvoke\('get_field_scene_info'\)[\s\S]*?applyFieldScene\(scene\)/,
+        'load completion must restore the active layer after local initialization resets its target',
     );
 });
 
@@ -997,6 +1015,18 @@ test('UI-1F mirrors the Renderer density cutoff after render-mode completion', (
     );
 });
 
+test('UI-1F keeps render-mode controls available while portable geometry is preparing', () => {
+    const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
+    assert.match(volumetric, /const isPanelBusy = isLoading \|\| pendingControl !== null;/,
+        'a portable-geometry request must not freeze unrelated volumetric controls');
+    assert.match(volumetric, /const isPresentationBusy = isPanelBusy \|\| isPresentationPending;/,
+        'portable-geometry controls must remain serialized locally');
+    assert.match(volumetric, /<option value="both">Both \(Isosurface \+ Volume\)<\/option>[\s\S]*?<option value="isosurface">Isosurface Only<\/option>[\s\S]*?<option value="volume">Volume Only<\/option>/,
+        'render mode must expose both, isosurface-only, and volume-only representations');
+    assert.match(volumetric, /disabled=\{isPresentationBusy\}[\s\S]*?Add Clip Plane/,
+        'portable geometry actions must be disabled only by their local pending state');
+});
+
 test('UI-1F mirrors the Renderer density cutoff after isovalue completion', () => {
     const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
     const isovalue_control = volumetric.slice(
@@ -1006,7 +1036,7 @@ test('UI-1F mirrors the Renderer density cutoff after isovalue completion', () =
 
     assert.match(
         isovalue_control,
-        /safeInvoke\('set_isovalue',[\s\S]*?(?:\.then\([\s\S]*?setDensityCutoff\(value\)|await[\s\S]*?setDensityCutoff\(value\))/,
+        /safeInvoke\('set_isovalue',[\s\S]*?setDensityCutoff\(value\)/,
         'isovalue completion must mirror the coupled density cutoff without an extra IPC command',
     );
 });
@@ -1022,9 +1052,9 @@ test('UI-1F reinitializes controlled volumetric mirrors for every loaded dataset
         'a reload must not retain the previous dataset surface opacity');
     assert.match(apply_info, /setVolumetricInfo\(info\)[\s\S]*?setDensityCutoff\(0\)/,
         'a reload must not retain the previous dataset density cutoff');
-    assert.match(apply_info, /setVolumetricInfo\(info\)[\s\S]*?setOpacityScale\(1\)/,
+    assert.match(apply_info, /setVolumetricInfo\(info\)[\s\S]*?setOpacityScale\(3\)/,
         'a reload must not retain the previous dataset volume opacity scale');
-    assert.match(apply_info, /setVolumetricInfo\(info\)[\s\S]*?setVolumeRenderMode\('both'\)/,
+    assert.match(apply_info, /setVolumetricInfo\(info\)[\s\S]*?setVolumeRenderMode\('isosurface'\)/,
         'a reload must mirror the renderer default render mode');
     assert.match(
         apply_info,
@@ -1033,7 +1063,7 @@ test('UI-1F reinitializes controlled volumetric mirrors for every loaded dataset
     );
 });
 
-test('UI-1F does not claim Both sign mode before its renderer IPC succeeds', () => {
+test('UI-1F derives the initial sign mode from the imported scalar range', () => {
     const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
     const apply_info = volumetric.slice(
         volumetric.indexOf('const applyVolumetricInfo'),
@@ -1046,22 +1076,17 @@ test('UI-1F does not claim Both sign mode before its renderer IPC succeeds', () 
 
     assert.match(
         apply_info,
-        /setSignMode\('positive'\)/,
-        'a newly loaded isosurface must initially mirror the Renderer sign_mode=0 default',
+        /setSignMode\(info\.data_min < -0\.01 \* Math\.abs\(info\.data_max\) \? 'both' : 'positive'\)/,
+        'signed imports must select Both while non-negative imports remain Positive-only',
     );
     assert.doesNotMatch(
-        apply_info,
-        /setSignMode\('both'\)/,
-        'Both must not be committed locally before set_isosurface_sign_mode succeeds',
-    );
-    assert.match(
         listener,
-        /safeInvoke\('set_isosurface_sign_mode',\s*\{\s*mode:\s*'both'\s*\}\)[\s\S]*?\.then\(\(\) => setSignMode\('both'\)\)[\s\S]*?\.catch\(/,
-        'an IPC rejection must leave the local mirror at the loaded Renderer default',
+        /safeInvoke\('set_isosurface_sign_mode'/,
+        'the load listener must not rebuild the field after the backend has committed its initial sign mode',
     );
 });
 
-test('UI-1F clears a signed dataset colormap before an unsigned volumetric reload', () => {
+test('UI-1F centralizes signed defaults and keeps surface colors independent from volume colormaps', () => {
     const signed_data = { data_min: -1, data_max: 1 };
     const unsigned_data = { data_min: 0, data_max: 1 };
     const is_signed = ({ data_min, data_max }) => data_min < -0.01 * Math.abs(data_max);
@@ -1069,16 +1094,35 @@ test('UI-1F clears a signed dataset colormap before an unsigned volumetric reloa
     assert.equal(is_signed(signed_data), true, 'the predecessor dataset selects Coolwarm mode 4');
     assert.equal(is_signed(unsigned_data), false, 'the replacement dataset must select Viridis mode 0');
 
-    const load_colormap = ui_1f_volumetric_backend_clean_source.slice(
-        ui_1f_volumetric_backend_clean_source.indexOf('let has_negative'),
-        ui_1f_volumetric_backend_clean_source.indexOf('new_state.volumetric_data = Some(vol_data)'),
+    assert.doesNotMatch(
+        ui_1f_volumetric_backend_clean_source,
+        /set_volume_colormap[\s\S]*?set_color_negative/,
+        'changing the volume colormap must not overwrite an explicitly selected negative isosurface color',
     );
-    const resets_with_else = /if has_negative\s*\{[\s\S]*?active_colormap_mode\s*=\s*4;[\s\S]*?\}\s*else\s*\{[\s\S]*?active_colormap_mode\s*=\s*0;/.test(load_colormap);
-    const assigns_both_modes = /active_colormap_mode\s*=\s*if has_negative\s*\{\s*4\s*\}\s*else\s*\{\s*0\s*\};/.test(load_colormap);
+    assert.match(
+        ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'],
+        /safeInvoke\('set_isosurface_colors',[\s\S]*?positiveColor:[\s\S]*?negativeColor:[\s\S]*?layerId,[\s\S]*?expectedRevision:/,
+        'paired surface colors must use one revision-checked command',
+    );
+});
 
-    assert.ok(
-        resets_with_else || assigns_both_modes,
-        'signed → unsigned reload must explicitly reset Renderer active_colormap_mode to Viridis',
+test('UI-1F volume-only mode updates the renderer-owned active draw settings', () => {
+    assert.match(
+        ui_1f_volumetric_backend_clean_source,
+        /set_volume_render_mode[\s\S]*?set_active_field_render_mode\(field_render_mode\)/,
+        'render mode must update the active draw snapshot instead of only the legacy mode mirror',
+    );
+});
+
+test('UI-1F primary volumetric load replaces old renderer field resources', () => {
+    const load_start = ui_1f_volumetric_backend_clean_source.search(/pub (?:async )?fn load_volumetric_file/);
+    const add_start = ui_1f_volumetric_backend_clean_source.search(/pub (?:async )?fn add_field_layer/);
+    assert.ok(load_start >= 0 && add_start > load_start, 'volumetric command boundaries must remain discoverable');
+    const load = ui_1f_volumetric_backend_clean_source.slice(load_start, add_start);
+    assert.match(
+        load,
+        /prepare_field_layer_with_vertex_counts\(active_layer,\s*vertex_counts\)[\s\S]*?commit_replacement_field_layer/,
+        'Load Volumetric Data must commit a replacement instead of retaining the previous field',
     );
 });
 
@@ -1137,7 +1181,7 @@ test('UI-1G preserves file cancel and modal command contracts before presentatio
     assert.match(phonon_import, /if\s*\(path\s*&&\s*typeof path === ['"]string['"]\)/, 'cancelled import picker must not submit a path');
     assert.match(export_image, /(?:const|let) path = await safeDialogSave\(/);
     assert.match(export_image, /if\s*\(!path\)\s*return;/, 'cancelled export picker must not invoke export');
-    assert.match(export_image, /safeInvoke\('export_image',\s*\{\s*path,\s*width:\s*outputW,\s*height:\s*outputH,\s*bgMode,\s*\}\)/);
+    assert.match(export_image, /safeInvoke\('export_image',\s*\{\s*path,\s*width:\s*outputW,\s*height:\s*outputH,\s*bgMode,\s*publicationProfile\s*,?\s*\}\)/);
     assert.match(settings, /safeInvoke\('get_settings'\)/);
     assert.match(settings, /safeInvoke\('update_settings',\s*\{\s*newSettings:\s*settings\s*\}\)/);
     assert.match(phonon_panel, /safeInvoke\('load_axsf_phonon',\s*\{\s*path:\s*paths\.axsf\s*\}\)/);

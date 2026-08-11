@@ -1,0 +1,92 @@
+{
+  "schema_version": 2,
+  "release_version": "0.8.0",
+  "status": "RELEASE_READY",
+  "blockers": [],
+  "feature_baseline_commit": "ff87b4f7e3dbd7b392dc6782429912e056d19eed",
+  "nodes": {
+    "FIELD-1": {
+      "status": "APPROVED",
+      "implementation_commits": [
+        "eca34cbf9a16ba1ccd8934c4939928e07b49f98c"
+      ]
+    },
+    "FIGURE-2": {
+      "status": "APPROVED",
+      "implementation_commits": [
+        "9601191d03e0dc5f4a5df7006b542b42d285af49",
+        "a050e66792ccbfe5dcee343efe9903609139dacb",
+        "f0fe699ec031339f8b60df29533f01868fb64fac"
+      ]
+    },
+    "DELIVERY-2": {
+      "status": "APPROVED",
+      "implementation_commits": [
+        "ff87b4f7e3dbd7b392dc6782429912e056d19eed"
+      ]
+    }
+  },
+  "required_standard_gates": [
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test_all_targets",
+    "cpp_ctest",
+    "pnpm_install_frozen",
+    "ipc_inventory",
+    "ipc_contract",
+    "ipc_tests",
+    "typescript",
+    "frontend_build",
+    "diff_check",
+    "clean_worktree"
+  ],
+  "manual_validation": {
+    "native_fidelity_verdict": "NATIVE_LIMITED_BLENDER_FALLBACK",
+    "reviewed_by": "Xiao Jiang",
+    "reviewed_at": "2026-08-11T11:06:17Z",
+    "validated_feature_baseline_commit": "ff87b4f7e3dbd7b392dc6782429912e056d19eed",
+    "blender_version": "Blender 4.4.0",
+    "macos_intel_metal": {
+      "status": "PASS",
+      "evidence": "Maintainer-attested Intel/Metal validation passed for volumetric controls, portable field geometry, PNG publication export, and GLB export."
+    },
+    "macos_apple_silicon_metal": {
+      "status": "NOT_AVAILABLE",
+      "evidence": "No Apple Silicon Mac is available for v0.8.0 validation.",
+      "reason": "Apple Silicon compatibility is not established and must not be claimed."
+    },
+    "blender_headless_import": {
+      "status": "PASS",
+      "evidence": "Blender 4.4.0 headless gate blender_44_headless_imports_canonical_structure_and_field_artifact completed successfully."
+    },
+    "blender_gui_import": {
+      "status": "PASS",
+      "evidence": "Maintainer-attested Blender 4.4.0 GUI import displayed the exported structure and portable field geometry successfully."
+    },
+    "software_scope": "This evidence covers declared software mapping, renderer, export, and file-format behavior only. It is not a physical validation of scalar-field meaning, normalization, or material properties."
+  },
+  "artifacts": [
+    {
+      "kind": "raster",
+      "validation_scope": "software_contract",
+      "identity": "software-contract-raster",
+      "path": "release/v0.8.0/artifacts/software-contract-raster.png",
+      "sha256": "05170368cb8970a1d20333e3c77ca8bd9b31f67b6e375c30e278d32b066f8ec4",
+      "sidecar_path": "release/v0.8.0/artifacts/software-contract-raster.crystalcanvas.json",
+      "sidecar_sha256": "02c0267e711ace00ee8b7c172c7b75088be6c705f5fe160a7726c3c00596adf5",
+      "commit_path": "release/v0.8.0/artifacts/software-contract-raster.crystalcanvas.commit.json",
+      "commit_sha256": "ebc85f68c0a2a27a21c64a30b326cfd2fdbbdae350f1bc102533bf2b1a0cbbad"
+    },
+    {
+      "kind": "glb",
+      "validation_scope": "software_contract",
+      "identity": "0fa4f724f56275796f36a7ee65e27ff3890efd737a7685836d00ff12b59c5c97-1786439572453",
+      "path": "release/v0.8.0/artifacts/software-contract-field.glb",
+      "sha256": "0e1718895839430823031b75f6808f7568dca64d268258b3a4b49d212edde252",
+      "sidecar_path": "release/v0.8.0/artifacts/software-contract-field.crystalcanvas.json",
+      "sidecar_sha256": "b8eef0cbfd56fd32ccca698a414aeb1f378a4ed851e71d15ef8dd1e1302c6fca",
+      "commit_path": "release/v0.8.0/artifacts/software-contract-field.crystalcanvas.commit.json",
+      "commit_sha256": "45d9e8c47f5bd3d61b2bd762d445c3a2a83b6b7ff7406602fe96abf5c40986a1"
+    }
+  ]
+}

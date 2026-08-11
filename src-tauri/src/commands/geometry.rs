@@ -1,12 +1,10 @@
-use tauri::State;
 use super::BaseCrystalState;
-use crate::undo::UndoStack;
-use crate::transaction::{
-    with_prepared_state_update,
-    with_prepared_state_update_and_refit,
-    with_state_read_try,
-};
 use crate::ipc::{IpcError, IpcResult};
+use crate::transaction::{
+    with_prepared_state_update, with_prepared_state_update_and_refit, with_state_read_try,
+};
+use crate::undo::UndoStack;
+use tauri::State;
 
 #[tauri::command]
 pub fn preview_slab(
@@ -65,12 +63,20 @@ pub fn apply_supercell(
     ];
     log::info!("apply_supercell: {:?}", expansion);
 
-    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let mut prepared = cs.generate_supercell(&expansion)
-            .map_err(IpcError::invalid_argument)?;
-        prepared.detect_spacegroup();
-        Ok(prepared)
-    })
+    with_prepared_state_update_and_refit(
+        &app,
+        &crystal_state,
+        &settings_state,
+        &renderer_state,
+        &undo_state,
+        |cs| {
+            let mut prepared = cs
+                .generate_supercell(&expansion)
+                .map_err(IpcError::invalid_argument)?;
+            prepared.detect_spacegroup();
+            Ok(prepared)
+        },
+    )
 }
 
 /// Apply a slab cut to the current crystal, mutating state and updating the renderer.
@@ -94,12 +100,20 @@ pub fn apply_slab(
         vacuum_a
     );
 
-    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let mut prepared = cs.generate_slab(miller, layers, vacuum_a)
-            .map_err(IpcError::invalid_argument)?;
-        prepared.detect_spacegroup();
-        Ok(prepared)
-    })
+    with_prepared_state_update_and_refit(
+        &app,
+        &crystal_state,
+        &settings_state,
+        &renderer_state,
+        &undo_state,
+        |cs| {
+            let mut prepared = cs
+                .generate_slab(miller, layers, vacuum_a)
+                .map_err(IpcError::invalid_argument)?;
+            prepared.detect_spacegroup();
+            Ok(prepared)
+        },
+    )
 }
 
 /// Apply Niggli reduction to the current crystal.
@@ -112,12 +126,22 @@ pub fn apply_niggli_reduce(
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
 ) -> IpcResult<()> {
     log::info!("apply_niggli_reduce");
-    
-    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
-        prepared.niggli_reduce().map_err(IpcError::invalid_argument)?;
-        Ok(prepared)
-    })
+
+    with_prepared_state_update_and_refit(
+        &app,
+        &crystal_state,
+        &settings_state,
+        &renderer_state,
+        &undo_state,
+        |cs| {
+            let mut prepared =
+                crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+            prepared
+                .niggli_reduce()
+                .map_err(IpcError::invalid_argument)?;
+            Ok(prepared)
+        },
+    )
 }
 
 /// Apply cell standardization (primitive or conventional).
@@ -131,16 +155,28 @@ pub fn apply_cell_standardize(
     undo_state: State<'_, std::sync::Mutex<UndoStack>>,
 ) -> IpcResult<()> {
     log::info!("apply_cell_standardize: to_primitive={}", to_primitive);
-    
-    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
-        if to_primitive {
-            prepared.to_primitive().map_err(IpcError::invalid_argument)?;
-        } else {
-            prepared.to_conventional().map_err(IpcError::invalid_argument)?;
-        }
-        Ok(prepared)
-    })
+
+    with_prepared_state_update_and_refit(
+        &app,
+        &crystal_state,
+        &settings_state,
+        &renderer_state,
+        &undo_state,
+        |cs| {
+            let mut prepared =
+                crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+            if to_primitive {
+                prepared
+                    .to_primitive()
+                    .map_err(IpcError::invalid_argument)?;
+            } else {
+                prepared
+                    .to_conventional()
+                    .map_err(IpcError::invalid_argument)?;
+            }
+            Ok(prepared)
+        },
+    )
 }
 
 /// Shift slab termination to expose a different surface layer.
@@ -157,17 +193,27 @@ pub fn shift_termination(
     let tolerance = layer_tolerance_a.unwrap_or(0.3);
     log::info!(
         "shift_termination: layer_idx={} tolerance={}",
-        target_layer_idx, tolerance
+        target_layer_idx,
+        tolerance
     );
 
     let mut return_layers = 0;
-    
-    with_prepared_state_update(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |cs| {
-        let mut prepared = crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
-        return_layers = prepared.shift_termination(target_layer_idx, tolerance)
-            .map_err(IpcError::invalid_argument)?;
-        Ok(prepared)
-    })?;
+
+    with_prepared_state_update(
+        &app,
+        &crystal_state,
+        &settings_state,
+        &renderer_state,
+        &undo_state,
+        |cs| {
+            let mut prepared =
+                crate::undo::StructuralSnapshot::from_crystal_state(cs).into_crystal_state();
+            return_layers = prepared
+                .shift_termination(target_layer_idx, tolerance)
+                .map_err(IpcError::invalid_argument)?;
+            Ok(prepared)
+        },
+    )?;
 
     Ok(return_layers)
 }
@@ -184,16 +230,25 @@ pub fn restore_unitcell(
 ) -> IpcResult<()> {
     log::info!("restore_unitcell triggered");
 
-    let base = base_state.0.lock()
+    let base = base_state
+        .0
+        .lock()
         .map_err(|_| IpcError::lock("base crystal state lock poisoned"))?;
     let Some(original) = base.as_ref() else {
-        return Err(IpcError::invalid_argument("no base structure loaded to restore"));
+        return Err(IpcError::invalid_argument(
+            "no base structure loaded to restore",
+        ));
     };
-    
+
     let orig_clone = original.clone();
     drop(base); // Drop lock early to avoid deadlocks
 
-    with_prepared_state_update_and_refit(&app, &crystal_state, &settings_state, &renderer_state, &undo_state, |_| {
-        Ok(orig_clone)
-    })
+    with_prepared_state_update_and_refit(
+        &app,
+        &crystal_state,
+        &settings_state,
+        &renderer_state,
+        &undo_state,
+        |_| Ok(orig_clone),
+    )
 }

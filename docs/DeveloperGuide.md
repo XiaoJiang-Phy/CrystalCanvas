@@ -1,6 +1,6 @@
 # CrystalCanvas Developer Guide
 
-> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
+> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
 
 CrystalCanvas is a visualization-first desktop application. It turns supplied crystal structures and three-dimensional scientific data into interactive real-space or reciprocal-space scenes and reproducible figures. It does not solve electronic-structure, EPC, transport, superconductivity, TCI, or workflow problems.
 

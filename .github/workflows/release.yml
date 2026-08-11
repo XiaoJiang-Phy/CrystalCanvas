@@ -1,54 +1,49 @@
-name: "Release"
+name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Immutable release-candidate commit SHA"
+        required: true
+        type: string
+      version:
+        description: "Release version without the v prefix"
+        required: true
+        default: "0.8.0"
+        type: string
 
 jobs:
-  release:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: "macos-latest"
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
-
-    runs-on: ${{ matrix.platform }}
+  preflight:
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
           submodules: recursive
           lfs: true
 
-      - name: setup node
-        uses: actions/setup-node@v4
+      - name: bind dispatch inputs to the checked-out candidate
+        run: node scripts/validate-release-dispatch.mjs "${{ inputs.ref }}" "${{ inputs.version }}"
+
+      - uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
       - name: install pnpm
         run: npm install -g pnpm
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf clang cmake cmake-data libcairo2-dev python3 python3-pip
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
       - name: validate Rust release gates
         run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
           cargo check --manifest-path src-tauri/Cargo.toml
           cargo test --all-targets --no-fail-fast --manifest-path src-tauri/Cargo.toml
 
@@ -61,69 +56,98 @@ jobs:
       - name: validate IPC and frontend release gates
         run: |
           npm run ipc:inventory
+          git diff --exit-code -- ipc/inventory.json src/ipc/commands.generated.ts
           npm run check:ipc
           npm run test:ipc
+          node --test tests/field_1_red_gate.test.mjs scripts/blender-field-export.test.mjs scripts/field-workflow-ui.test.mjs scripts/release-closure.test.mjs
           ./node_modules/.bin/tsc --noEmit
           pnpm run build
           git diff --check
+          test -z "$(git status --porcelain)"
 
-      - name: validate v0.7.0 release closure
-        run: node --test tests/release_2_red_gate.test.mjs
+      - name: validate v0.8.0 release closure
+        env:
+          CRYSTALCANVAS_RELEASE_PUBLISH: "1"
+        run: CRYSTALCANVAS_RELEASE_PUBLISH=1 node --test tests/release_2_red_gate.test.mjs
 
-      - name: extract changelog
-        id: extract_changelog
-        shell: bash
+      - name: create a draft bound to the validated candidate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION_NUM="${VERSION#v}"
-          # Use python3 or python
-          if command -v python3 >/dev/null 2>&1; then
-            PYTHON_EXE=python3
-          else
-            PYTHON_EXE=python
+          if gh release view "v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "draft tag v${{ inputs.version }} already exists"
+            exit 1
           fi
-          $PYTHON_EXE -c "
-          import sys, re
-          try:
-              version = '${VERSION_NUM}'
-              with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
-                  lines = f.readlines()
-              
-              start_idx = -1
-              for i, line in enumerate(lines):
-                  if re.match(rf'^## \[?{re.escape(version)}', line):
-                      start_idx = i
-                      break
-              
-              if start_idx == -1:
-                  print('See CHANGELOG.md for details.')
-                  sys.exit(0)
-              
-              body_lines = []
-              for i in range(start_idx + 1, len(lines)):
-                  if lines[i].startswith('## '):
-                      break
-                  body_lines.append(lines[i])
-              
-              print(''.join(body_lines).strip())
-          except Exception as e:
-              print(f'Error extracting changelog: {e}')
-              print('See CHANGELOG.md for details.')
-          " > changelog_body.txt
-          
-          # Write to GITHUB_OUTPUT using multiline heredoc
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat changelog_body.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          gh release create "v${{ inputs.version }}" --target "${{ inputs.ref }}" --draft --title "CrystalCanvas v${{ inputs.version }}" --notes "Validated RELEASE-2 evidence is attached after both macOS bundles complete."
 
-      - name: build and release app
+  bundle:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          submodules: recursive
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: install pnpm
+        run: npm install -g pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: build draft release bundle
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "CrystalCanvas ${{ github.ref_name }}"
-          releaseBody: "${{ steps.extract_changelog.outputs.body }}"
-          releaseDraft: false
+          tagName: v${{ inputs.version }}
+          releaseName: CrystalCanvas v${{ inputs.version }}
+          releaseBody: "Validated RELEASE-2 evidence is attached after both macOS bundles complete."
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  publish:
+    needs: [preflight, bundle]
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: verify publication identity
+        run: node scripts/validate-release-dispatch.mjs "${{ inputs.ref }}" "${{ inputs.version }}"
+
+      - name: attach release evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "v${{ inputs.version }}" "release/v${{ inputs.version }}/release-evidence.json" --clobber
+
+      - name: publish the completed draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit v${{ inputs.version }} --draft=false --latest

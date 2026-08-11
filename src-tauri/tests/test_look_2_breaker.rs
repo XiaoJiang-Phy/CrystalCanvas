@@ -100,7 +100,7 @@ fn recipe_v9_serializes_the_complete_validated_look_snapshot() {
     let recipe = source("src/export_recipe.rs");
 
     assert!(
-        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 9"),
+        recipe.contains("EXPORT_RECIPE_SCHEMA_VERSION: u32 = 10"),
         "RELEASE-2 adds reproducible framing and cell-line contrast to the LOOK-2 recipe, so the combined baseline is schema v9"
     );
     for required in [
@@ -225,12 +225,10 @@ fn publication_bond_builder_rejects_malformed_and_non_finite_scene_data_without_
     use crystal_canvas::settings::AppSettings;
 
     let settings = AppSettings::default();
-    let malformed = CrystalState {
-        cart_positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
-        atomic_numbers: vec![6],
-        elements: vec!["C".to_owned()],
-        ..CrystalState::default()
-    };
+    let mut malformed = CrystalState::default();
+    malformed.cart_positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+    malformed.atomic_numbers = vec![6];
+    malformed.elements = vec!["C".to_owned()];
     let malformed_result = std::panic::catch_unwind(|| {
         build_publication_bond_instances(
             &malformed,
@@ -247,12 +245,10 @@ fn publication_bond_builder_rejects_malformed_and_non_finite_scene_data_without_
         "parallel-array corruption must not produce a partial publication bond scene"
     );
 
-    let non_finite = CrystalState {
-        cart_positions: vec![[0.0, 0.0, 0.0], [f32::NAN, 0.0, 0.0]],
-        atomic_numbers: vec![6, 6],
-        elements: vec!["C".to_owned(), "C".to_owned()],
-        ..CrystalState::default()
-    };
+    let mut non_finite = CrystalState::default();
+    non_finite.cart_positions = vec![[0.0, 0.0, 0.0], [f32::NAN, 0.0, 0.0]];
+    non_finite.atomic_numbers = vec![6, 6];
+    non_finite.elements = vec!["C".to_owned(), "C".to_owned()];
     assert!(
         build_publication_bond_instances(
             &non_finite,
@@ -263,12 +259,10 @@ fn publication_bond_builder_rejects_malformed_and_non_finite_scene_data_without_
         "NaN coordinates must reject the export instead of silently dropping a bond"
     );
 
-    let extreme = CrystalState {
-        cart_positions: vec![[0.0, 0.0, 0.0], [f32::MAX, 0.0, 0.0]],
-        atomic_numbers: vec![6, 6],
-        elements: vec!["C".to_owned(), "C".to_owned()],
-        ..CrystalState::default()
-    };
+    let mut extreme = CrystalState::default();
+    extreme.cart_positions = vec![[0.0, 0.0, 0.0], [f32::MAX, 0.0, 0.0]];
+    extreme.atomic_numbers = vec![6, 6];
+    extreme.elements = vec!["C".to_owned(), "C".to_owned()];
     assert!(
         build_publication_bond_instances(
             &extreme,
@@ -281,12 +275,10 @@ fn publication_bond_builder_rejects_malformed_and_non_finite_scene_data_without_
 
     let mut hostile_settings = AppSettings::default();
     hostile_settings.bond_tolerance = f32::NAN;
-    let finite = CrystalState {
-        cart_positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
-        atomic_numbers: vec![6, 6],
-        elements: vec!["C".to_owned(), "C".to_owned()],
-        ..CrystalState::default()
-    };
+    let mut finite = CrystalState::default();
+    finite.cart_positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+    finite.atomic_numbers = vec![6, 6];
+    finite.elements = vec!["C".to_owned(), "C".to_owned()];
     assert!(
         build_publication_bond_instances(
             &finite,

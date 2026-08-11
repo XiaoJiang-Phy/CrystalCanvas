@@ -17,7 +17,7 @@ fn main() {
     cxx_build::bridge("src/ffi/bridge.rs")
         .file("../cpp/src/crystal_parser.cpp")
         .file("../cpp/third_party/gemmi/src/symmetry.cpp")
-        .include("../cpp/src") 
+        .include("../cpp/src")
         .include("../cpp/include")
         .include("../cpp/third_party/gemmi/include")
         .include("../cpp/third_party/gemmi/third_party")
@@ -34,7 +34,11 @@ fn main() {
 
     // Determine the build configuration (Release/Debug) for path searching on Windows
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "release".to_string());
-    let config = if profile == "debug" { "Debug" } else { "Release" };
+    let config = if profile == "debug" {
+        "Debug"
+    } else {
+        "Release"
+    };
 
     // Search common CMake output locations for libraries (MSVC configuration-aware)
     let search_paths = [
@@ -43,7 +47,10 @@ fn main() {
         dst.join("build"),
         dst.join("build").join(config),
         dst.join("build").join("third_party").join("spglib"),
-        dst.join("build").join("third_party").join("spglib").join(config),
+        dst.join("build")
+            .join("third_party")
+            .join("spglib")
+            .join(config),
     ];
 
     for path in search_paths {

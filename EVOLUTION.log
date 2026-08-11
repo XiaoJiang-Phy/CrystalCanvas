@@ -26,3 +26,26 @@
 - **Evidence condition**: glTF 2.0 defines linear distances in metres, while crystal structures represented in strict SI scale are about `1e-10` units and are impractical for Blender viewport, clipping, and editing workflows.
 - **Risk and impact**: Generic glTF consumers can interpret the coordinates as metres. The artifact is a Blender-compatible scientific display scene, not a metre-scale general-purpose glTF asset.
 - **Authorization boundary**: sidecar and GLB extras must declare `coordinate_length_unit = angstrom`, `meters_per_exported_unit = 1e-10`, and `scale_policy = scientific_visualization`. This does not permit reverse import, change intrinsic scientific coordinates, or claim metre-scale glTF conformance.
+
+## 2026-08-02 — FIGURE-2 scalar-grid sampling conventions
+
+- **Authorized by**: user
+- **Scope**: Implement the following registered adapter mappings for FIGURE-2 rendering and publication export: Cube preserves its file origin and uses `origin + i * voxel_step` with inclusive boundaries; CHGCAR uses a periodic-exclusive grid with `cell / N` sample steps; XSF uses its declared `DATAGRID_3D` mapping with an explicit endpoint convention.
+- **Evidence condition**: `sci-validator` is `NOT_AUDITABLE` for a physical PASS because no FIGURE-2 field Manifest declares all adapter artifacts, periodic axes, units, and sampling conventions. This entry records the user's explicit convention authority rather than inferring it from a format name.
+- **Risk and impact**: A producer can use a convention that differs from the registered adapter contract. The implementation must serialize the selected mapping and reject unsupported or ambiguous mappings; it must not claim a physical interpretation of any scalar field.
+- **Authorization boundary**: This exception authorizes only the stated coordinate-mapping contracts. It does not establish scalar units, normalization, physical field meaning, or a `sci-validator` PASS.
+
+### Authorized extension — shared renderer frame
+
+- **Authorized by**: user
+- **Scope**: Cube and XSF adapters may transform both the structure and scalar grid into the same file-to-renderer affine frame. The file origin remains retained as adapter provenance. CPU marching cubes and GPU marching cubes/raycasting must consume the same registered endpoint convention.
+- **Risk and impact**: This changes only renderer-space placement and cell traversal. It does not establish scalar units, normalization, or a physical interpretation of the field.
+- **Authorization boundary**: The extension applies only to the registered Cube, CHGCAR, and XSF conventions above. It does not authorize inference of an unregistered format convention or a `sci-validator` PASS.
+
+## 2026-08-11 — v0.8.0 rapid Intel/Metal-only release validation
+
+- **Authorized by**: user
+- **Scope**: v0.8.0 uses maintainer-attested Intel/Metal and Blender 4.4 validation for rapid single-maintainer release. Apple Silicon is unavailable because no Apple Silicon Mac is available.
+- **Evidence condition**: The maintainer must record a reviewer identity, UTC time, candidate baseline, Blender 4.4 version, and concise PASS statements for Intel/Metal plus Blender headless and GUI validation. Apple Silicon / Metal must remain `NOT_AVAILABLE`.
+- **Risk and impact**: Manual evidence-file hashes and native artifact collection are not required. The attestation is not independently reproducible from committed evidence. Apple Silicon compatibility is not established and must not be claimed; the release can contain regressions that occur only on Apple Silicon or its Metal driver stack.
+- **Authorization boundary**: This exception permits only the limited v0.8.0 desktop-validation matrix. It does not waive the Intel/Metal or Blender gates, convert unavailable Apple Silicon validation to PASS, or authorize a claim of Apple Silicon compatibility.

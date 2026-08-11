@@ -81,11 +81,8 @@ impl GpuContext {
                 .get_texture_format_features(wgpu::TextureFormat::Depth32Float)
                 .flags
                 .contains(PUBLICATION_MSAA_FEATURE);
-        let render_config = RenderConfig::from_adapter_and_device(
-            &adapter,
-            &device,
-            publication_msaa_x4,
-        );
+        let render_config =
+            RenderConfig::from_adapter_and_device(&adapter, &device, publication_msaa_x4);
 
         let alpha_mode = if surface_caps
             .alpha_modes
