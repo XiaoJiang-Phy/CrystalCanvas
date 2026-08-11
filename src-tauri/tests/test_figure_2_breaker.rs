@@ -243,3 +243,45 @@ fn active_composition_gate_cannot_pass_by_inspecting_an_unwired_oit_shader() {
         "the unsupported OIT shader must not remain as dead evidence for a composition gate; only the admitted fallback may be tested"
     );
 }
+
+#[test]
+fn active_field_controls_reuse_gpu_resources_without_blocking_readback() {
+    let commands = source("src/commands/volumetric.rs");
+    let renderer = source("src/renderer/renderer.rs");
+    let isosurface = source("src/renderer/isosurface.rs");
+    let threshold_update = source_between(
+        &renderer,
+        "pub fn update_signed_isovalues(",
+        "pub fn update_active_isovalues_if_capacity(",
+    );
+    let opacity_update = source_between(
+        &commands,
+        "pub fn set_volume_opacity_range(",
+        "pub fn set_volume_density_cutoff(",
+    );
+
+    assert!(
+        commands.contains("spawn_blocking")
+            && commands.contains("update_active_isovalues_if_capacity")
+            && commands.contains("update_active_volume_transfer")
+            && commands.contains("isovalue must be finite and positive"),
+        "large field parsing/counting must leave the command thread, and active controls must update reusable renderer resources"
+    );
+    assert!(
+        !commands.contains("commit_active_field_update")
+            && !opacity_update.contains("prepare_field_layer"),
+        "presentation-only controls must not rebuild every field pipeline and scalar buffer"
+    );
+    assert!(
+        renderer.contains("Shared Field Scalar Buffer")
+            && renderer.contains("marching_cubes_signed_vertex_counts")
+            && isosurface.contains("Arc<wgpu::Buffer>"),
+        "paired isosurfaces and volume rendering must share one scalar upload and one signed CPU traversal"
+    );
+    assert!(
+        threshold_update.contains("queue.submit")
+            && !threshold_update.contains("Maintain::Wait")
+            && !threshold_update.contains("read_vertex_accounting"),
+        "threshold interaction must submit one asynchronous compute batch without a synchronous GPU readback"
+    );
+}

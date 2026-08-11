@@ -25,6 +25,15 @@ interface AtomDragSession {
     captureOwned: boolean;
 }
 
+interface CameraMotionBatch {
+    mode: 'pan' | 'rotate' | 'zoom';
+    dx: number;
+    dy: number;
+    delta: number;
+}
+
+const MAX_PENDING_CAMERA_BATCHES = 8;
+
 export function useCameraInteraction({
     viewportRef,
     interactionMode,
@@ -41,6 +50,69 @@ export function useCameraInteraction({
     useEffect(() => {
         const el = viewportRef.current;
         if (!el) return;
+
+        let cameraFrameId: number | null = null;
+        let cameraRequestInFlight = false;
+        const pendingCameraBatches: CameraMotionBatch[] = [];
+        let cameraBatchActive = true;
+
+        const scheduleCameraFlush = () => {
+            if (cameraFrameId !== null || !cameraBatchActive) return;
+            cameraFrameId = requestAnimationFrame(() => {
+                cameraFrameId = null;
+                flushCameraMotion();
+            });
+        };
+
+        const flushCameraMotion = () => {
+            if (cameraRequestInFlight || pendingCameraBatches.length === 0 || !cameraBatchActive) return;
+            const { mode, dx, dy, delta } = pendingCameraBatches.shift()!;
+            cameraRequestInFlight = true;
+            const request = mode === 'pan'
+                ? safeInvoke('pan_camera', { dx, dy })
+                : mode === 'rotate'
+                    ? safeInvoke('rotate_camera', { dx, dy })
+                    : safeInvoke('zoom_camera', { delta });
+            void request.catch(console.error).finally(() => {
+                cameraRequestInFlight = false;
+                if (pendingCameraBatches.length > 0) scheduleCameraFlush();
+            });
+        };
+
+        const queueCameraMotion = (
+            mode: 'pan' | 'rotate' | 'zoom',
+            dx = 0,
+            dy = 0,
+            delta = 0,
+        ) => {
+            const lastBatch = pendingCameraBatches.at(-1);
+            if (lastBatch?.mode === mode) {
+                lastBatch.dx += dx;
+                lastBatch.dy += dy;
+                lastBatch.delta += delta;
+            } else if (pendingCameraBatches.length < MAX_PENDING_CAMERA_BATCHES) {
+                pendingCameraBatches.push({ mode, dx, dy, delta });
+            } else {
+                const matchingBatch = pendingCameraBatches.findLast((batch) => batch.mode === mode);
+                if (matchingBatch) {
+                    matchingBatch.dx += dx;
+                    matchingBatch.dy += dy;
+                    matchingBatch.delta += delta;
+                } else {
+                    const duplicateIndex = pendingCameraBatches.findIndex((batch, index) => (
+                        pendingCameraBatches.findIndex((candidate) => candidate.mode === batch.mode) < index
+                    ));
+                    const duplicate = pendingCameraBatches[duplicateIndex];
+                    const target = pendingCameraBatches.find((batch) => batch.mode === duplicate.mode)!;
+                    target.dx += duplicate.dx;
+                    target.dy += duplicate.dy;
+                    target.delta += duplicate.delta;
+                    pendingCameraBatches.splice(duplicateIndex, 1);
+                    pendingCameraBatches.push({ mode, dx, dy, delta });
+                }
+            }
+            scheduleCameraFlush();
+        };
 
         const releasePointerCapture = (pointerId: number) => {
             try {
@@ -243,9 +315,9 @@ export function useCameraInteraction({
             lastMousePos.current = { x: e.clientX, y: e.clientY };
 
             if (e.buttons === 4 || (e.buttons === 1 && interactionMode === 'move')) {
-                safeInvoke('pan_camera', { dx, dy }).catch(console.error);
+                queueCameraMotion('pan', dx, dy);
             } else if (e.buttons === 1 && interactionMode === 'rotate') {
-                safeInvoke('rotate_camera', { dx, dy }).catch(console.error);
+                queueCameraMotion('rotate', dx, dy);
             }
         };
 
@@ -253,6 +325,7 @@ export function useCameraInteraction({
             if (!isDraggingCamera.current || cameraPointerId.current !== e.pointerId) return;
             isDraggingCamera.current = false;
             cameraPointerId.current = null;
+            flushCameraMotion();
             releasePointerCapture(e.pointerId);
         };
 
@@ -345,7 +418,7 @@ export function useCameraInteraction({
 
         const onWheel = (e: WheelEvent) => {
             e.preventDefault();
-            safeInvoke('zoom_camera', { delta: Math.sign(e.deltaY) }).catch(console.error);
+            queueCameraMotion('zoom', 0, 0, Math.sign(e.deltaY));
         };
 
         el.addEventListener('pointerdown', onPointerDown);
@@ -360,6 +433,10 @@ export function useCameraInteraction({
         return () => {
             const session = atomDrag.current;
             if (session) requestTerminal(session, 'cancel', true);
+            cameraBatchActive = false;
+            if (cameraFrameId !== null) cancelAnimationFrame(cameraFrameId);
+            cameraFrameId = null;
+            pendingCameraBatches.length = 0;
             isDraggingCamera.current = false;
             cameraPointerId.current = null;
             el.removeEventListener('pointerdown', onPointerDown);

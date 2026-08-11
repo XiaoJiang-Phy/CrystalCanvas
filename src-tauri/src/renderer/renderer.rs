@@ -129,10 +129,18 @@ fn draw_frozen_field_resources<'a>(
         settings.render_mode,
         crate::volumetric::FieldRenderMode::Isosurface | crate::volumetric::FieldRenderMode::Both
     ) {
-        if let Some(iso) = positive_isosurface {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) && let Some(iso) = positive_isosurface
+        {
             iso.draw(pass, camera_bind_group);
         }
-        if let Some(iso) = negative_isosurface {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) && let Some(iso) = negative_isosurface
+        {
             iso.draw(pass, camera_bind_group);
         }
     }
@@ -210,10 +218,18 @@ fn draw_publication_field_layer<'a>(
         settings.render_mode,
         crate::volumetric::FieldRenderMode::Isosurface | crate::volumetric::FieldRenderMode::Both
     ) {
-        if let (Some(iso), Some(render_pipeline)) = (positive_isosurface, &pipelines.positive) {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) && let (Some(iso), Some(render_pipeline)) = (positive_isosurface, &pipelines.positive)
+        {
             iso.draw_with_pipeline(render_pipeline, pass, camera_bind_group);
         }
-        if let (Some(iso), Some(render_pipeline)) = (negative_isosurface, &pipelines.negative) {
+        if !matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) && let (Some(iso), Some(render_pipeline)) = (negative_isosurface, &pipelines.negative)
+        {
             iso.draw_with_pipeline(render_pipeline, pass, camera_bind_group);
         }
     }
@@ -3944,6 +3960,7 @@ impl Renderer {
         scalar_unit: crate::volumetric::ScalarUnit,
         render_settings: crate::volumetric::FieldRenderSettings,
         presentation_settings: &crate::renderer::field_scene::FieldPresentationSettings,
+        precomputed_vertex_counts: Option<(u32, u32)>,
     ) -> Result<PreparedFieldLayer, ()> {
         let clip_planes = presentation_settings
             .normalized_clip_planes()
@@ -3992,32 +4009,54 @@ impl Renderer {
             .ok_or(())?;
         let positive_isovalue = render_settings.positive_isovalue;
         let negative_isovalue = render_settings.negative_isovalue;
-        let positive_vertex_capacity = if self.gpu.render_config.supports_compute_shaders
-            && !matches!(
-                render_settings.sign_mode,
-                crate::volumetric::FieldSignMode::Negative
-            ) {
-            crate::renderer::isosurface::marching_cubes_vertex_count(
-                vol,
-                positive_isovalue,
-                crate::volumetric::FieldSignMode::Positive,
-            )?
-        } else {
-            0
-        };
-        let negative_vertex_capacity = if self.gpu.render_config.supports_compute_shaders
-            && !matches!(
-                render_settings.sign_mode,
-                crate::volumetric::FieldSignMode::Positive
-            ) {
-            crate::renderer::isosurface::marching_cubes_vertex_count(
-                vol,
-                negative_isovalue,
-                crate::volumetric::FieldSignMode::Negative,
-            )?
-        } else {
-            0
-        };
+        let (exact_positive_vertices, exact_negative_vertices) =
+            if self.gpu.render_config.supports_compute_shaders {
+                match precomputed_vertex_counts {
+                    Some(counts) => counts,
+                    None => crate::renderer::isosurface::marching_cubes_signed_vertex_counts(
+                        vol,
+                        (!matches!(
+                            render_settings.sign_mode,
+                            crate::volumetric::FieldSignMode::Negative
+                        ))
+                        .then_some(positive_isovalue),
+                        (!matches!(
+                            render_settings.sign_mode,
+                            crate::volumetric::FieldSignMode::Positive
+                        ))
+                        .then_some(negative_isovalue),
+                    )?,
+                }
+            } else {
+                (0, 0)
+            };
+        let mut positive_vertex_capacity = exact_positive_vertices;
+        let mut negative_vertex_capacity = exact_negative_vertices;
+        let proposed_positive_capacity = exact_positive_vertices
+            .checked_add(exact_positive_vertices / 2)
+            .unwrap_or(exact_positive_vertices);
+        let proposed_negative_capacity = exact_negative_vertices
+            .checked_add(exact_negative_vertices / 2)
+            .unwrap_or(exact_negative_vertices);
+        let proposed_isosurface_bytes = u64::from(proposed_positive_capacity.max(3))
+            .checked_add(u64::from(proposed_negative_capacity.max(3)))
+            .and_then(|vertices| {
+                vertices.checked_mul(
+                    std::mem::size_of::<crate::renderer::isosurface::IsoVertex>() as u64,
+                )
+            })
+            .ok_or(())?;
+        let proposed_gpu_bytes = scalar_bytes
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(proposed_isosurface_bytes))
+            .and_then(|bytes| bytes.checked_add(slice_gpu_bytes))
+            .ok_or(())?;
+        if proposed_isosurface_bytes <= MAX_FIELD_ISOSURFACE_VERTEX_BYTES
+            && proposed_gpu_bytes <= MAX_ACTIVE_FIELD_GPU_BYTES
+        {
+            positive_vertex_capacity = proposed_positive_capacity;
+            negative_vertex_capacity = proposed_negative_capacity;
+        }
         let maximum_isosurface_bytes = u64::from(positive_vertex_capacity.max(3))
             .checked_add(u64::from(negative_vertex_capacity.max(3)))
             .and_then(|vertices| {
@@ -4027,7 +4066,7 @@ impl Renderer {
             })
             .ok_or(())?;
         let maximum_gpu_bytes = scalar_bytes
-            .checked_mul(4)
+            .checked_mul(2)
             .and_then(|bytes| bytes.checked_add(maximum_isosurface_bytes))
             .and_then(|bytes| bytes.checked_add(slice_gpu_bytes))
             .ok_or(())?;
@@ -4059,6 +4098,13 @@ impl Renderer {
             return Err(());
         }
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let shared_scalar_buffer = Arc::new(self.gpu.device.create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("Shared Field Scalar Buffer"),
+                    contents: bytemuck::cast_slice(vol.scalar_data()),
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ));
             let mut isosurface_pipeline = if self.gpu.render_config.supports_compute_shaders
                 && positive_vertex_capacity > 0
             {
@@ -4071,6 +4117,7 @@ impl Renderer {
                         vol,
                         positive_vertex_capacity,
                         &clip_planes,
+                        Some(shared_scalar_buffer.clone()),
                     )?,
                 )
             } else {
@@ -4094,6 +4141,7 @@ impl Renderer {
                         vol,
                         negative_vertex_capacity,
                         &clip_planes,
+                        Some(shared_scalar_buffer.clone()),
                     )?,
                 )
             } else {
@@ -4107,6 +4155,7 @@ impl Renderer {
                     vol,
                     &self.opaque_depth_view,
                     &clip_planes,
+                    Some(shared_scalar_buffer.clone()),
                 )?;
             let display_range = presentation_settings
                 .display_range
@@ -4151,6 +4200,7 @@ impl Renderer {
             let resident_field_bytes = volume_raycast_pipeline
                 .resident_bytes()
                 .checked_add(isosurface_resident_bytes)
+                .and_then(|bytes| bytes.checked_add(scalar_bytes))
                 .and_then(|bytes| bytes.checked_add(slice_gpu_bytes))
                 .ok_or(())?;
             let resource_footprint = FieldResourceFootprint {
@@ -4261,6 +4311,7 @@ impl Renderer {
             crate::volumetric::ScalarUnit::Arbitrary,
             crate::volumetric::FieldRenderSettings::default(),
             &crate::renderer::field_scene::FieldPresentationSettings::default(),
+            None,
         )
     }
 
@@ -4275,6 +4326,23 @@ impl Renderer {
             layer.scalar_unit,
             layer.render_settings,
             &layer.presentation_settings,
+            None,
+        )
+    }
+
+    pub fn prepare_field_layer_with_vertex_counts(
+        &self,
+        layer: &crate::volumetric::FieldLayer,
+        vertex_counts: (u32, u32),
+    ) -> Result<PreparedFieldLayer, ()> {
+        self.prepare_scalar_field(
+            layer.id,
+            layer.revision,
+            layer,
+            layer.scalar_unit,
+            layer.render_settings,
+            &layer.presentation_settings,
+            Some(vertex_counts),
         )
     }
 
@@ -4290,6 +4358,7 @@ impl Renderer {
             layer.scalar_unit,
             render_settings,
             &layer.presentation_settings,
+            None,
         )
     }
 
@@ -4637,6 +4706,86 @@ impl Renderer {
         true
     }
 
+    pub fn set_active_field_sign_mode(
+        &mut self,
+        sign_mode: crate::volumetric::FieldSignMode,
+    ) -> bool {
+        let resources_available = match sign_mode {
+            crate::volumetric::FieldSignMode::Positive => {
+                self.active_field_layer_pipeline.is_some()
+            }
+            crate::volumetric::FieldSignMode::Negative => {
+                self.active_negative_field_layer_pipeline.is_some()
+            }
+            crate::volumetric::FieldSignMode::Both => {
+                self.active_field_layer_pipeline.is_some()
+                    && self.active_negative_field_layer_pipeline.is_some()
+            }
+        };
+        if !resources_available {
+            return false;
+        }
+        let Some(settings) = &mut self.active_field_render_settings else {
+            return false;
+        };
+        settings.sign_mode = sign_mode;
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.representations = field_representations(*settings, &snapshot.slices);
+            let includes_isosurface = matches!(
+                settings.render_mode,
+                crate::volumetric::FieldRenderMode::Isosurface
+                    | crate::volumetric::FieldRenderMode::Both
+            );
+            snapshot.positive_isovalue = (includes_isosurface
+                && !matches!(sign_mode, crate::volumetric::FieldSignMode::Negative))
+            .then_some(settings.positive_isovalue);
+            snapshot.negative_isovalue = (includes_isosurface
+                && !matches!(sign_mode, crate::volumetric::FieldSignMode::Positive))
+            .then_some(settings.negative_isovalue);
+        }
+        if let Some(volume) = &mut self.volume_raycast_pipeline {
+            volume.set_signed_mapping(
+                &self.gpu.queue,
+                matches!(sign_mode, crate::volumetric::FieldSignMode::Both),
+            );
+        }
+        true
+    }
+
+    pub fn update_active_volume_transfer(
+        &mut self,
+        display_range: [f32; 2],
+        opacity_scale: f32,
+    ) -> bool {
+        let Some(settings) = self.active_field_render_settings else {
+            return false;
+        };
+        let Some(volume) = &mut self.volume_raycast_pipeline else {
+            return false;
+        };
+        volume.update_transfer_function(
+            &self.gpu.queue,
+            display_range,
+            (settings.opacity * opacity_scale).clamp(0.0, 1.0),
+        );
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.display_range = Some(display_range);
+            snapshot.opacity_scale = opacity_scale;
+        }
+        true
+    }
+
+    pub fn update_active_volume_density_cutoff(&mut self, density_cutoff: f32) -> bool {
+        let Some(volume) = &mut self.volume_raycast_pipeline else {
+            return false;
+        };
+        volume.set_density_cutoff(&self.gpu.queue, density_cutoff);
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            snapshot.density_cutoff = density_cutoff;
+        }
+        true
+    }
+
     pub fn set_active_isosurface_colors(&mut self, positive: [f32; 4], negative: [f32; 4]) -> bool {
         let Some(settings) = &mut self.active_field_render_settings else {
             return false;
@@ -4669,52 +4818,73 @@ impl Renderer {
         positive_threshold: f32,
         negative_threshold: f32,
     ) {
+        if self.active_field_layer_pipeline.is_none()
+            && self.active_negative_field_layer_pipeline.is_none()
+        {
+            return;
+        }
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Signed Isosurface Compute Encoder"),
+            });
         if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             self.isosurface_dispatch_size =
                 iso_pipe.update_threshold(&self.gpu.queue, grid_dims, positive_threshold);
-
-            // Dispatch compute pass immediately to update the mesh buffers
-            let mut encoder =
-                self.gpu
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Isosurface Compute Encoder"),
-                    });
             iso_pipe.dispatch_compute(&mut encoder, self.isosurface_dispatch_size);
-            self.gpu.queue.submit(std::iter::once(encoder.finish()));
-            match iso_pipe.read_vertex_accounting(&self.gpu.device) {
-                Ok(accounting) if accounting.is_lossless() => {}
-                Ok(accounting) => log::error!(
-                    "positive isosurface lost vertices: attempted={}, generated={}, written={}",
-                    accounting.attempted_vertices,
-                    accounting.generated_vertices,
-                    accounting.written_vertices,
-                ),
-                Err(error) => log::error!("positive isosurface accounting unavailable: {error}"),
-            }
         }
         if let Some(iso_pipe) = &mut self.active_negative_field_layer_pipeline {
             let dispatch_size =
                 iso_pipe.update_threshold(&self.gpu.queue, grid_dims, negative_threshold);
-            let mut encoder =
-                self.gpu
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Negative Isosurface Compute Encoder"),
-                    });
             iso_pipe.dispatch_compute(&mut encoder, dispatch_size);
-            self.gpu.queue.submit(std::iter::once(encoder.finish()));
-            match iso_pipe.read_vertex_accounting(&self.gpu.device) {
-                Ok(accounting) if accounting.is_lossless() => {}
-                Ok(accounting) => log::error!(
-                    "negative isosurface lost vertices: attempted={}, generated={}, written={}",
-                    accounting.attempted_vertices,
-                    accounting.generated_vertices,
-                    accounting.written_vertices,
-                ),
-                Err(error) => log::error!("negative isosurface accounting unavailable: {error}"),
+        }
+        self.gpu.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    pub fn update_active_isovalues_if_capacity(
+        &mut self,
+        grid_dims: [usize; 3],
+        positive_threshold: f32,
+        negative_threshold: f32,
+        positive_vertices: u32,
+        negative_vertices: u32,
+    ) -> bool {
+        let Some(settings) = self.active_field_render_settings else {
+            return false;
+        };
+        let positive_fits = matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ) || self
+            .active_field_layer_pipeline
+            .as_ref()
+            .is_some_and(|pipeline| positive_vertices <= pipeline.vertex_capacity());
+        let negative_fits = matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ) || self
+            .active_negative_field_layer_pipeline
+            .as_ref()
+            .is_some_and(|pipeline| negative_vertices <= pipeline.vertex_capacity());
+        if !positive_fits || !negative_fits {
+            return false;
+        }
+        self.update_signed_isovalues(grid_dims, positive_threshold, negative_threshold);
+        if let Some(settings) = &mut self.active_field_render_settings {
+            settings.isovalue = positive_threshold;
+            settings.positive_isovalue = positive_threshold;
+            settings.negative_isovalue = negative_threshold;
+        }
+        if let Some(snapshot) = &mut self.active_field_snapshot {
+            if snapshot.positive_isovalue.is_some() {
+                snapshot.positive_isovalue = Some(positive_threshold);
+            }
+            if snapshot.negative_isovalue.is_some() {
+                snapshot.negative_isovalue = Some(negative_threshold);
             }
         }
+        true
     }
 
     /// Update isosurface solid color.
@@ -4734,6 +4904,28 @@ impl Renderer {
         }
         if let Some(iso_pipe) = &mut self.active_negative_field_layer_pipeline {
             iso_pipe.set_opacity(&self.gpu.queue, opacity);
+        }
+        if let Some(settings) = &mut self.active_field_render_settings {
+            settings.opacity = opacity;
+            settings.color[3] = opacity;
+            settings.color_negative[3] = opacity;
+        }
+        let volume_mapping = self.active_field_snapshot.as_mut().map(|snapshot| {
+            snapshot.positive_color[3] = opacity;
+            snapshot.negative_color[3] = opacity;
+            (
+                snapshot.display_range.unwrap_or(snapshot.scalar_range),
+                snapshot.opacity_scale,
+            )
+        });
+        if let (Some(volume), Some((display_range, opacity_scale))) =
+            (&mut self.volume_raycast_pipeline, volume_mapping)
+        {
+            volume.update_transfer_function(
+                &self.gpu.queue,
+                display_range,
+                (opacity * opacity_scale).clamp(0.0, 1.0),
+            );
         }
     }
 }

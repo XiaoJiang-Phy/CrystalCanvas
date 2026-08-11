@@ -432,15 +432,15 @@ pub fn marching_cubes_cpu(
     Ok(vertices)
 }
 
-pub(crate) fn marching_cubes_vertex_count(
+pub(crate) fn marching_cubes_signed_vertex_counts(
     vol: &impl ScalarFieldView,
-    threshold: f32,
-    sign_mode: crate::volumetric::FieldSignMode,
-) -> Result<u32, ()> {
+    positive_threshold: Option<f32>,
+    negative_threshold: Option<f32>,
+) -> Result<(u32, u32), ()> {
     let mapping = vol.grid_mapping();
     let [nx, ny, nz] = mapping.dimensions;
     if nx < 2 || ny < 2 || nz < 2 {
-        return Ok(0);
+        return Ok((0, 0));
     }
     let data = vol.scalar_data();
     let [cells_x, cells_y, cells_z] = mapping.cell_counts();
@@ -456,32 +456,42 @@ pub(crate) fn marching_cubes_vertex_count(
         });
         sample(data, index[0], index[1], index[2], nx, ny)
     };
-    let mut count = 0_u32;
+    let mut positive_count = 0_u32;
+    let mut negative_count = 0_u32;
     for iz in 0..cells_z {
         for iy in 0..cells_y {
             for ix in 0..cells_x {
-                let mut cube_case = 0_usize;
+                let mut positive_case = 0_usize;
+                let mut negative_case = 0_usize;
                 for (corner, &(ox, oy, oz)) in CORNER_OFFSETS.iter().enumerate() {
                     let value = sample_mapped(ix + ox, iy + oy, iz + oz);
-                    let inside = match sign_mode {
-                        crate::volumetric::FieldSignMode::Positive => value >= threshold,
-                        crate::volumetric::FieldSignMode::Negative => value <= -threshold,
-                        crate::volumetric::FieldSignMode::Both => value.abs() >= threshold,
-                    };
-                    if inside {
-                        cube_case |= 1 << corner;
+                    if positive_threshold.is_some_and(|threshold| value >= threshold) {
+                        positive_case |= 1 << corner;
+                    }
+                    if negative_threshold.is_some_and(|threshold| value <= -threshold) {
+                        negative_case |= 1 << corner;
                     }
                 }
-                for edge in TRI_TABLE[cube_case] {
-                    if edge < 0 {
-                        break;
+                if positive_threshold.is_some() {
+                    for edge in TRI_TABLE[positive_case] {
+                        if edge < 0 {
+                            break;
+                        }
+                        positive_count = positive_count.checked_add(1).ok_or(())?;
                     }
-                    count = count.checked_add(1).ok_or(())?;
+                }
+                if negative_threshold.is_some() {
+                    for edge in TRI_TABLE[negative_case] {
+                        if edge < 0 {
+                            break;
+                        }
+                        negative_count = negative_count.checked_add(1).ok_or(())?;
+                    }
                 }
             }
         }
     }
-    Ok(count)
+    Ok((positive_count, negative_count))
 }
 
 // ─── GPU Isosurface Pipeline ─────────────────────────────────────────────────
@@ -535,7 +545,8 @@ pub struct IsosurfacePipeline {
     accounting_readback: wgpu::Buffer,
 
     // Kept to allow potential dynamic re-computation without re-uploading
-    scalar_buffer: wgpu::Buffer,
+    scalar_buffer: std::sync::Arc<wgpu::Buffer>,
+    scalar_bytes_accounted_elsewhere: bool,
     _edge_table_buffer: wgpu::Buffer,
     _tri_table_buffer: wgpu::Buffer,
 
@@ -562,7 +573,11 @@ impl IsosurfacePipeline {
             .saturating_add(self.indirect_buffer.size())
             .saturating_add(self.accounting_buffer.size())
             .saturating_add(self.accounting_readback.size())
-            .saturating_add(self.scalar_buffer.size())
+            .saturating_add(if self.scalar_bytes_accounted_elsewhere {
+                0
+            } else {
+                self.scalar_buffer.size()
+            })
             .saturating_add(self._edge_table_buffer.size())
             .saturating_add(self._tri_table_buffer.size())
     }
@@ -571,6 +586,12 @@ impl IsosurfacePipeline {
     pub fn vertex_buffer_bytes(&self) -> u64 {
         self.vertices_buffer.size()
     }
+
+    #[must_use]
+    pub fn vertex_capacity(&self) -> u32 {
+        let vertex_bytes = std::mem::size_of::<IsoVertex>() as u64;
+        u32::try_from(self.vertices_buffer.size() / vertex_bytes).unwrap_or(u32::MAX)
+    }
     pub fn new(
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
@@ -578,9 +599,9 @@ impl IsosurfacePipeline {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         vol: &impl ScalarFieldView,
     ) -> Self {
-        let vertex_capacity =
-            marching_cubes_vertex_count(vol, 0.0, crate::volumetric::FieldSignMode::Positive)
-                .expect("validated scalar field must have a countable isosurface");
+        let vertex_capacity = marching_cubes_signed_vertex_counts(vol, Some(0.0), None)
+            .expect("validated scalar field must have a countable isosurface")
+            .0;
         Self::new_with_vertex_capacity(
             device,
             _queue,
@@ -589,6 +610,7 @@ impl IsosurfacePipeline {
             vol,
             vertex_capacity,
             &[],
+            None,
         )
         .expect("default isosurface configuration is valid")
     }
@@ -601,6 +623,7 @@ impl IsosurfacePipeline {
         vol: &impl ScalarFieldView,
         vertex_capacity: u32,
         clip_planes: &[crate::renderer::field_scene::FieldClipPlane],
+        shared_scalar_buffer: Option<std::sync::Arc<wgpu::Buffer>>,
     ) -> Result<Self, ()> {
         if clip_planes.len() > crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES
             || clip_planes.iter().any(|plane| {
@@ -722,10 +745,15 @@ impl IsosurfacePipeline {
         });
 
         // 3. Set up Scalar Field buffer
-        let scalar_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("MC Scalar Field Buffer"),
-            contents: bytemuck::cast_slice(vol.scalar_data()),
-            usage: wgpu::BufferUsages::STORAGE,
+        let scalar_bytes_accounted_elsewhere = shared_scalar_buffer.is_some();
+        let scalar_buffer = shared_scalar_buffer.unwrap_or_else(|| {
+            std::sync::Arc::new(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("MC Scalar Field Buffer"),
+                    contents: bytemuck::cast_slice(vol.scalar_data()),
+                    usage: wgpu::BufferUsages::STORAGE,
+                }),
+            )
         });
 
         let max_vertices = vertex_capacity.max(3);
@@ -943,6 +971,7 @@ impl IsosurfacePipeline {
             accounting_buffer,
             accounting_readback,
             scalar_buffer,
+            scalar_bytes_accounted_elsewhere,
             _edge_table_buffer: edge_table_buffer,
             _tri_table_buffer: tri_table_buffer,
             cur_color: [0.0, 0.722, 0.831, 0.5],
@@ -1323,6 +1352,29 @@ mod tests {
             verts.len() % 3,
             0,
             "Triangle list length must be divisible by 3"
+        );
+    }
+
+    #[test]
+    fn signed_vertex_counter_matches_each_cpu_branch() {
+        let field = |x: f64, y: f64, z: f64| (x - 0.7 * y + 0.25 * z - 1.0) as f32;
+        let vol = make_vol(12, 4.0, field);
+        let negated = make_vol(12, 4.0, |x, y, z| -field(x, y, z));
+        let threshold = 0.35;
+        let expected_positive = marching_cubes_cpu(&vol, threshold).unwrap().len() as u32;
+        let expected_negative = marching_cubes_cpu(&negated, threshold).unwrap().len() as u32;
+
+        assert_eq!(
+            marching_cubes_signed_vertex_counts(&vol, Some(threshold), Some(threshold)).unwrap(),
+            (expected_positive, expected_negative),
+        );
+        assert_eq!(
+            marching_cubes_signed_vertex_counts(&vol, Some(threshold), None).unwrap(),
+            (expected_positive, 0),
+        );
+        assert_eq!(
+            marching_cubes_signed_vertex_counts(&vol, None, Some(threshold)).unwrap(),
+            (0, expected_negative),
         );
     }
 

@@ -1090,12 +1090,13 @@ test('UI-1F volume-only mode updates the renderer-owned active draw settings', (
 });
 
 test('UI-1F primary volumetric load replaces old renderer field resources', () => {
-    const load_start = ui_1f_volumetric_backend_clean_source.indexOf('pub fn load_volumetric_file');
-    const add_start = ui_1f_volumetric_backend_clean_source.indexOf('pub fn add_field_layer');
+    const load_start = ui_1f_volumetric_backend_clean_source.search(/pub (?:async )?fn load_volumetric_file/);
+    const add_start = ui_1f_volumetric_backend_clean_source.search(/pub (?:async )?fn add_field_layer/);
+    assert.ok(load_start >= 0 && add_start > load_start, 'volumetric command boundaries must remain discoverable');
     const load = ui_1f_volumetric_backend_clean_source.slice(load_start, add_start);
     assert.match(
         load,
-        /prepare_field_layer\(active_layer\)[\s\S]*?commit_replacement_field_layer/,
+        /prepare_field_layer_with_vertex_counts\(active_layer,\s*vertex_counts\)[\s\S]*?commit_replacement_field_layer/,
         'Load Volumetric Data must commit a replacement instead of retaining the previous field',
     );
 });

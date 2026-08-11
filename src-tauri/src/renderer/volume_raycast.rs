@@ -74,7 +74,8 @@ pub struct VolumeRaycastPipeline {
     bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
     uniforms: VolumeRaycastUniforms,
-    scalar_buffer: wgpu::Buffer,
+    scalar_buffer: std::sync::Arc<wgpu::Buffer>,
+    scalar_bytes_accounted_elsewhere: bool,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
@@ -89,6 +90,7 @@ impl VolumeRaycastPipeline {
         volumetric_data: &impl ScalarFieldView,
         depth_view: &wgpu::TextureView,
         clip_planes: &[crate::renderer::field_scene::FieldClipPlane],
+        shared_scalar_buffer: Option<std::sync::Arc<wgpu::Buffer>>,
     ) -> Result<Self, ()> {
         if clip_planes.len() > crate::renderer::field_scene::MAX_FIELD_CLIP_PLANES {
             return Err(());
@@ -270,10 +272,15 @@ impl VolumeRaycastPipeline {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let scalar_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Volume Raycast Scalar Buffer"),
-            contents: bytemuck::cast_slice(data),
-            usage: wgpu::BufferUsages::STORAGE,
+        let scalar_bytes_accounted_elsewhere = shared_scalar_buffer.is_some();
+        let scalar_buffer = shared_scalar_buffer.unwrap_or_else(|| {
+            std::sync::Arc::new(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Volume Raycast Scalar Buffer"),
+                    contents: bytemuck::cast_slice(data),
+                    usage: wgpu::BufferUsages::STORAGE,
+                }),
+            )
         });
 
         let vertices = [
@@ -384,6 +391,7 @@ impl VolumeRaycastPipeline {
             uniform_buffer,
             uniforms,
             scalar_buffer,
+            scalar_bytes_accounted_elsewhere,
             vertex_buffer,
             index_buffer,
             index_count,
@@ -429,7 +437,11 @@ impl VolumeRaycastPipeline {
     pub fn resident_bytes(&self) -> u64 {
         self.uniform_buffer
             .size()
-            .saturating_add(self.scalar_buffer.size())
+            .saturating_add(if self.scalar_bytes_accounted_elsewhere {
+                0
+            } else {
+                self.scalar_buffer.size()
+            })
             .saturating_add(self.vertex_buffer.size())
             .saturating_add(self.index_buffer.size())
     }

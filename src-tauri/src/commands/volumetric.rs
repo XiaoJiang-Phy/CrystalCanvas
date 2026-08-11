@@ -21,32 +21,42 @@ fn initial_isovalue(data_min: f32, data_max: f32) -> Option<f32> {
     })
 }
 
-fn commit_active_field_update(
-    state: &mut crate::crystal_state::CrystalState,
-    renderer: &mut crate::renderer::renderer::Renderer,
-    update: impl FnOnce(&mut crate::volumetric::FieldLayer) -> Result<(), IpcError>,
-) -> IpcResult<()> {
-    let mut candidate = state.field_scene.clone();
-    let layer = candidate
-        .active_layer_mut()
-        .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?;
-    update(layer)?;
-    layer
-        .presentation_settings
-        .validate()
-        .map_err(IpcError::invalid_argument)?;
-    let prepared = renderer
-        .prepare_field_layer(layer)
-        .map_err(|_| IpcError::render("field presentation exceeds the available GPU budget"))?;
-    renderer
-        .commit_field_layer(prepared, layer.id, layer.revision)
-        .map_err(|_| IpcError::render("stale field presentation preparation"))?;
-    state.field_scene = candidate;
-    Ok(())
+async fn count_isosurface_vertices(
+    layer: crate::volumetric::FieldLayer,
+    positive_threshold: Option<f32>,
+    negative_threshold: Option<f32>,
+) -> IpcResult<(u32, u32)> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::renderer::isosurface::marching_cubes_signed_vertex_counts(
+            &layer,
+            positive_threshold,
+            negative_threshold,
+        )
+        .map_err(|_| IpcError::render("signed isosurface vertex count overflow"))
+    })
+    .await
+    .map_err(|error| IpcError::from(format!("isosurface counter task failed: {error}")))?
+}
+
+fn signed_count_thresholds(
+    settings: crate::volumetric::FieldRenderSettings,
+) -> (Option<f32>, Option<f32>) {
+    (
+        (!matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Negative
+        ))
+        .then_some(settings.positive_isovalue),
+        (!matches!(
+            settings.sign_mode,
+            crate::volumetric::FieldSignMode::Positive
+        ))
+        .then_some(settings.negative_isovalue),
+    )
 }
 
 #[tauri::command]
-pub fn load_volumetric_file(
+pub async fn load_volumetric_file(
     path: String,
     app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
@@ -67,32 +77,40 @@ pub fn load_volumetric_file(
         .unwrap_or("")
         .to_lowercase();
 
-    let mut new_state = match extension.as_str() {
-        "chgcar" | "locpot" => {
-            crate::io::chgcar_parser::parse_chgcar(&path).map_err(IpcError::parse)?
-        }
-        "cube" => crate::io::cube_parser::parse_cube(&path).map_err(IpcError::parse)?,
-        "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&path)
-            .map_err(IpcError::parse)?,
-        _ => {
-            if filename.starts_with("chgcar")
-                || filename.starts_with("locpot")
-                || filename.starts_with("aeccar")
-            {
-                crate::io::chgcar_parser::parse_chgcar(&path).map_err(IpcError::parse)?
-            } else {
-                return Err(IpcError::invalid_argument(format!(
-                    "unsupported volumetric format: ext='{}', file='{}'",
-                    extension, filename
-                )));
+    let parse_path = path.clone();
+    let parse_extension = extension.clone();
+    let parse_filename = filename.clone();
+    let (mut new_state, source_sha256) = tauri::async_runtime::spawn_blocking(move || {
+        let new_state = match parse_extension.as_str() {
+            "chgcar" | "locpot" => {
+                crate::io::chgcar_parser::parse_chgcar(&parse_path).map_err(IpcError::parse)?
             }
-        }
-    };
-    new_state
-        .validate_structural_invariants()
-        .map_err(IpcError::parse)?;
-    let source_sha256 =
-        crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
+            "cube" => crate::io::cube_parser::parse_cube(&parse_path).map_err(IpcError::parse)?,
+            "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&parse_path)
+                .map_err(IpcError::parse)?,
+            _ => {
+                if parse_filename.starts_with("chgcar")
+                    || parse_filename.starts_with("locpot")
+                    || parse_filename.starts_with("aeccar")
+                {
+                    crate::io::chgcar_parser::parse_chgcar(&parse_path).map_err(IpcError::parse)?
+                } else {
+                    return Err(IpcError::invalid_argument(format!(
+                        "unsupported volumetric format: ext='{}', file='{}'",
+                        parse_extension, parse_filename
+                    )));
+                }
+            }
+        };
+        new_state
+            .validate_structural_invariants()
+            .map_err(IpcError::parse)?;
+        let source_sha256 =
+            crate::volumetric::source_artifact_sha256(&parse_path).map_err(IpcError::parse)?;
+        Ok::<_, IpcError>((new_state, source_sha256))
+    })
+    .await
+    .map_err(|error| IpcError::from(format!("volumetric parser task failed: {error}")))??;
 
     let admitted = new_state
         .admit_volumetric_import(filename.clone(), source_sha256)
@@ -108,6 +126,16 @@ pub fn load_volumetric_file(
             "volumetric scalar range is not usable",
         ));
     }
+
+    let active_layer = new_state
+        .field_scene
+        .active_layer()
+        .cloned()
+        .ok_or_else(|| IpcError::render("new field layer is missing"))?;
+    let (positive_threshold, negative_threshold) =
+        signed_count_thresholds(active_layer.render_settings);
+    let vertex_counts =
+        count_isosurface_vertices(active_layer, positive_threshold, negative_threshold).await?;
 
     let mut cs = crystal_state
         .lock()
@@ -131,7 +159,7 @@ pub fn load_volumetric_file(
         .active_layer()
         .ok_or_else(|| IpcError::render("new field layer is missing"))?;
     let prepared_volumetric = r
-        .prepare_field_layer(active_layer)
+        .prepare_field_layer_with_vertex_counts(active_layer, vertex_counts)
         .map_err(|_| IpcError::render("GPU out of memory while preparing volumetric grid"))?;
 
     r.clear_non_field_structure_bound_overlays();
@@ -174,31 +202,68 @@ pub fn load_volumetric_file(
 }
 
 #[tauri::command]
-pub fn set_isovalue(
+pub async fn set_isovalue(
     value: f32,
     layer_id: u64,
     expected_revision: u64,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<()> {
-    let mut cs = crystal_state
-        .lock()
-        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-    require_field_revision(&cs.field_scene, expected_revision)?;
-    let layer = cs
-        .field_scene
-        .active_layer()
-        .filter(|layer| layer.id == layer_id)
-        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    if !value.is_finite() || value <= 0.0 {
+        return Err(IpcError::invalid_argument(
+            "isovalue must be finite and positive",
+        ));
+    }
+    let layer = {
+        let cs = crystal_state
+            .lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        require_field_revision(&cs.field_scene, expected_revision)?;
+        cs.field_scene
+            .active_layer()
+            .filter(|layer| layer.id == layer_id)
+            .cloned()
+            .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?
+    };
+    let exceeds_range = match layer.render_settings.sign_mode {
+        crate::volumetric::FieldSignMode::Positive => value > layer.data_max,
+        crate::volumetric::FieldSignMode::Negative => value > -layer.data_min,
+        crate::volumetric::FieldSignMode::Both => value > layer.data_max.max(-layer.data_min),
+    };
+    if exceeds_range {
+        return Err(IpcError::invalid_argument(
+            "isovalue exceeds its source scalar range",
+        ));
+    }
     let mut render_settings = layer.render_settings;
     render_settings.isovalue = value;
     render_settings.positive_isovalue = value;
     render_settings.negative_isovalue = value;
+    let (positive_threshold, negative_threshold) = signed_count_thresholds(render_settings);
+    let (positive_vertices, negative_vertices) =
+        count_isosurface_vertices(layer.clone(), positive_threshold, negative_threshold).await?;
+    let mut cs = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&cs.field_scene, expected_revision)?;
+    let current_layer = cs
+        .field_scene
+        .active_layer()
+        .filter(|current| current.id == layer_id && current.revision == layer.revision)
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    r.update_field_render_settings(layer, render_settings)
-        .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
+    if !r.update_active_isovalues_if_capacity(
+        current_layer.grid_dims,
+        value,
+        value,
+        positive_vertices,
+        negative_vertices,
+    ) {
+        r.update_field_render_settings(current_layer, render_settings)
+            .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
+    }
 
     // Sync volume clip threshold + density cutoff (Both mode)
     let is_both = matches!(
@@ -225,7 +290,7 @@ pub fn set_isovalue(
 /// one revision-checked active layer.  The legacy `set_isovalue` command keeps
 /// its linked-threshold behavior for existing callers.
 #[tauri::command]
-pub fn set_signed_isovalues(
+pub async fn set_signed_isovalues(
     positive_value: f32,
     negative_value: f32,
     layer_id: u64,
@@ -242,15 +307,18 @@ pub fn set_signed_isovalues(
             "signed isovalues must be finite and positive",
         ));
     }
-    let mut state = crystal_state
-        .lock()
-        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-    require_field_revision(&state.field_scene, expected_revision)?;
-    let layer = state
-        .field_scene
-        .active_layer()
-        .filter(|layer| layer.id == layer_id)
-        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    let layer = {
+        let state = crystal_state
+            .lock()
+            .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+        require_field_revision(&state.field_scene, expected_revision)?;
+        state
+            .field_scene
+            .active_layer()
+            .filter(|layer| layer.id == layer_id)
+            .cloned()
+            .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?
+    };
     if positive_value > layer.data_max || negative_value > -layer.data_min {
         return Err(IpcError::invalid_argument(
             "signed isovalue exceeds its source scalar range",
@@ -259,12 +327,32 @@ pub fn set_signed_isovalues(
     let mut settings = layer.render_settings;
     settings.positive_isovalue = positive_value;
     settings.negative_isovalue = negative_value;
+    let (positive_threshold, negative_threshold) = signed_count_thresholds(settings);
+    let (positive_vertices, negative_vertices) =
+        count_isosurface_vertices(layer.clone(), positive_threshold, negative_threshold).await?;
+    let mut state = crystal_state
+        .lock()
+        .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    let current_layer = state
+        .field_scene
+        .active_layer()
+        .filter(|current| current.id == layer_id && current.revision == layer.revision)
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    renderer
-        .update_field_render_settings(layer, settings)
-        .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
+    if !renderer.update_active_isovalues_if_capacity(
+        current_layer.grid_dims,
+        positive_value,
+        negative_value,
+        positive_vertices,
+        negative_vertices,
+    ) {
+        renderer
+            .update_field_render_settings(current_layer, settings)
+            .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
+    }
     if let Some(layer) = state.field_scene.active_layer_mut() {
         layer.render_settings.positive_isovalue = positive_value;
         layer.render_settings.negative_isovalue = negative_value;
@@ -375,11 +463,6 @@ pub fn set_isosurface_sign_mode(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> IpcResult<()> {
     let mode = mode.parse("mode")?;
-    let sign_mode: u32 = match mode {
-        IsosurfaceSignMode::Positive => 0,
-        IsosurfaceSignMode::Negative => 1,
-        IsosurfaceSignMode::Both => 2,
-    };
     let field_sign_mode = match mode {
         IsosurfaceSignMode::Positive => crate::volumetric::FieldSignMode::Positive,
         IsosurfaceSignMode::Negative => crate::volumetric::FieldSignMode::Negative,
@@ -392,18 +475,15 @@ pub fn set_isosurface_sign_mode(
     let Some(layer) = cs.field_scene.active_layer() else {
         return Ok(());
     };
-    let mut render_settings = layer.render_settings;
-    render_settings.sign_mode = field_sign_mode;
-
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    r.update_field_render_settings(layer, render_settings)
-        .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
-
-    // Sync volume signed mapping with sign_mode
-    let use_signed = sign_mode == 2;
-    r.with_active_volume_pipeline(|volume, queue| volume.set_signed_mapping(queue, use_signed));
+    if !r.set_active_field_sign_mode(field_sign_mode) {
+        let mut render_settings = layer.render_settings;
+        render_settings.sign_mode = field_sign_mode;
+        r.update_field_render_settings(layer, render_settings)
+            .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
+    }
     if let Some(layer) = cs.field_scene.active_layer_mut() {
         layer.render_settings.sign_mode = field_sign_mode;
     }
@@ -473,14 +553,30 @@ pub fn set_volume_opacity_range(
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let mut presentation = state
+        .field_scene
+        .active_layer()
+        .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?
+        .presentation_settings
+        .clone();
+    let opacity_scale = opacity_scale.clamp(0.0, 10.0);
+    presentation.display_range = Some([min, max]);
+    presentation.opacity_scale = opacity_scale;
+    presentation
+        .validate()
+        .map_err(IpcError::invalid_argument)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    commit_active_field_update(&mut state, &mut renderer, |layer| {
-        layer.presentation_settings.display_range = Some([min, max]);
-        layer.presentation_settings.opacity_scale = opacity_scale.clamp(0.0, 10.0);
-        Ok(())
-    })
+    if !renderer.update_active_volume_transfer([min, max], opacity_scale) {
+        return Err(IpcError::render("active volume renderer is unavailable"));
+    }
+    let layer = state
+        .field_scene
+        .active_layer_mut()
+        .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?;
+    layer.presentation_settings = presentation;
+    Ok(())
 }
 
 #[tauri::command]
@@ -497,13 +593,28 @@ pub fn set_volume_density_cutoff(
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    let mut presentation = state
+        .field_scene
+        .active_layer()
+        .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?
+        .presentation_settings
+        .clone();
+    presentation.density_cutoff = cutoff;
+    presentation
+        .validate()
+        .map_err(IpcError::invalid_argument)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    commit_active_field_update(&mut state, &mut renderer, |layer| {
-        layer.presentation_settings.density_cutoff = cutoff;
-        Ok(())
-    })
+    if !renderer.update_active_volume_density_cutoff(cutoff) {
+        return Err(IpcError::render("active volume renderer is unavailable"));
+    }
+    let layer = state
+        .field_scene
+        .active_layer_mut()
+        .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?;
+    layer.presentation_settings = presentation;
+    Ok(())
 }
 
 #[tauri::command]
@@ -705,7 +816,7 @@ fn apply_explicit_scalar_unit(
 }
 
 #[tauri::command]
-pub fn add_field_layer(
+pub async fn add_field_layer(
     path: String,
     scalar_unit: Option<String>,
     expected_revision: u64,
@@ -713,8 +824,6 @@ pub fn add_field_layer(
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
 ) -> IpcResult<FieldSceneInfo> {
-    let source_sha256 =
-        crate::volumetric::source_artifact_sha256(&path).map_err(IpcError::parse)?;
     let source_name = std::path::Path::new(&path)
         .file_name()
         .and_then(|value| value.to_str())
@@ -725,22 +834,32 @@ pub fn add_field_layer(
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let parsed = match if extension.is_empty() {
-        source_name.as_str()
-    } else {
-        extension.as_str()
-    } {
-        "cube" => crate::io::cube_parser::parse_cube(&path),
-        "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&path),
-        "chgcar" | "locpot" => crate::io::chgcar_parser::parse_chgcar(&path),
-        _ => return Err(IpcError::invalid_argument("unsupported field-layer format")),
-    }
-    .map_err(IpcError::parse)?;
     let label = std::path::Path::new(&path)
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("field")
         .to_owned();
+    let parse_path = path.clone();
+    let parse_source_name = source_name.clone();
+    let parse_extension = extension.clone();
+    let (parsed, source_sha256) = tauri::async_runtime::spawn_blocking(move || {
+        let parsed = match if parse_extension.is_empty() {
+            parse_source_name.as_str()
+        } else {
+            parse_extension.as_str()
+        } {
+            "cube" => crate::io::cube_parser::parse_cube(&parse_path),
+            "xsf" => crate::io::xsf_volumetric_parser::parse_xsf_volumetric(&parse_path),
+            "chgcar" | "locpot" => crate::io::chgcar_parser::parse_chgcar(&parse_path),
+            _ => return Err(IpcError::invalid_argument("unsupported field-layer format")),
+        }
+        .map_err(IpcError::parse)?;
+        let source_sha256 =
+            crate::volumetric::source_artifact_sha256(&parse_path).map_err(IpcError::parse)?;
+        Ok::<_, IpcError>((parsed, source_sha256))
+    })
+    .await
+    .map_err(|error| IpcError::from(format!("field-layer parser task failed: {error}")))??;
     let mut volumetric = parsed
         .volumetric_data
         .ok_or_else(|| IpcError::parse("no volumetric data found in file"))?;

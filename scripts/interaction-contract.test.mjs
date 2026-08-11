@@ -389,6 +389,7 @@ test('INTERACT-1B keeps a camera session isolated from a foreign atom pointer', 
             clientX: 20,
             clientY: 30,
         });
+        harness.frames.flush();
         await settle();
 
         assert.deepEqual(harness.viewport.capture_log, [31], 'a foreign atom pointer cannot acquire capture');
@@ -450,6 +451,7 @@ test('INTERACT-1B rejects foreign primary completion while a camera owns select 
                     clientX: 120,
                     clientY: 230,
                 });
+                harness.frames.flush();
                 await settle();
                 assert.deepEqual(harness.ipc.calls_for('pan_camera'), [{
                     command: 'pan_camera',
@@ -499,6 +501,7 @@ test('INTERACT-1B recovers camera ownership after capture acquisition throws', a
             clientX: 25,
             clientY: 35,
         });
+        harness.frames.flush();
         await settle();
 
         assert.deepEqual(harness.viewport.capture_log, [42], 'a failed capture cannot retain the camera owner');
@@ -537,6 +540,7 @@ test('INTERACT-1B recovers camera ownership after lost pointer capture', async (
             clientX: 35,
             clientY: 45,
         });
+        harness.frames.flush();
         await settle();
 
         assert.deepEqual(harness.viewport.capture_log, [51, 52], 'lost capture releases the old owner for a new pointer');
@@ -798,12 +802,14 @@ test('INTERACT-1B preserves non-drag viewport semantics and keeps pointer listen
     const rotate = create_harness({ interactionMode: 'rotate', selectedAtoms: [] });
     rotate.viewport.dispatch('pointerdown', { button: 0, buttons: 1, pointerId: 3, clientX: 10, clientY: 20 });
     rotate.viewport.dispatch('pointermove', { buttons: 1, pointerId: 3, clientX: 30, clientY: 45 });
+    rotate.frames.flush();
     assert.equal(rotate.ipc.count('rotate_camera'), 1);
     assert.equal(rotate.ipc.count('begin_atom_drag'), 0);
 
     const pan = create_harness({ interactionMode: 'move', selectedAtoms: [] });
     pan.viewport.dispatch('pointerdown', { button: 0, buttons: 1, pointerId: 4, clientX: 10, clientY: 20 });
     pan.viewport.dispatch('pointermove', { buttons: 1, pointerId: 4, clientX: 30, clientY: 45 });
+    pan.frames.flush();
     assert.equal(pan.ipc.count('pan_camera'), 1, 'empty selection remains a camera pan');
     assert.equal(pan.ipc.count('begin_atom_drag'), 0);
 
@@ -816,6 +822,7 @@ test('INTERACT-1B preserves non-drag viewport semantics and keeps pointer listen
     assert.equal(select.ipc.count('begin_atom_drag'), 0);
 
     const wheel = select.viewport.dispatch('wheel', { deltaY: 8 });
+    select.frames.flush();
     assert.equal(wheel.defaultPrevented, true, 'viewport wheel remains owned by camera zoom');
     assert.equal(select.ipc.count('zoom_camera'), 1);
 
@@ -824,6 +831,160 @@ test('INTERACT-1B preserves non-drag viewport semantics and keeps pointer listen
             const listeners = target.listeners.get(type)?.size ?? 0;
             if (target === select.window_target) assert.equal(listeners, 0, 'window must not own 3D pointer events');
         }
+    }
+});
+
+test('INTERACT-1B coalesces camera motion to one IPC per animation frame', async () => {
+    const harness = create_harness({ interactionMode: 'rotate', selectedAtoms: [] });
+    try {
+        harness.viewport.dispatch('pointerdown', {
+            button: 0,
+            buttons: 1,
+            pointerId: 61,
+            clientX: 10,
+            clientY: 20,
+        });
+        for (let index = 1; index <= 64; index += 1) {
+            harness.viewport.dispatch('pointermove', {
+                buttons: 1,
+                pointerId: 61,
+                clientX: 10 + index,
+                clientY: 20 + index * 2,
+            });
+        }
+        assert.equal(harness.ipc.count('rotate_camera'), 0, 'camera IPC waits for its frame');
+        harness.frames.flush();
+        await settle();
+        assert.deepEqual(harness.ipc.calls_for('rotate_camera'), [{
+            command: 'rotate_camera',
+            args: { dx: 64, dy: 128 },
+        }], 'all motion in one frame is accumulated without losing the final camera position');
+    }
+    finally {
+        harness.runtime.unmount();
+        await settle_many();
+    }
+});
+
+test('INTERACT-1B keeps queued drag and wheel batches ordered while camera IPC is in flight', async () => {
+    const harness = create_harness({ interactionMode: 'rotate', selectedAtoms: [] });
+    const first_rotate = deferred();
+    let rotate_count = 0;
+    harness.ipc.handlers.set('rotate_camera', () => {
+        rotate_count += 1;
+        return rotate_count === 1 ? first_rotate.promise : Promise.resolve(null);
+    });
+    try {
+        harness.viewport.dispatch('pointerdown', {
+            button: 0,
+            buttons: 1,
+            pointerId: 62,
+            clientX: 0,
+            clientY: 0,
+        });
+        harness.viewport.dispatch('pointermove', {
+            buttons: 1,
+            pointerId: 62,
+            clientX: 3,
+            clientY: 4,
+        });
+        harness.frames.flush();
+        harness.viewport.dispatch('wheel', { deltaY: 1 });
+        harness.viewport.dispatch('pointermove', {
+            buttons: 1,
+            pointerId: 62,
+            clientX: 8,
+            clientY: 10,
+        });
+        harness.frames.flush();
+
+        assert.deepEqual(harness.ipc.calls, [{
+            command: 'rotate_camera',
+            args: { dx: 3, dy: 4 },
+        }], 'a pending camera request serializes later batches');
+
+        first_rotate.resolve(null);
+        await settle();
+        harness.frames.flush();
+        await settle();
+        harness.frames.flush();
+        await settle();
+
+        assert.deepEqual(harness.ipc.calls, [
+            { command: 'rotate_camera', args: { dx: 3, dy: 4 } },
+            { command: 'zoom_camera', args: { delta: 1 } },
+            { command: 'rotate_camera', args: { dx: 5, dy: 6 } },
+        ], 'different camera operations keep their order and never share deltas');
+    }
+    finally {
+        harness.runtime.unmount();
+        await settle_many();
+    }
+});
+
+test('INTERACT-1B bounds camera backlog while preserving accumulated motion', async () => {
+    const harness = create_harness({ interactionMode: 'rotate', selectedAtoms: [] });
+    const first_rotate = deferred();
+    let rotate_count = 0;
+    harness.ipc.handlers.set('rotate_camera', () => {
+        rotate_count += 1;
+        return rotate_count === 1 ? first_rotate.promise : Promise.resolve(null);
+    });
+    try {
+        harness.viewport.dispatch('pointerdown', {
+            button: 0,
+            buttons: 1,
+            pointerId: 63,
+            clientX: 0,
+            clientY: 0,
+        });
+        harness.viewport.dispatch('pointermove', {
+            buttons: 1,
+            pointerId: 63,
+            clientX: 1,
+            clientY: 1,
+        });
+        harness.frames.flush();
+
+        let coordinate = 1;
+        for (let index = 0; index < 64; index += 1) {
+            if (index % 2 === 0) {
+                harness.viewport.dispatch('wheel', { deltaY: 1 });
+            }
+            else {
+                coordinate += 1;
+                harness.viewport.dispatch('pointermove', {
+                    buttons: 1,
+                    pointerId: 63,
+                    clientX: coordinate,
+                    clientY: coordinate,
+                });
+            }
+            harness.frames.flush();
+        }
+
+        first_rotate.resolve(null);
+        for (let index = 0; index < 12; index += 1) {
+            await settle();
+            harness.frames.flush();
+        }
+        await settle();
+
+        assert.ok(harness.ipc.calls.length <= 9, 'one in-flight request plus eight pending batches is the hard limit');
+        assert.equal(
+            harness.ipc.calls_for('rotate_camera').reduce((sum, call) => sum + call.args.dx, 0),
+            33,
+            'bounded batching retains every drag delta',
+        );
+        assert.equal(
+            harness.ipc.calls_for('zoom_camera').reduce((sum, call) => sum + call.args.delta, 0),
+            32,
+            'bounded batching retains every wheel delta',
+        );
+    }
+    finally {
+        harness.runtime.unmount();
+        await settle_many();
     }
 });
 
