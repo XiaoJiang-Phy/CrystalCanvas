@@ -1,33 +1,34 @@
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: "Immutable release-candidate commit SHA"
-        required: true
-        type: string
-      version:
-        description: "Release version without the v prefix"
-        required: true
-        default: "0.8.0"
-        type: string
+  push:
+    tags:
+      - "v*"
 
 jobs:
   preflight:
     runs-on: macos-latest
     permissions:
       contents: write
+    outputs:
+      release_ref: ${{ steps.identity.outputs.ref }}
+      release_tag: ${{ steps.identity.outputs.tag }}
+      release_version: ${{ steps.identity.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: recursive
           lfs: true
 
-      - name: bind dispatch inputs to the checked-out candidate
-        run: node scripts/validate-release-dispatch.mjs "${{ inputs.ref }}" "${{ inputs.version }}"
+      - name: bind the release tag to the checked-out candidate
+        id: identity
+        run: |
+          node scripts/validate-release-tag.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA"
+          echo "ref=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
@@ -59,13 +60,13 @@ jobs:
           git diff --exit-code -- ipc/inventory.json src/ipc/commands.generated.ts
           npm run check:ipc
           npm run test:ipc
-          node --test tests/field_1_red_gate.test.mjs scripts/blender-field-export.test.mjs scripts/field-workflow-ui.test.mjs scripts/release-closure.test.mjs
+          node --test tests/field_1_red_gate.test.mjs scripts/blender-field-export.test.mjs scripts/field-workflow-ui.test.mjs scripts/release-closure.test.mjs scripts/release-notes.test.mjs
           ./node_modules/.bin/tsc --noEmit
           pnpm run build
           git diff --check
           test -z "$(git status --porcelain)"
 
-      - name: validate v0.8.0 release closure
+      - name: validate active release closure
         env:
           CRYSTALCANVAS_RELEASE_PUBLISH: "1"
         run: CRYSTALCANVAS_RELEASE_PUBLISH=1 node --test tests/release_2_red_gate.test.mjs
@@ -74,11 +75,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "v${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "draft tag v${{ inputs.version }} already exists"
+          version="${GITHUB_REF_NAME#v}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists"
             exit 1
           fi
-          gh release create "v${{ inputs.version }}" --target "${{ inputs.ref }}" --draft --title "CrystalCanvas v${{ inputs.version }}" --notes "Validated RELEASE-2 evidence is attached after both macOS bundles complete."
+          node scripts/release-notes.mjs "$version" > release-notes.md
+          gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --draft --title "CrystalCanvas $GITHUB_REF_NAME" --notes-file release-notes.md
 
   bundle:
     needs: preflight
@@ -97,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.preflight.outputs.release_ref }}
           fetch-depth: 0
           submodules: recursive
           lfs: true
@@ -121,9 +124,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v${{ inputs.version }}
-          releaseName: CrystalCanvas v${{ inputs.version }}
-          releaseBody: "Validated RELEASE-2 evidence is attached after both macOS bundles complete."
+          tagName: ${{ needs.preflight.outputs.release_tag }}
+          releaseName: CrystalCanvas ${{ needs.preflight.outputs.release_tag }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -136,18 +138,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.preflight.outputs.release_ref }}
           fetch-depth: 0
 
       - name: verify publication identity
-        run: node scripts/validate-release-dispatch.mjs "${{ inputs.ref }}" "${{ inputs.version }}"
+        run: node scripts/validate-release-tag.mjs "${{ needs.preflight.outputs.release_tag }}" "${{ needs.preflight.outputs.release_ref }}"
 
       - name: attach release evidence
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "v${{ inputs.version }}" "release/v${{ inputs.version }}/release-evidence.json" --clobber
+        run: gh release upload "${{ needs.preflight.outputs.release_tag }}" "release/v${{ needs.preflight.outputs.release_version }}/release-evidence.json" --clobber
 
       - name: publish the completed draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit v${{ inputs.version }} --draft=false --latest
+        run: |
+          node scripts/release-notes.mjs "${{ needs.preflight.outputs.release_version }}" > release-notes.md
+          gh release edit "${{ needs.preflight.outputs.release_tag }}" --notes-file release-notes.md --draft=false --latest

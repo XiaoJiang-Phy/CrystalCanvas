@@ -327,22 +327,31 @@ test('RELEASE-2 synchronizes active metadata and seals publication behind the cl
             .map((name, index) => [name, docs[index]])),
     });
     const closureGate = workflow.indexOf('CRYSTALCANVAS_RELEASE_PUBLISH=1 node --test tests/release_2_red_gate.test.mjs');
-    const dispatchGate = workflow.indexOf('node scripts/validate-release-dispatch.mjs');
+    const tagGate = workflow.indexOf('node scripts/validate-release-tag.mjs');
+    const releaseNotesGate = workflow.indexOf('node scripts/release-notes.mjs');
     const draftGate = workflow.indexOf('gh release create');
     const bundleGate = workflow.indexOf('tauri-apps/tauri-action@v0');
     const evidenceUploadGate = workflow.indexOf('gh release upload');
     const publishGate = workflow.indexOf('gh release edit');
-    assert.ok(workflow.includes('workflow_dispatch:'), 'release requires an explicit dispatch');
-    assert.ok(dispatchGate >= 0 && closureGate > dispatchGate,
-        'dispatch identity must be bound before release closure validation');
+    assert.match(workflow, /push:\s*\n\s*tags:\s*\n\s*- "v\*"/,
+        'release requires an explicit v-prefixed tag push');
+    assert.doesNotMatch(workflow, /workflow_dispatch:/,
+        'release must not require a separate manual dispatch after a tag is pushed');
+    assert.ok(tagGate >= 0 && closureGate > tagGate,
+        'tag identity must be bound before release closure validation');
     assert.ok(closureGate >= 0 && draftGate > closureGate && bundleGate > draftGate,
         'release closure must pass before any bundle is created');
+    assert.ok(releaseNotesGate > closureGate && releaseNotesGate < draftGate,
+        'the validated changelog section must become the draft release body');
     assert.ok(evidenceUploadGate > bundleGate && publishGate > evidenceUploadGate,
         'the release must attach evidence and publish only after all draft bundles complete');
     assert.match(workflow, /releaseDraft:\s*true/);
     assert.match(workflow, /needs:\s*\[preflight, bundle\]/);
     assert.match(workflow, /fetch-depth:\s*0/);
-    assert.match(workflow, /validate-release-dispatch\.mjs/);
+    assert.match(workflow, /validate-release-tag\.mjs/);
+    assert.match(workflow, /release-notes\.mjs/);
+    assert.match(workflow, /--notes-file release-notes\.md/);
+    assert.doesNotMatch(workflow, /Validated RELEASE-2 evidence is attached/);
     assert.match(workflow, /gh release create[^\n]+--target/);
     assert.match(workflow, /gh release upload[^\n]+release-evidence\.json/);
     const plannedReleases = roadmap.slice(roadmap.indexOf('## Planned Releases'));

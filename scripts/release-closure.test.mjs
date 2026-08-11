@@ -18,6 +18,7 @@ test('the active release closure delegates to RELEASE-2 rather than historical v
     assert.match(version, /^\d+\.\d+\.\d+$/);
     assert.match(workflowSource,
         /CRYSTALCANVAS_RELEASE_PUBLISH=1 node --test tests\/release_2_red_gate\.test\.mjs/);
+    assert.match(workflowSource, /scripts\/release-notes\.test\.mjs/);
     assert.match(gateSource, /const EVIDENCE_PATH = `release\/v\$\{RELEASE_VERSION\}\/release-evidence\.json`/);
     assert.doesNotMatch(gateSource, /const RELEASE_VERSION = '0\.7\.0'/);
 });
