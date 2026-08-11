@@ -323,7 +323,9 @@
       "visible"
     ],
     "set_isosurface_color": [
-      "color"
+      "color",
+      "expectedRevision",
+      "layerId"
     ],
     "set_isosurface_colors": [
       "expectedRevision",
@@ -332,9 +334,13 @@
       "positiveColor"
     ],
     "set_isosurface_opacity": [
+      "expectedRevision",
+      "layerId",
       "opacity"
     ],
     "set_isosurface_sign_mode": [
+      "expectedRevision",
+      "layerId",
       "mode"
     ],
     "set_isovalue": [
@@ -366,17 +372,25 @@
       "positiveValue"
     ],
     "set_volume_colormap": [
+      "expectedRevision",
+      "layerId",
       "mode"
     ],
     "set_volume_density_cutoff": [
-      "cutoff"
+      "cutoff",
+      "expectedRevision",
+      "layerId"
     ],
     "set_volume_opacity_range": [
+      "expectedRevision",
+      "layerId",
       "max",
       "min",
       "opacityScale"
     ],
     "set_volume_render_mode": [
+      "expectedRevision",
+      "layerId",
       "mode"
     ],
     "set_wannier_orbital": [
@@ -1250,10 +1264,22 @@
           "optional": false,
           "rust_type": "[f32; 4]",
           "type": "[number,number,number,number]"
+        },
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_isosurface_colors": {
       "args": [
@@ -1282,11 +1308,23 @@
           "type": "[number,number,number,number]"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_isosurface_opacity": {
       "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
         {
           "name": "opacity",
           "optional": false,
@@ -1294,11 +1332,23 @@
           "type": "number"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_isosurface_sign_mode": {
       "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
         {
           "name": "mode",
           "optional": false,
@@ -1306,8 +1356,8 @@
           "type": "IsosurfaceSignMode"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_isovalue": {
       "args": [
@@ -1330,8 +1380,8 @@
           "type": "number"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_phonon_display_scale": {
       "args": [
@@ -1432,11 +1482,23 @@
           "type": "number"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_volume_colormap": {
       "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
         {
           "name": "mode",
           "optional": false,
@@ -1444,8 +1506,8 @@
           "type": "VolumeColormap"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_volume_density_cutoff": {
       "args": [
@@ -1454,13 +1516,37 @@
           "optional": false,
           "rust_type": "f32",
           "type": "number"
+        },
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_volume_opacity_range": {
       "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
         {
           "name": "max",
           "optional": false,
@@ -1480,11 +1566,23 @@
           "type": "number"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_volume_render_mode": {
       "args": [
+        {
+          "name": "expectedRevision",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
+        {
+          "name": "layerId",
+          "optional": false,
+          "rust_type": "u64",
+          "type": "number"
+        },
         {
           "name": "mode",
           "optional": false,
@@ -1492,8 +1590,8 @@
           "type": "VolumeRenderMode"
         }
       ],
-      "result": "null",
-      "rust_result": "IpcResult<()>"
+      "result": "FieldSceneChangedPayload",
+      "rust_result": "IpcResult<FieldSceneChangedPayload>"
     },
     "set_wannier_orbital": {
       "args": [
@@ -1797,6 +1895,16 @@
   "backend_events": {
     "field_scene_changed": [
       "src-tauri/src/commands/file_io.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
+      "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/commands/volumetric.rs",
       "src-tauri/src/commands/volumetric.rs",
@@ -2159,6 +2267,12 @@
       "response_type": null
     },
     {
+      "command": "get_field_scene_info",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [],
+      "response_type": null
+    },
+    {
       "command": "get_measurement_labels_screen",
       "file": "src/components/panels/MeasurementPanel.tsx",
       "args": [
@@ -2392,6 +2506,16 @@
       "response_type": null
     },
     {
+      "command": "set_field_layer_presentation",
+      "file": "src/components/panels/VolumetricPanel.tsx",
+      "args": [
+        "expectedRevision",
+        "layerId",
+        "presentationSettings"
+      ],
+      "response_type": null
+    },
+    {
       "command": "set_field_layer_visibility",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
@@ -2416,6 +2540,8 @@
       "command": "set_isosurface_opacity",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
+        "expectedRevision",
+        "layerId",
         "opacity"
       ],
       "response_type": null
@@ -2424,6 +2550,8 @@
       "command": "set_isosurface_sign_mode",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
+        "expectedRevision",
+        "layerId",
         "mode"
       ],
       "response_type": null
@@ -2502,6 +2630,8 @@
       "command": "set_volume_colormap",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
+        "expectedRevision",
+        "layerId",
         "mode"
       ],
       "response_type": null
@@ -2510,7 +2640,9 @@
       "command": "set_volume_density_cutoff",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
-        "cutoff"
+        "cutoff",
+        "expectedRevision",
+        "layerId"
       ],
       "response_type": null
     },
@@ -2518,6 +2650,8 @@
       "command": "set_volume_opacity_range",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
+        "expectedRevision",
+        "layerId",
         "max",
         "min",
         "opacityScale"
@@ -2528,6 +2662,8 @@
       "command": "set_volume_render_mode",
       "file": "src/components/panels/VolumetricPanel.tsx",
       "args": [
+        "expectedRevision",
+        "layerId",
         "mode"
       ],
       "response_type": null
@@ -2771,6 +2907,7 @@
     ],
     "get_field_scene_info": [
       "src/components/panels/VolumetricPanel.tsx",
+      "src/components/panels/VolumetricPanel.tsx",
       "src/components/panels/VolumetricPanel.tsx"
     ],
     "get_measurement_labels_screen": [
@@ -2840,6 +2977,9 @@
       "src/components/layout/TopNavBar.tsx",
       "src/components/panels/SlabPanel.tsx",
       "src/hooks/useTauriMenu.ts"
+    ],
+    "set_field_layer_presentation": [
+      "src/components/panels/VolumetricPanel.tsx"
     ],
     "set_field_layer_visibility": [
       "src/components/panels/VolumetricPanel.tsx"

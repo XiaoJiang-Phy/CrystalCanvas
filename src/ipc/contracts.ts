@@ -42,6 +42,17 @@ export interface FieldLayerInfo {
     grid_dims: [number, number, number];
     data_min: number;
     data_max: number;
+    lattice_angstrom: [number, number, number, number, number, number, number, number, number];
+    origin_angstrom: [number, number, number];
+    source_coordinate_unit: string;
+    coordinate_to_angstrom: number;
+    periodic_axes: [boolean, boolean, boolean];
+    attachment: string;
+    ordering: string;
+    scalar_unit: string;
+    scalar_unit_scale: number;
+    normalization: string;
+    metadata_declared: boolean;
     source_sha256: string;
     normalized_sha256: string;
     lineage: FieldLineageTerm[] | null;
@@ -54,6 +65,7 @@ export interface FieldLayerInfo {
     sign_mode: FieldSignMode;
     render_mode: FieldRenderMode;
     colormap_mode: number;
+    presentation_settings: FieldPresentationSettings;
 }
 
 export interface FieldLineageTerm {
@@ -232,22 +244,22 @@ export interface IpcCommandContract {
     set_bz_scale: { args: { scale: number }; result: null };
     set_camera_projection: { args: { isPerspective: boolean }; result: null };
     set_camera_view_axis: { args: { axis: CameraAxis }; result: null };
-    set_isosurface_color: { args: { color: [number, number, number, number] }; result: null };
-    set_isosurface_colors: { args: { positiveColor: [number, number, number, number]; negativeColor: [number, number, number, number]; layerId: number; expectedRevision: number }; result: null };
-    set_isosurface_opacity: { args: { opacity: number }; result: null };
-    set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode }; result: null };
-    set_isovalue: { args: { value: number; layerId: number; expectedRevision: number }; result: null };
-    set_signed_isovalues: { args: { positiveValue: number; negativeValue: number; layerId: number; expectedRevision: number }; result: null };
+    set_isosurface_color: { args: { color: [number, number, number, number]; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isosurface_colors: { args: { positiveColor: [number, number, number, number]; negativeColor: [number, number, number, number]; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isosurface_opacity: { args: { opacity: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isosurface_sign_mode: { args: { mode: IsosurfaceSignMode; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_isovalue: { args: { value: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_signed_isovalues: { args: { positiveValue: number; negativeValue: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
     select_active_field_layer: { args: { layerId: number; expectedRevision: number }; result: FieldSceneInfo };
     set_phonon_mode: { args: { modeIndex?: number | null }; result: null };
     set_phonon_phase: { args: { phase: number; amplitude?: number | null }; result: null };
     set_phonon_display_scale: { args: { displayScale: number }; result: null };
     set_phonon_playing: { args: { playing: boolean }; result: null };
     set_render_flags: { args: { showCell: boolean; showBonds: boolean }; result: null };
-    set_volume_colormap: { args: { mode: VolumeColormap }; result: null };
-    set_volume_density_cutoff: { args: { cutoff: number }; result: null };
-    set_volume_opacity_range: { args: { min: number; max: number; opacityScale: number }; result: null };
-    set_volume_render_mode: { args: { mode: VolumeRenderMode }; result: null };
+    set_volume_colormap: { args: { mode: VolumeColormap; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_volume_density_cutoff: { args: { cutoff: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_volume_opacity_range: { args: { min: number; max: number; opacityScale: number; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
+    set_volume_render_mode: { args: { mode: VolumeRenderMode; layerId: number; expectedRevision: number }; result: FieldSceneChangedPayload };
     set_wannier_orbital: { args: { orbIdx: number; active: boolean }; result: null };
     set_wannier_r_shell: { args: { shellIdx: number; active: boolean }; result: null };
     set_wannier_t_min: { args: { tMin: number }; result: null };
@@ -328,6 +340,10 @@ function is_number_triplet(value: unknown): value is [number, number, number] {
     return Array.isArray(value) && value.length === 3 && value.every(is_finite_number);
 }
 
+function is_boolean_triplet(value: unknown): value is [boolean, boolean, boolean] {
+    return Array.isArray(value) && value.length === 3 && value.every((item) => typeof item === 'boolean');
+}
+
 function is_nonnegative_integer(value: unknown): value is number {
     return Number.isSafeInteger(value) && (value as number) >= 0;
 }
@@ -335,6 +351,58 @@ function is_nonnegative_integer(value: unknown): value is number {
 function is_rgba(value: unknown): value is [number, number, number, number] {
     return Array.isArray(value) && value.length === 4
         && value.every((component) => is_finite_number(component) && component >= 0 && component <= 1);
+}
+
+function is_sha256(value: unknown): value is string {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
+}
+
+function is_number_pair(value: unknown): value is [number, number] {
+    return Array.isArray(value) && value.length === 2 && value.every(is_finite_number);
+}
+
+function is_nonzero_triplet(value: unknown): value is [number, number, number] {
+    return is_number_triplet(value) && value.some((component) => component !== 0);
+}
+
+function is_strictly_increasing(values: unknown[]): boolean {
+    return values.every((value, index) => index === 0 || (value as number) > (values[index - 1] as number));
+}
+
+function is_field_presentation_settings(value: unknown): value is FieldPresentationSettings {
+    if (!is_record(value)
+        || !Array.isArray(value.clip_planes)
+        || !Array.isArray(value.slices)
+        || !is_record(value.transfer_function)
+        || typeof value.use_explicit_transfer_function !== 'boolean'
+        || (value.display_range !== null && (!is_number_pair(value.display_range) || value.display_range[0] >= value.display_range[1]))
+        || !is_finite_number(value.opacity_scale) || value.opacity_scale < 0 || value.opacity_scale > 10
+        || !is_finite_number(value.density_cutoff) || value.density_cutoff < 0
+        || value.transparency_method !== 'premultiplied_alpha_fallback'
+        || (value.field_material_mode !== 'lit' && value.field_material_mode !== 'unlit')) return false;
+    if (value.clip_planes.length > 6 || !value.clip_planes.every((plane) => is_record(plane)
+        && is_nonzero_triplet(plane.normal) && is_finite_number(plane.signed_offset_angstrom)
+        && typeof plane.keep_positive === 'boolean')) return false;
+    if (value.slices.length > 4 || !value.slices.every((slice) => is_record(slice)
+        && is_record(slice.plane) && is_nonzero_triplet(slice.plane.normal)
+        && is_finite_number(slice.plane.signed_offset_angstrom) && slice.plane.interpolation === 'trilinear'
+        && Array.isArray(slice.dimensions) && slice.dimensions.length === 2
+        && slice.dimensions.every((dimension) => is_nonnegative_integer(dimension) && dimension >= 2 && dimension <= 512)
+        && slice.dimensions[0] * slice.dimensions[1] <= 512 * 512
+        && Array.isArray(slice.contour_levels) && slice.contour_levels.length <= 32
+        && slice.contour_levels.every(is_finite_number) && is_strictly_increasing(slice.contour_levels))) return false;
+    const transfer = value.transfer_function;
+    const valid_branch = (branch: unknown) => Array.isArray(branch)
+        && branch.length >= 2 && branch.length <= 16
+        && branch.every((point) => is_record(point)
+            && is_finite_number(point.position) && point.position >= 0 && point.position <= 1
+            && is_rgba(point.color_linear_rgba))
+        && is_strictly_increasing(branch.map((point) => (point as FieldTransferControlPoint).position));
+    return transfer.color_space === 'LinearRgb'
+        && Array.isArray(transfer.negative_control_points)
+        && Array.isArray(transfer.positive_control_points)
+        && valid_branch(transfer.negative_control_points)
+        && valid_branch(transfer.positive_control_points);
 }
 
 function is_measurement(value: unknown): value is MeasurementOverlay {
@@ -390,14 +458,30 @@ export function is_field_scene_info(value: unknown): value is FieldSceneInfo {
     if (!is_record(value) || !is_nonnegative_integer(value.revision)
         || (value.active_layer_id !== null && !is_nonnegative_integer(value.active_layer_id))
         || !Array.isArray(value.layers)) return false;
+    if (value.active_layer_id !== null && !value.layers.some((layer) => is_record(layer) && layer.id === value.active_layer_id)) return false;
+    const layerIds = new Set<number>();
     return value.layers.every((layer) => is_record(layer)
-        && is_nonnegative_integer(layer.id) && is_nonnegative_integer(layer.revision)
+        && is_nonnegative_integer(layer.id) && !layerIds.has(layer.id)
+        && (layerIds.add(layer.id), true) && is_nonnegative_integer(layer.revision)
         && typeof layer.label === 'string'
         && Array.isArray(layer.grid_dims) && layer.grid_dims.length === 3
         && layer.grid_dims.every((dimension) => is_nonnegative_integer(dimension) && dimension > 0)
         && is_finite_number(layer.data_min) && is_finite_number(layer.data_max)
         && layer.data_min <= layer.data_max
-        && typeof layer.source_sha256 === 'string' && typeof layer.normalized_sha256 === 'string'
+        && Array.isArray(layer.lattice_angstrom) && layer.lattice_angstrom.length === 9
+        && layer.lattice_angstrom.every(is_finite_number)
+        && is_number_triplet(layer.origin_angstrom) && is_finite_number(layer.coordinate_to_angstrom)
+        && layer.coordinate_to_angstrom > 0
+        && (layer.source_coordinate_unit === 'angstrom' || layer.source_coordinate_unit === 'bohr')
+        && is_boolean_triplet(layer.periodic_axes)
+        && (layer.attachment === 'grid_point' || layer.attachment === 'cell')
+        && layer.ordering === 'col_major'
+        && (layer.scalar_unit === 'electron_per_cubic_angstrom'
+            || layer.scalar_unit === 'electron_per_bohr_cubed' || layer.scalar_unit === 'arbitrary')
+        && is_finite_number(layer.scalar_unit_scale) && layer.scalar_unit_scale > 0
+        && (layer.normalization === 'raw' || layer.normalization === 'vasp_cell_integrated_to_density')
+        && typeof layer.metadata_declared === 'boolean'
+        && is_sha256(layer.source_sha256) && is_sha256(layer.normalized_sha256)
         && typeof layer.visible === 'boolean' && is_finite_number(layer.isovalue)
         && is_finite_number(layer.opacity) && layer.opacity >= 0 && layer.opacity <= 1
         && is_rgba(layer.color) && is_rgba(layer.color_negative)
@@ -405,9 +489,10 @@ export function is_field_scene_info(value: unknown): value is FieldSceneInfo {
         && (layer.sign_mode === 'positive' || layer.sign_mode === 'negative' || layer.sign_mode === 'both')
         && (layer.render_mode === 'isosurface' || layer.render_mode === 'volume' || layer.render_mode === 'both')
         && is_nonnegative_integer(layer.colormap_mode) && layer.colormap_mode <= 9
+        && is_field_presentation_settings(layer.presentation_settings)
         && (layer.lineage === null || (Array.isArray(layer.lineage) && layer.lineage.every((term) => is_record(term)
-            && typeof term.source_sha256 === 'string' && typeof term.normalized_sha256 === 'string'
-            && typeof term.compatibility_receipt_sha256 === 'string' && is_finite_number(term.coefficient)))));
+            && is_sha256(term.source_sha256) && is_sha256(term.normalized_sha256)
+            && is_sha256(term.compatibility_receipt_sha256) && is_finite_number(term.coefficient)))));
 }
 
 function is_field_scene_changed(value: unknown): value is FieldSceneChangedPayload {
@@ -559,12 +644,12 @@ const IPC_RESULT_VALIDATORS: {
     set_bz_scale: is_null,
     set_camera_projection: is_null,
     set_camera_view_axis: is_null,
-    set_isosurface_color: is_null,
-    set_isosurface_colors: is_null,
-    set_isosurface_opacity: is_null,
-    set_isosurface_sign_mode: is_null,
-    set_isovalue: is_null,
-    set_signed_isovalues: is_null,
+    set_isosurface_color: is_field_scene_changed,
+    set_isosurface_colors: is_field_scene_changed,
+    set_isosurface_opacity: is_field_scene_changed,
+    set_isosurface_sign_mode: is_field_scene_changed,
+    set_isovalue: is_field_scene_changed,
+    set_signed_isovalues: is_field_scene_changed,
     set_field_layer_visibility: is_field_scene_info,
     set_field_layer_presentation: is_field_scene_info,
     select_active_field_layer: is_field_scene_info,
@@ -573,10 +658,10 @@ const IPC_RESULT_VALIDATORS: {
     set_phonon_display_scale: is_null,
     set_phonon_playing: is_null,
     set_render_flags: is_null,
-    set_volume_colormap: is_null,
-    set_volume_density_cutoff: is_null,
-    set_volume_opacity_range: is_null,
-    set_volume_render_mode: is_null,
+    set_volume_colormap: is_field_scene_changed,
+    set_volume_density_cutoff: is_field_scene_changed,
+    set_volume_opacity_range: is_field_scene_changed,
+    set_volume_render_mode: is_field_scene_changed,
     set_wannier_orbital: is_null,
     set_wannier_r_shell: is_null,
     set_wannier_t_min: is_null,

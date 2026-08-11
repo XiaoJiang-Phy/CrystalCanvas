@@ -168,7 +168,7 @@ export const ExportImageModal: React.FC<ExportImageModalProps> = ({
                         <button type="button" onClick={() => setExportKind('raster')} disabled={isExporting} aria-pressed={exportKind === 'raster'} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-xs aria-pressed:border-[var(--cc-accent)]">Raster Image</button>
                         <button type="button" onClick={() => setExportKind('blender')} disabled={isExporting} aria-pressed={exportKind === 'blender'} className="rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-2 py-1.5 text-xs aria-pressed:border-[var(--cc-accent)]">Blender Scene</button>
                     </section>
-                    {exportKind === 'blender' && <p className="text-xs text-[var(--cc-muted)]">Exports atoms, visible bonds, unit-cell edges, and camera as GLB. A required sidecar is written beside the GLB as <code>.crystalcanvas.json</code>.</p>}
+                    {exportKind === 'blender' && <p className="text-xs text-[var(--cc-muted)]">Exports atoms, visible bonds, unit-cell edges, camera, and portable realized isosurface, slice, or contour geometry as GLB. Raycast-only volume layers are not portable. A required sidecar is written beside the GLB as <code>.crystalcanvas.json</code>.</p>}
                     {exportKind === 'raster' && <>
                     <section aria-labelledby="export-resolution" className="space-y-3">
                         <h3 id="export-resolution" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-muted)]">Resolution</h3>

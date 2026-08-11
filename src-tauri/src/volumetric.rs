@@ -194,11 +194,21 @@ pub enum FieldNormalization {
     VaspCellIntegratedToDensity,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum FieldCoordinateUnit {
+    Angstrom,
+    Bohr,
+}
+
 /// Scalar metadata emitted by a format adapter after it has made every
 /// producer-specific conversion.  A format discriminator is not evidence of
 /// scalar units or normalization.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct FieldSourceMetadata {
+    /// Coordinate unit explicitly declared by the source container.
+    pub source_coordinate_unit: FieldCoordinateUnit,
+    /// Exact conversion applied by the adapter to obtain renderer-space Å.
+    pub coordinate_to_angstrom: f64,
     pub scalar_unit: ScalarUnit,
     pub scalar_unit_scale: f64,
     pub normalization: FieldNormalization,
@@ -209,6 +219,8 @@ pub struct FieldSourceMetadata {
 
 impl FieldSourceMetadata {
     pub const UNDECLARED: Self = Self {
+        source_coordinate_unit: FieldCoordinateUnit::Angstrom,
+        coordinate_to_angstrom: 1.0,
         scalar_unit: ScalarUnit::Arbitrary,
         scalar_unit_scale: 1.0,
         normalization: FieldNormalization::Raw,
@@ -318,6 +330,8 @@ pub struct FieldLayer {
     pub origin_angstrom: [f64; 3],
     /// Source-file origin retained independently from renderer-space mapping.
     pub source_origin_angstrom: Option<[f64; 3]>,
+    pub source_coordinate_unit: FieldCoordinateUnit,
+    pub coordinate_to_angstrom: f64,
     pub grid_mapping: FieldGridMapping,
     pub periodic_axes: [bool; 3],
     pub attachment: FieldAttachment,
@@ -434,6 +448,8 @@ impl FieldLayer {
             lattice_angstrom: volumetric.lattice,
             origin_angstrom: volumetric.origin,
             source_origin_angstrom: scalar_metadata.source_origin_angstrom,
+            source_coordinate_unit: scalar_metadata.source_coordinate_unit,
+            coordinate_to_angstrom: scalar_metadata.coordinate_to_angstrom,
             grid_mapping,
             periodic_axes: grid_mapping
                 .axis_sampling
@@ -541,7 +557,11 @@ impl FieldLayer {
                 FieldGridMappingError::Degenerate
             ));
         }
-        if !self.scalar_unit_scale.is_finite() || self.scalar_unit_scale <= 0.0 {
+        if !self.coordinate_to_angstrom.is_finite()
+            || self.coordinate_to_angstrom <= 0.0
+            || !self.scalar_unit_scale.is_finite()
+            || self.scalar_unit_scale <= 0.0
+        {
             return Err(format!(
                 "{:?} field scalar unit scale",
                 FieldGridMappingError::Undeclared
@@ -589,7 +609,9 @@ fn validate_volumetric_input(input: &VolumetricData) -> Result<(), String> {
     {
         return Err("field grid mapping must be finite".into());
     }
-    if !input.scalar_metadata.scalar_unit_scale.is_finite()
+    if !input.scalar_metadata.coordinate_to_angstrom.is_finite()
+        || input.scalar_metadata.coordinate_to_angstrom <= 0.0
+        || !input.scalar_metadata.scalar_unit_scale.is_finite()
         || input.scalar_metadata.scalar_unit_scale <= 0.0
     {
         return Err("field scalar unit scale must be finite and positive".into());
@@ -661,6 +683,14 @@ impl FieldScene {
         layer.presentation_settings = presentation_settings;
         self.revision = next_field_token("scene revision")?;
         Ok(())
+    }
+
+    pub fn reserve_revision() -> Result<FieldSceneRevision, String> {
+        next_field_token("scene revision")
+    }
+
+    pub fn commit_reserved_revision(&mut self, revision: FieldSceneRevision) {
+        self.revision = revision;
     }
 
     pub fn replace_with(
@@ -928,6 +958,8 @@ impl FieldScene {
             lattice_angstrom: reference.lattice_angstrom,
             origin_angstrom: reference.origin_angstrom,
             source_origin_angstrom: reference.source_origin_angstrom,
+            source_coordinate_unit: reference.source_coordinate_unit,
+            coordinate_to_angstrom: reference.coordinate_to_angstrom,
             grid_mapping: reference.grid_mapping,
             periodic_axes: reference.periodic_axes,
             attachment: reference.attachment,

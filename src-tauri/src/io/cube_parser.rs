@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::crystal_state::CrystalState;
-use crate::volumetric::{FieldSourceMetadata, VolumetricData, VolumetricFormat};
+use crate::volumetric::{
+    FieldCoordinateUnit, FieldSourceMetadata, VolumetricData, VolumetricFormat,
+};
 use std::fs;
 
 const BOHR_TO_ANGSTROM: f64 = 0.529177249;
@@ -241,6 +243,12 @@ pub fn parse_cube(path: &str) -> Result<CrystalState, String> {
         data_max,
         source_format: VolumetricFormat::GaussianCube,
         scalar_metadata: FieldSourceMetadata {
+            source_coordinate_unit: if is_bohr {
+                FieldCoordinateUnit::Bohr
+            } else {
+                FieldCoordinateUnit::Angstrom
+            },
+            coordinate_to_angstrom: unit_scale,
             source_origin_angstrom: Some(origin),
             ..FieldSourceMetadata::UNDECLARED
         },

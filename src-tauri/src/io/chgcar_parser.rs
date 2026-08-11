@@ -4,7 +4,8 @@
 
 use crate::crystal_state::CrystalState;
 use crate::volumetric::{
-    FieldNormalization, FieldSourceMetadata, ScalarUnit, VolumetricData, VolumetricFormat,
+    FieldCoordinateUnit, FieldNormalization, FieldSourceMetadata, ScalarUnit, VolumetricData,
+    VolumetricFormat,
 };
 use std::fs;
 
@@ -178,6 +179,8 @@ pub fn parse_chgcar(path: &str) -> Result<CrystalState, String> {
 
     let scalar_metadata = if matches!(format, VolumetricFormat::VaspChgcar) {
         FieldSourceMetadata {
+            source_coordinate_unit: FieldCoordinateUnit::Angstrom,
+            coordinate_to_angstrom: 1.0,
             scalar_unit: ScalarUnit::ElectronPerCubicAngstrom,
             scalar_unit_scale: 1.0,
             normalization: FieldNormalization::VaspCellIntegratedToDensity,

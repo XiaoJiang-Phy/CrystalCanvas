@@ -51,12 +51,16 @@ pub fn prepare_field_slices(
             request.plane,
             request.dimensions,
         )?;
-        let slice_vertices = realize_slice_triangles(
+        let slice_vertices = realize_portable_slice_triangles(
             &slice,
             clip_planes,
             transfer_function,
             scalar_range,
             opacity_scale,
+            usize::try_from(MAX_SLICE_GPU_BYTES)
+                .ok()
+                .and_then(|bytes| bytes.checked_div(std::mem::size_of::<LineVertex>()))
+                .ok_or_else(|| "field slice vertex budget is invalid".to_owned())?,
         )?;
         let contours = if request.contour_levels.is_empty() {
             Vec::new()
@@ -112,12 +116,13 @@ fn byte_len(vertices: &[LineVertex]) -> Result<u64, String> {
         .ok_or_else(|| "field slice vertex byte count overflow".to_owned())
 }
 
-fn realize_slice_triangles(
+pub(crate) fn realize_portable_slice_triangles(
     slice: &FieldSlice,
     clip_planes: &[FieldClipPlane],
     transfer_function: &FieldTransferFunction,
     scalar_range: [f32; 2],
     opacity_scale: f32,
+    max_vertices: usize,
 ) -> Result<Vec<LineVertex>, String> {
     let cells = slice.dimensions[0]
         .checked_sub(1)
@@ -132,8 +137,19 @@ fn realize_slice_triangles(
         .ok_or_else(|| "field slice triangle count overflow".to_owned())?;
     let mut output = Vec::new();
     output
-        .try_reserve_exact(capacity)
+        .try_reserve_exact(capacity.min(max_vertices))
         .map_err(|_| "unable to reserve field slice triangles".to_owned())?;
+    let scratch_capacity = 3usize
+        .checked_add(clip_planes.len())
+        .ok_or_else(|| "field slice clipping capacity overflow".to_owned())?;
+    let mut clip_input = Vec::new();
+    let mut clip_output = Vec::new();
+    clip_input
+        .try_reserve_exact(scratch_capacity)
+        .map_err(|_| "unable to reserve field slice clipping input".to_owned())?;
+    clip_output
+        .try_reserve_exact(scratch_capacity)
+        .map_err(|_| "unable to reserve field slice clipping output".to_owned())?;
     for y in 0..slice.dimensions[1] - 1 {
         for x in 0..slice.dimensions[0] - 1 {
             let indices = [
@@ -179,11 +195,17 @@ fn realize_slice_triangles(
                 &mut output,
                 [corners[0], corners[1], corners[2]],
                 clip_planes,
+                max_vertices,
+                &mut clip_input,
+                &mut clip_output,
             )?;
             append_kept_triangle(
                 &mut output,
                 [corners[0], corners[2], corners[3]],
                 clip_planes,
+                max_vertices,
+                &mut clip_input,
+                &mut clip_output,
             )?;
         }
     }
@@ -226,11 +248,25 @@ fn append_kept_triangle(
     output: &mut Vec<LineVertex>,
     triangle: [LineVertex; 3],
     clip_planes: &[FieldClipPlane],
+    max_vertices: usize,
+    clip_input: &mut Vec<LineVertex>,
+    clip_output: &mut Vec<LineVertex>,
 ) -> Result<(), String> {
-    let polygon = clip_triangle_to_half_spaces(triangle, clip_planes);
+    let polygon = clip_triangle_to_half_spaces(triangle, clip_planes, clip_input, clip_output);
     if polygon.len() >= 3 {
+        let additional = (polygon.len() - 2)
+            .checked_mul(3)
+            .ok_or_else(|| "field slice vertex count overflow".to_owned())?;
+        if output
+            .len()
+            .checked_add(additional)
+            .filter(|count| *count <= max_vertices)
+            .is_none()
+        {
+            return Err("field slice vertex budget exceeded".to_owned());
+        }
         output
-            .try_reserve_exact((polygon.len() - 2) * 3)
+            .try_reserve_exact(additional)
             .map_err(|_| "unable to extend field slice triangles".to_owned())?;
         for index in 1..polygon.len() - 1 {
             output.extend_from_slice(&[polygon[0], polygon[index], polygon[index + 1]]);
@@ -239,35 +275,39 @@ fn append_kept_triangle(
     Ok(())
 }
 
-fn clip_triangle_to_half_spaces(
+fn clip_triangle_to_half_spaces<'a>(
     triangle: [LineVertex; 3],
     clip_planes: &[FieldClipPlane],
-) -> Vec<LineVertex> {
-    let mut polygon = triangle.to_vec();
+    input: &'a mut Vec<LineVertex>,
+    output: &mut Vec<LineVertex>,
+) -> &'a [LineVertex] {
+    input.clear();
+    input.extend_from_slice(&triangle);
     for plane in clip_planes {
-        if polygon.is_empty() {
+        if input.is_empty() {
             break;
         }
-        let input = std::mem::take(&mut polygon);
+        output.clear();
         let mut previous = *input.last().expect("non-empty clipped polygon");
         let mut previous_inside = plane.keeps(previous.position.map(f64::from));
-        for current in input {
+        for &current in input.iter() {
             let current_inside = plane.keeps(current.position.map(f64::from));
             if current_inside != previous_inside {
                 let previous_distance = signed_distance(plane, previous.position);
                 let current_distance = signed_distance(plane, current.position);
                 let t = (previous_distance / (previous_distance - current_distance)).clamp(0.0, 1.0)
                     as f32;
-                polygon.push(interpolate_line_vertex(previous, current, t));
+                output.push(interpolate_line_vertex(previous, current, t));
             }
             if current_inside {
-                polygon.push(current);
+                output.push(current);
             }
             previous = current;
             previous_inside = current_inside;
         }
+        std::mem::swap(input, output);
     }
-    polygon
+    input
 }
 
 fn signed_distance(plane: &FieldClipPlane, position: [f32; 3]) -> f64 {
@@ -344,7 +384,7 @@ fn slice_world(slice: &FieldSlice, x: f64, y: f64) -> [f64; 3] {
     ]
 }
 
-fn transfer_color(
+pub(crate) fn transfer_color(
     value: f32,
     scalar_range: [f32; 2],
     transfer_function: &FieldTransferFunction,

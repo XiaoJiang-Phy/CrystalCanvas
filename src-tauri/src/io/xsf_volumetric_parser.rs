@@ -1,5 +1,7 @@
 use crate::crystal_state::{CrystalState, MAX_STRUCTURAL_ATOMS};
-use crate::volumetric::{FieldSourceMetadata, VolumetricData, VolumetricFormat};
+use crate::volumetric::{
+    FieldCoordinateUnit, FieldSourceMetadata, VolumetricData, VolumetricFormat,
+};
 use std::fs;
 use std::path::Path;
 
@@ -347,6 +349,8 @@ pub fn parse_xsf_volumetric(path: &str) -> Result<CrystalState, String> {
         data_max,
         source_format: VolumetricFormat::Xsf,
         scalar_metadata: FieldSourceMetadata {
+            source_coordinate_unit: FieldCoordinateUnit::Angstrom,
+            coordinate_to_angstrom: 1.0,
             source_origin_angstrom: Some(origin),
             ..FieldSourceMetadata::UNDECLARED
         },

@@ -307,19 +307,26 @@ pub fn export_blender_scene(
         .lock()
         .map_err(|error| IpcError::lock(format!("Failed to lock renderer: {error}")))?;
     let look_profile = PublicationLookProfile::for_id(profile_id).map_err(IpcError::render)?;
-    let scene = crate::scene_export::build_publication_scene_snapshot(
+    let structure = crate::scene_export::build_publication_scene_snapshot(
         &crystal,
         &settings,
         &renderer,
         look_profile,
     )
     .map_err(|error| IpcError::render(error.message))?;
-    let recipe = crate::export_recipe::PublicationGlbRecipe::from_scene(&crystal, &scene)
-        .map_err(IpcError::invalid_argument)?;
+    let frozen_crystal = crystal.clone();
     drop(renderer);
     drop(settings);
     drop(crystal);
-    let artifact = crate::blender_export::build_blender_glb(&scene, &recipe.export_id)
+    let scene = crate::scene_export::build_publication_field_scene_from_snapshot(
+        &frozen_crystal,
+        structure,
+    )
+    .map_err(|error| IpcError::render(error.message))?;
+    let recipe =
+        crate::export_recipe::PublicationGlbRecipe::from_field_scene(&frozen_crystal, &scene)
+            .map_err(IpcError::invalid_argument)?;
+    let artifact = crate::blender_export::build_blender_glb_field_scene(&scene, &recipe.export_id)
         .map_err(|error| IpcError::render(error.message))?;
     let mut recipe = recipe;
     recipe.semantic_inventory = artifact.semantic_inventory;

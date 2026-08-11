@@ -2059,18 +2059,22 @@ pub(crate) fn validate_publication_export_receipt_fields(
     if receipt.policy_version != PUBLICATION_EXPORT_POLICY_VERSION {
         return Err(PublicationExportRejection::PolicyVersion);
     }
-    let field_resources = receipt.field_admitted.then_some(FieldPublicationResources {
-        layer_count: receipt.field_layer_count,
-        has_slice: receipt.field_has_slice,
-        has_contour: receipt.field_has_contour,
-        footprint: receipt
-            .field_resource_footprint
-            .ok_or(PublicationExportRejection::ReceiptMismatch)?,
-        field_scene_hash: receipt
-            .field_scene_hash
-            .clone()
-            .ok_or(PublicationExportRejection::ReceiptMismatch)?,
-    });
+    let field_resources = if receipt.field_admitted {
+        Some(FieldPublicationResources {
+            layer_count: receipt.field_layer_count,
+            has_slice: receipt.field_has_slice,
+            has_contour: receipt.field_has_contour,
+            footprint: receipt
+                .field_resource_footprint
+                .ok_or(PublicationExportRejection::ReceiptMismatch)?,
+            field_scene_hash: receipt
+                .field_scene_hash
+                .clone()
+                .ok_or(PublicationExportRejection::ReceiptMismatch)?,
+        })
+    } else {
+        None
+    };
     let expected = evaluate_publication_export_admission_inner(
         receipt.request,
         receipt.limits,
@@ -4898,7 +4902,10 @@ impl Renderer {
     }
 
     /// Update isosurface opacity.
-    pub fn set_isosurface_opacity(&mut self, opacity: f32) {
+    pub fn set_isosurface_opacity(&mut self, opacity: f32) -> bool {
+        if self.active_field_render_settings.is_none() {
+            return false;
+        }
         if let Some(iso_pipe) = &mut self.active_field_layer_pipeline {
             iso_pipe.set_opacity(&self.gpu.queue, opacity);
         }
@@ -4927,6 +4934,7 @@ impl Renderer {
                 (opacity * opacity_scale).clamp(0.0, 1.0),
             );
         }
+        true
     }
 }
 

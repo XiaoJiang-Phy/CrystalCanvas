@@ -206,9 +206,10 @@ pub async fn set_isovalue(
     value: f32,
     layer_id: u64,
     expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
     if !value.is_finite() || value <= 0.0 {
         return Err(IpcError::invalid_argument(
             "isovalue must be finite and positive",
@@ -251,6 +252,7 @@ pub async fn set_isovalue(
         .active_layer()
         .filter(|current| current.id == layer_id && current.revision == layer.revision)
         .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -282,8 +284,16 @@ pub async fn set_isovalue(
         layer.render_settings.isovalue = value;
         layer.render_settings.positive_isovalue = value;
         layer.render_settings.negative_isovalue = value;
+        if is_both {
+            layer.presentation_settings.density_cutoff = value;
+        }
     }
-    Ok(())
+    cs.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&cs.field_scene);
+    drop(r);
+    drop(cs);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 /// Set independently selected positive and negative isosurface thresholds for
@@ -295,9 +305,10 @@ pub async fn set_signed_isovalues(
     negative_value: f32,
     layer_id: u64,
     expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
     if !positive_value.is_finite()
         || !negative_value.is_finite()
         || positive_value <= 0.0
@@ -339,6 +350,7 @@ pub async fn set_signed_isovalues(
         .active_layer()
         .filter(|current| current.id == layer_id && current.revision == layer.revision)
         .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -357,29 +369,61 @@ pub async fn set_signed_isovalues(
         layer.render_settings.positive_isovalue = positive_value;
         layer.render_settings.negative_isovalue = negative_value;
     }
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
 pub fn set_isosurface_color(
     color: [f32; 4],
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
+    if !color
+        .iter()
+        .all(|component| component.is_finite() && (0.0..=1.0).contains(component))
+    {
+        return Err(IpcError::invalid_argument(
+            "isosurface color must contain finite normalized components",
+        ));
+    }
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    if !state
+        .field_scene
+        .active_layer()
+        .is_some_and(|layer| layer.id == layer_id)
+    {
+        return Err(IpcError::invalid_argument("active field layer is stale"));
+    }
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     let r_mut = &mut *r;
-    if let Some(iso) = &mut r_mut.active_field_layer_pipeline {
-        iso.set_color(&r_mut.gpu.queue, color);
-    }
+    let iso = r_mut
+        .active_field_layer_pipeline
+        .as_mut()
+        .ok_or_else(|| IpcError::render("active field renderer is unavailable"))?;
+    iso.set_color(&r_mut.gpu.queue, color);
     if let Some(layer) = state.field_scene.active_layer_mut() {
         layer.render_settings.color = color;
     }
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(r);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -388,9 +432,10 @@ pub fn set_isosurface_colors(
     negative_color: [f32; 4],
     layer_id: u64,
     expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
     let valid_color = |color: [f32; 4]| {
         color
             .iter()
@@ -405,12 +450,13 @@ pub fn set_isosurface_colors(
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
     require_field_revision(&state.field_scene, expected_revision)?;
-    let layer = state
+    let opacity = state
         .field_scene
-        .active_layer_mut()
+        .active_layer()
         .filter(|layer| layer.id == layer_id)
-        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
-    let opacity = layer.render_settings.opacity;
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?
+        .render_settings
+        .opacity;
     let positive_color = [
         positive_color[0],
         positive_color[1],
@@ -423,45 +469,82 @@ pub fn set_isosurface_colors(
         negative_color[2],
         opacity,
     ];
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     if !renderer.set_active_isosurface_colors(positive_color, negative_color) {
         return Err(IpcError::render("active field renderer is unavailable"));
     }
+    let layer = state
+        .field_scene
+        .active_layer_mut()
+        .filter(|layer| layer.id == layer_id)
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
     layer.render_settings.color = positive_color;
     layer.render_settings.color_negative = negative_color;
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
 pub fn set_isosurface_opacity(
     opacity: f32,
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
-    let opacity = opacity.clamp(0.0, 1.0);
+) -> IpcResult<FieldSceneChangedPayload> {
+    if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+        return Err(IpcError::invalid_argument(
+            "isosurface opacity must be finite and within [0, 1]",
+        ));
+    }
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    if !state
+        .field_scene
+        .active_layer()
+        .is_some_and(|layer| layer.id == layer_id)
+    {
+        return Err(IpcError::invalid_argument("active field layer is stale"));
+    }
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
-    r.set_isosurface_opacity(opacity);
+    if !r.set_isosurface_opacity(opacity) {
+        return Err(IpcError::render("active field renderer is unavailable"));
+    }
     if let Some(layer) = state.field_scene.active_layer_mut() {
         layer.render_settings.opacity = opacity;
         layer.render_settings.color[3] = opacity;
         layer.render_settings.color_negative[3] = opacity;
     }
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(r);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
 pub fn set_isosurface_sign_mode(
     mode: IpcEnumInput<IsosurfaceSignMode>,
-    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> IpcResult<()> {
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneChangedPayload> {
     let mode = mode.parse("mode")?;
     let field_sign_mode = match mode {
         IsosurfaceSignMode::Positive => crate::volumetric::FieldSignMode::Positive,
@@ -472,31 +555,44 @@ pub fn set_isosurface_sign_mode(
     let mut cs = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
-    let Some(layer) = cs.field_scene.active_layer() else {
-        return Ok(());
-    };
+    require_field_revision(&cs.field_scene, expected_revision)?;
+    let layer = cs
+        .field_scene
+        .active_layer()
+        .filter(|layer| layer.id == layer_id)
+        .cloned()
+        .ok_or_else(|| IpcError::invalid_argument("active field layer is stale"))?;
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
     if !r.set_active_field_sign_mode(field_sign_mode) {
         let mut render_settings = layer.render_settings;
         render_settings.sign_mode = field_sign_mode;
-        r.update_field_render_settings(layer, render_settings)
+        r.update_field_render_settings(&layer, render_settings)
             .map_err(|_| IpcError::render("isosurface exceeds the available GPU vertex budget"))?;
     }
     if let Some(layer) = cs.field_scene.active_layer_mut() {
         layer.render_settings.sign_mode = field_sign_mode;
     }
 
-    Ok(())
+    cs.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&cs.field_scene);
+    drop(r);
+    drop(cs);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
 pub fn set_volume_render_mode(
     mode: IpcEnumInput<VolumeRenderMode>,
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
     let mode = mode.parse("mode")?;
     let new_mode = match mode {
         VolumeRenderMode::Isosurface => crate::renderer::renderer::RendererVolumeMode::Isosurface,
@@ -511,6 +607,15 @@ pub fn set_volume_render_mode(
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
+    if !state
+        .field_scene
+        .active_layer()
+        .is_some_and(|layer| layer.id == layer_id)
+    {
+        return Err(IpcError::invalid_argument("active field layer is stale"));
+    }
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -533,8 +638,14 @@ pub fn set_volume_render_mode(
     });
     if let Some(layer) = state.field_scene.active_layer_mut() {
         layer.render_settings.render_mode = field_render_mode;
+        layer.presentation_settings.density_cutoff = cutoff;
     }
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(r);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -542,9 +653,12 @@ pub fn set_volume_opacity_range(
     min: f32,
     max: f32,
     opacity_scale: f32,
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
     if !min.is_finite() || !max.is_finite() || min >= max || !opacity_scale.is_finite() {
         return Err(IpcError::invalid_argument(
             "volume display range is invalid",
@@ -553,9 +667,11 @@ pub fn set_volume_opacity_range(
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
     let mut presentation = state
         .field_scene
         .active_layer()
+        .filter(|layer| layer.id == layer_id)
         .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?
         .presentation_settings
         .clone();
@@ -565,6 +681,7 @@ pub fn set_volume_opacity_range(
     presentation
         .validate()
         .map_err(IpcError::invalid_argument)?;
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -574,17 +691,26 @@ pub fn set_volume_opacity_range(
     let layer = state
         .field_scene
         .active_layer_mut()
+        .filter(|layer| layer.id == layer_id)
         .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?;
     layer.presentation_settings = presentation;
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
 pub fn set_volume_density_cutoff(
     cutoff: f32,
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
-) -> IpcResult<()> {
+) -> IpcResult<FieldSceneChangedPayload> {
     if !cutoff.is_finite() || cutoff < 0.0 {
         return Err(IpcError::invalid_argument(
             "volume density cutoff is invalid",
@@ -593,9 +719,11 @@ pub fn set_volume_density_cutoff(
     let mut state = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&state.field_scene, expected_revision)?;
     let mut presentation = state
         .field_scene
         .active_layer()
+        .filter(|layer| layer.id == layer_id)
         .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?
         .presentation_settings
         .clone();
@@ -603,6 +731,7 @@ pub fn set_volume_density_cutoff(
     presentation
         .validate()
         .map_err(IpcError::invalid_argument)?;
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut renderer = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -612,17 +741,26 @@ pub fn set_volume_density_cutoff(
     let layer = state
         .field_scene
         .active_layer_mut()
+        .filter(|layer| layer.id == layer_id)
         .ok_or_else(|| IpcError::invalid_argument("no active field layer"))?;
     layer.presentation_settings = presentation;
-    Ok(())
+    state.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&state.field_scene);
+    drop(renderer);
+    drop(state);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
 pub fn set_volume_colormap(
     mode: IpcEnumInput<VolumeColormap>,
-    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+    layer_id: u64,
+    expected_revision: u64,
+    app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
-) -> IpcResult<()> {
+    renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
+) -> IpcResult<FieldSceneChangedPayload> {
     let mode = mode.parse("mode")?;
     let colormap_mode: u32 = match mode {
         VolumeColormap::Grayscale => 1,
@@ -640,6 +778,15 @@ pub fn set_volume_colormap(
     let mut cs = crystal_state
         .lock()
         .map_err(|_| IpcError::lock("crystal state lock poisoned"))?;
+    require_field_revision(&cs.field_scene, expected_revision)?;
+    if !cs
+        .field_scene
+        .active_layer()
+        .is_some_and(|layer| layer.id == layer_id)
+    {
+        return Err(IpcError::invalid_argument("active field layer is stale"));
+    }
+    let revision = crate::volumetric::FieldScene::reserve_revision().map_err(IpcError::render)?;
     let mut r = renderer_state
         .lock()
         .map_err(|_| IpcError::lock("renderer lock poisoned"))?;
@@ -649,7 +796,12 @@ pub fn set_volume_colormap(
     if let Some(layer) = cs.field_scene.active_layer_mut() {
         layer.render_settings.colormap_mode = colormap_mode;
     }
-    Ok(())
+    cs.field_scene.commit_reserved_revision(revision);
+    let payload = FieldSceneChangedPayload::from_scene(&cs.field_scene);
+    drop(r);
+    drop(cs);
+    app.emit("field_scene_changed", payload).ok();
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -671,6 +823,37 @@ pub fn get_volumetric_info(
     }
 }
 
+fn scalar_unit_name(unit: crate::volumetric::ScalarUnit) -> &'static str {
+    match unit {
+        crate::volumetric::ScalarUnit::ElectronPerCubicAngstrom => "electron_per_cubic_angstrom",
+        crate::volumetric::ScalarUnit::ElectronPerBohrCubed => "electron_per_bohr_cubed",
+        crate::volumetric::ScalarUnit::Arbitrary => "arbitrary",
+    }
+}
+
+fn normalization_name(normalization: crate::volumetric::FieldNormalization) -> &'static str {
+    match normalization {
+        crate::volumetric::FieldNormalization::Raw => "raw",
+        crate::volumetric::FieldNormalization::VaspCellIntegratedToDensity => {
+            "vasp_cell_integrated_to_density"
+        }
+    }
+}
+
+fn coordinate_unit_name(unit: crate::volumetric::FieldCoordinateUnit) -> &'static str {
+    match unit {
+        crate::volumetric::FieldCoordinateUnit::Angstrom => "angstrom",
+        crate::volumetric::FieldCoordinateUnit::Bohr => "bohr",
+    }
+}
+
+fn attachment_name(attachment: crate::volumetric::FieldAttachment) -> &'static str {
+    match attachment {
+        crate::volumetric::FieldAttachment::GridPoint => "grid_point",
+        crate::volumetric::FieldAttachment::Cell => "cell",
+    }
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct FieldLayerInfo {
     pub id: u64,
@@ -679,6 +862,17 @@ pub struct FieldLayerInfo {
     pub grid_dims: [usize; 3],
     pub data_min: f32,
     pub data_max: f32,
+    pub lattice_angstrom: [f64; 9],
+    pub origin_angstrom: [f64; 3],
+    pub source_coordinate_unit: String,
+    pub coordinate_to_angstrom: f64,
+    pub periodic_axes: [bool; 3],
+    pub attachment: String,
+    pub ordering: String,
+    pub scalar_unit: String,
+    pub scalar_unit_scale: f64,
+    pub normalization: String,
+    pub metadata_declared: bool,
     pub source_sha256: String,
     pub normalized_sha256: String,
     pub lineage: Option<Vec<crate::volumetric::FieldLineageTerm>>,
@@ -691,6 +885,7 @@ pub struct FieldLayerInfo {
     pub sign_mode: crate::volumetric::FieldSignMode,
     pub render_mode: crate::volumetric::FieldRenderMode,
     pub colormap_mode: u32,
+    pub presentation_settings: crate::renderer::field_scene::FieldPresentationSettings,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -700,7 +895,7 @@ pub struct FieldSceneInfo {
     pub layers: Vec<FieldLayerInfo>,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Copy, serde::Serialize)]
 pub struct FieldSceneChangedPayload {
     pub revision: u64,
     pub active_layer_id: Option<u64>,
@@ -728,6 +923,18 @@ impl FieldSceneInfo {
                     grid_dims: layer.grid_dims,
                     data_min: layer.data_min,
                     data_max: layer.data_max,
+                    lattice_angstrom: layer.lattice_angstrom,
+                    origin_angstrom: layer.origin_angstrom,
+                    source_coordinate_unit: coordinate_unit_name(layer.source_coordinate_unit)
+                        .to_owned(),
+                    coordinate_to_angstrom: layer.coordinate_to_angstrom,
+                    periodic_axes: layer.periodic_axes,
+                    attachment: attachment_name(layer.attachment).to_owned(),
+                    ordering: "col_major".to_owned(),
+                    scalar_unit: scalar_unit_name(layer.scalar_unit).to_owned(),
+                    scalar_unit_scale: layer.scalar_unit_scale,
+                    normalization: normalization_name(layer.normalization).to_owned(),
+                    metadata_declared: layer.metadata_declared,
                     source_sha256: layer.source_sha256.clone(),
                     normalized_sha256: layer.normalized_sha256.clone(),
                     lineage: layer.lineage.clone(),
@@ -740,6 +947,7 @@ impl FieldSceneInfo {
                     sign_mode: layer.render_settings.sign_mode,
                     render_mode: layer.render_settings.render_mode,
                     colormap_mode: layer.render_settings.colormap_mode,
+                    presentation_settings: layer.presentation_settings.clone(),
                 })
                 .collect(),
         }
@@ -806,6 +1014,8 @@ fn apply_explicit_scalar_unit(
         }
     };
     volumetric.scalar_metadata = crate::volumetric::FieldSourceMetadata {
+        source_coordinate_unit: volumetric.scalar_metadata.source_coordinate_unit,
+        coordinate_to_angstrom: volumetric.scalar_metadata.coordinate_to_angstrom,
         scalar_unit,
         scalar_unit_scale: 1.0,
         normalization: crate::volumetric::FieldNormalization::Raw,
