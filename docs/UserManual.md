@@ -1,6 +1,6 @@
 # CrystalCanvas User Manual
 
-> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
+> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
 
 CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes. It does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
 
@@ -8,7 +8,7 @@ CrystalCanvas is a desktop application for structure-aware three-dimensional sci
 
 ## Installation
 
-Download the `v0.7.0` macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/tag/v0.7.0). Release artifacts are available for Intel and Apple Silicon.
+Download the `v0.8.0` macOS application from [GitHub Releases](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/tag/v0.8.0). Release artifacts are available for Intel and Apple Silicon.
 
 The application does not have a paid Apple Developer signature. Complete these steps for the first launch:
 

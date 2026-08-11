@@ -1,0 +1,209 @@
+{
+  "schema": "crystalcanvas.export-recipe",
+  "schema_version": 10,
+  "kind": "blender_field_scene",
+  "application_version": "0.8.0",
+  "generated_at_unix_ms": 1786439572453,
+  "success": true,
+  "export_id": "0fa4f724f56275796f36a7ee65e27ff3890efd737a7685836d00ff12b59c5c97-1786439572453",
+  "source": {
+    "structure_name": "software-contract-field",
+    "source_version": 0,
+    "intrinsic_atom_count": 0,
+    "structure_hash": "0fa4f724f56275796f36a7ee65e27ff3890efd737a7685836d00ff12b59c5c97",
+    "structure_hash_algorithm": "sha256-canonical-crystal-state-v1",
+    "source_length_unit": "angstrom",
+    "coordinate_space": "cartesian_right_handed_y_up"
+  },
+  "camera": {
+    "eye": [
+      0.0,
+      10.0,
+      30.0
+    ],
+    "target": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "up": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "projection": "orthographic",
+    "fovy_deg": 45.0,
+    "orthographic_scale": 30.0,
+    "znear": 0.1,
+    "zfar": 200.0,
+    "aspect_policy": "current_renderer_camera_aspect_v1:1.777777791",
+    "fit_visible_structure_to_export": false,
+    "publication_framing_margin": 0.0
+  },
+  "look_profile": {
+    "profile_id": "scientific_gloss",
+    "profile_version": "v1",
+    "key_direction": [
+      0.3,
+      0.6,
+      0.7416199
+    ],
+    "key_intensity": 0.82,
+    "fill_direction": [
+      -0.55,
+      0.24,
+      0.7999375
+    ],
+    "fill_intensity": 0.2,
+    "rim_direction": [
+      0.1,
+      -0.74,
+      0.6651316
+    ],
+    "rim_intensity": 0.18,
+    "ambient": 0.16,
+    "roughness": 0.3,
+    "specular": 0.34,
+    "opacity": 1.0,
+    "exposure": 0.0,
+    "tone_mapping": "aces_fitted",
+    "input_color_space": "sRGB_straight_alpha",
+    "output_color_space": "sRGB",
+    "bond_color_mode": "by_elements",
+    "cell_line_width_pixels": 1.0,
+    "depth_enhancement": "disabled"
+  },
+  "coordinate_length_unit": "angstrom",
+  "meters_per_exported_unit": 1e-10,
+  "matrix_layout": "column_major",
+  "scale_policy": "scientific_visualization",
+  "material_mapping": "gltf_pbr_metallic_roughness; sRGB input colors are converted once to linear-sRGB factors; alpha is OPAQUE at 1.0 and BLEND below 1.0; renderer lighting and tone mapping are not baked",
+  "semantic_inventory": {
+    "intrinsic_atoms": 0,
+    "atom_instances": 0,
+    "bonds": 0,
+    "cell_edges": 0,
+    "materials": 1,
+    "meshes": 1,
+    "field_primitives": 1,
+    "field_vertices": 3,
+    "geometry_bounds": {
+      "min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "max": [
+        1.0,
+        1.0,
+        0.0
+      ]
+    }
+  },
+  "field_scene": {
+    "blender_scale": 1.0,
+    "source_coordinate_unit": "angstrom",
+    "coordinate_space": "cartesian_right_handed_y_up",
+    "matrix_layout": "column_major",
+    "field_scene_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "layers": [
+      {
+        "layer_id": 41,
+        "source_layer_revision": 7,
+        "source_artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "normalized_layer_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "scalar_unit": "electron_per_cubic_angstrom",
+        "source_coordinate_unit": "angstrom",
+        "coordinate_to_angstrom": 1.0,
+        "normalization_conversion": "raw",
+        "scalar_unit_scale": 1.0,
+        "clip_planes": [],
+        "presentation": {
+          "render_mode": "isosurface",
+          "sign_mode": "positive",
+          "positive_isovalue": 0.0,
+          "negative_isovalue": 0.0,
+          "positive_color": [
+            0.0,
+            0.722,
+            0.831,
+            0.5
+          ],
+          "negative_color": [
+            0.2298,
+            0.2987,
+            0.7537,
+            0.5
+          ],
+          "surface_opacity": 0.5,
+          "colormap_mode": 0,
+          "display_range": null,
+          "opacity_scale": 3.0,
+          "density_cutoff": 0.0,
+          "transfer_function": {
+            "color_space": "LinearRgb",
+            "negative_control_points": [
+              {
+                "position": 0.0,
+                "color_linear_rgba": [
+                  0.13,
+                  0.2,
+                  0.7,
+                  0.0
+                ]
+              },
+              {
+                "position": 1.0,
+                "color_linear_rgba": [
+                  0.18,
+                  0.42,
+                  1.0,
+                  0.65
+                ]
+              }
+            ],
+            "positive_control_points": [
+              {
+                "position": 0.0,
+                "color_linear_rgba": [
+                  0.95,
+                  0.45,
+                  0.04,
+                  0.0
+                ]
+              },
+              {
+                "position": 1.0,
+                "color_linear_rgba": [
+                  1.0,
+                  0.73,
+                  0.18,
+                  0.65
+                ]
+              }
+            ]
+          },
+          "use_explicit_transfer_function": false,
+          "material_mode": "lit",
+          "portable_material_mapping": "core_gltf_pbr_lit",
+          "slices": []
+        }
+      }
+    ],
+    "primitives": [
+      {
+        "representation": "isosurface",
+        "layer_id": 41,
+        "source_layer_revision": 7,
+        "scalar_unit": "electron_per_cubic_angstrom",
+        "isovalue": 0.25,
+        "contour_level": null,
+        "slice_plane": null
+      }
+    ]
+  },
+  "artifact": {
+    "file_name": "software-contract-field.glb",
+    "sha256": "0e1718895839430823031b75f6808f7568dca64d268258b3a4b49d212edde252"
+  }
+}

@@ -1,6 +1,6 @@
 # CrystalCanvas Testing and TDD Guide
 
-> Baseline: `v0.7.0` | Development line: `v0.8.0` | Updated: 2026-07-28
+> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
 
 CrystalCanvas uses small, independently gated development Nodes. A passing software test establishes only its stated contract. It does not prove that a scientific model, convergence setting, or imported dataset is physically correct.
 
@@ -123,12 +123,13 @@ The standard IPC commands above check, among other things:
 - listener lifecycle and Tauri/browser-mock boundaries; and
 - browser mutation rejection and native listener cleanup.
 
-Run the v0.7.0 interaction, workbench, and publication-export gates when those surfaces change:
+Run the active interaction, workbench, field-export, and release-candidate gates when those surfaces change:
 
 ```bash
 node --test scripts/ui-contract.test.mjs scripts/ui-assistant.test.mjs
 node --test scripts/interaction-contract.test.mjs scripts/phonon-interaction.test.mjs
 node --test scripts/export-contract.test.mjs
+node --test tests/field_1_red_gate.test.mjs scripts/blender-field-export.test.mjs scripts/field-workflow-ui.test.mjs
 node --test tests/release_2_red_gate.test.mjs
 ```
 
@@ -153,9 +154,9 @@ Source-level UI gates complement, but do not replace, desktop verification of na
 | `browser-ipc-policy.test.mjs` | typed browser mutation rejection and absence of mock state ownership |
 | `perf-benchmark.test.mjs` | synthetic performance-fixture and report contracts |
 | `perf-decision.test.mjs` | retained architecture decision bound to measured evidence |
-| `release-closure.test.mjs` | synchronized release versions, documentation, workflow, and exception metadata |
+| `release-closure.test.mjs` | delegates active release closure ownership to RELEASE-2 |
 | `export-contract.test.mjs` | publication-profile wire contract, recipe schema version, and paired artifact hash |
-| `release_2_red_gate.test.mjs` | v0.7.0 release evidence, artifact integrity, version metadata, and CI workflow ordering |
+| `release_2_red_gate.test.mjs` | active release candidate lineage, metadata, artifact triplets, and publication ordering |
 
 Run one source-level suite directly when iterating:
 

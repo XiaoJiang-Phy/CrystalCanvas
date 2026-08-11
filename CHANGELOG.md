@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-11
+
+### Added
+
+- Composable scalar-field scenes with bounded field layers, signed isosurfaces, slices, contours, clipping planes, transfer functions, and typed field-scene IPC ownership.
+- Field-aware publication recipes and one-way Blender GLB export for realized portable field geometry, with source mapping and display provenance retained in the sidecar.
+- Hash-bound publication artifact triplets: primary artifact, recipe sidecar, and commit marker.
+
+### Changed
+
+- Interactive isovalue, opacity, cutoff, and transfer-function controls reuse admitted renderer resources instead of rebuilding scalar uploads for presentation-only changes.
+- Cube, CHGCAR, and XSF adapter mappings are explicit and serialized. These mappings are software contracts and do not infer the physical meaning or normalization of imported scalar fields.
+
+### Validation
+
+- Added FIELD-1, FIGURE-2, DELIVERY-2, Blender field import, and RELEASE-2 candidate closure gates.
+- Rapid single-maintainer release validation uses Intel/Metal and Blender 4.4 attestation only; Apple Silicon compatibility is not established or claimed.
+
 ## [0.7.0] - 2026-07-28
 
 ### Added

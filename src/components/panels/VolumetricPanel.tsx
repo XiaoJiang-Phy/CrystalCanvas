@@ -334,10 +334,9 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
                 
                 if (defaultIsovalue !== null) {
                     const inputSequence = isovalueInputSequence.current;
-                    const commitSequence = beginFieldSceneCommit();
                     void safeInvoke('get_field_scene_info').then((scene) => {
                         if (inputSequence !== isovalueInputSequence.current) return;
-                        applyLatestFieldScene(commitSequence, scene);
+                        applyFieldScene(scene);
                     }).catch((cause) => setPanelError(cause, 'Unable to initialize the isovalue.'));
                 }
             }
@@ -391,9 +390,8 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
                 if (updated.active_layer_id !== layerId) return;
                 activeFieldTarget.current.revision = updated.revision;
                 setVolumeRenderMode(mode);
-                const nextDensityCutoff = mode === 'both' ? isovalue : 0;
-                setDensityCutoff(nextDensityCutoff);
-                setDensityCutoffDraft(nextDensityCutoff);
+                setDensityCutoff(mode === 'both' ? isovalue : 0);
+                setDensityCutoffDraft(mode === 'both' ? isovalue : 0);
             });
         } catch (cause) {
             setPanelError(cause, 'Unable to change the volume render mode.');
@@ -480,7 +478,12 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
         }
     };
 
-    const isPanelBusy = isLoading || pendingControl !== null || isPresentationPending;
+    // A portable-geometry update can prepare CPU/GPU resources. Keep that work
+    // serialized, but do not freeze unrelated render controls while it completes.
+    const isPanelBusy = isLoading || pendingControl !== null;
+    const isPresentationBusy = isPanelBusy || isPresentationPending;
+    const portableContourLevelCount = fieldPresentation.slices
+        .reduce((total, slice) => total + slice.contour_levels.length, 0);
 
     useEffect(() => {
         setCombinationLayerIds((previous) => {
@@ -589,6 +592,10 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
                         const info = await safeInvoke('load_volumetric_file', { path: file });
                         if (info) {
                             applyVolumetricInfo(info);
+                            // The command's field events can arrive before this
+                            // local reset. Rebind the committed active layer last.
+                            const scene = await safeInvoke('get_field_scene_info');
+                            applyFieldScene(scene);
                         }
                     }
                 } catch (cause) {
@@ -818,27 +825,30 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
             <p className="text-xs text-[var(--cc-muted)]">Clipping, slice, and contour presentation settings remain layer-owned and are preserved for portable Blender export.</p>
             <div className="space-y-2 rounded border border-[var(--cc-border)] p-2">
                 <div className="text-xs font-medium text-[var(--cc-text)]">Portable field geometry</div>
+                <div role="status" className="text-[10px] text-[var(--cc-muted)]">
+                    {fieldPresentation.clip_planes.length} clip plane{fieldPresentation.clip_planes.length === 1 ? '' : 's'} · {fieldPresentation.slices.length} slice{fieldPresentation.slices.length === 1 ? '' : 's'} · {portableContourLevelCount} contour level{portableContourLevelCount === 1 ? '' : 's'}
+                </div>
                 <div className="grid grid-cols-4 gap-1">
                     {clipNormal.map((component, index) => (
                         <input key={index} aria-label={`Clip normal ${index}`} type="number" step="0.1" value={component} onChange={(event) => {
                             const next = [...clipNormal] as [number, number, number];
                             next[index] = Number(event.target.value);
                             setClipNormal(next);
-                        }} disabled={isPanelBusy} className="w-full rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-1 py-1 text-xs" />
+                        }} disabled={isPresentationBusy} className="w-full rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-1 py-1 text-xs" />
                     ))}
-                    <input aria-label="Clip plane offset" type="number" step="0.1" value={clipOffset} onChange={(event) => setClipOffset(Number(event.target.value))} disabled={isPanelBusy} className="w-full rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-1 py-1 text-xs" />
+                    <input aria-label="Clip plane offset" type="number" step="0.1" value={clipOffset} onChange={(event) => setClipOffset(Number(event.target.value))} disabled={isPresentationBusy} className="w-full rounded border border-[var(--cc-border)] bg-[var(--cc-field)] px-1 py-1 text-xs" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                    <ActionButton label="Add Clip Plane" tone="secondary" disabled={isPanelBusy} onClick={() => void updateFieldPresentation((current) => ({ ...current, clip_planes: [...current.clip_planes, { normal: clipNormal, signed_offset_angstrom: clipOffset, keep_positive: true }] })).catch((cause) => setPanelError(cause, 'Unable to update clipping.'))} />
-                    <ActionButton label="Clear Clip Planes" tone="secondary" disabled={isPanelBusy} onClick={() => void updateFieldPresentation((current) => ({ ...current, clip_planes: [] })).catch((cause) => setPanelError(cause, 'Unable to update clipping.'))} />
-                    <ActionButton label={fieldPresentation.slices.length ? 'Remove Slices' : 'Add Slice From Plane'} tone="secondary" disabled={isPanelBusy} onClick={() => void updateFieldPresentation((current) => ({ ...current, slices: current.slices.length ? [] : [{ plane: { normal: clipNormal, signed_offset_angstrom: clipOffset, interpolation: 'trilinear' }, dimensions: [128, 128], contour_levels: [] }] })).catch((cause) => setPanelError(cause, 'Unable to update slices.'))} />
-                    <ActionButton label={fieldPresentation.slices.some((slice) => slice.contour_levels.length > 0) ? 'Remove Contours' : 'Add Three Contours'} tone="secondary" disabled={isPanelBusy || fieldPresentation.slices.length === 0} onClick={() => void updateFieldPresentation((current) => ({ ...current, slices: current.slices.map((slice) => ({ ...slice, contour_levels: slice.contour_levels.length ? [] : [-volumetricBound * 0.1, 0, volumetricBound * 0.1] })) })).catch((cause) => setPanelError(cause, 'Unable to update contours.'))} />
+                    <ActionButton label="Add Clip Plane" tone="secondary" disabled={isPresentationBusy} onClick={() => void updateFieldPresentation((current) => ({ ...current, clip_planes: [...current.clip_planes, { normal: clipNormal, signed_offset_angstrom: clipOffset, keep_positive: true }] })).catch((cause) => setPanelError(cause, 'Unable to update clipping.'))} />
+                    <ActionButton label="Clear Clip Planes" tone="secondary" disabled={isPresentationBusy} onClick={() => void updateFieldPresentation((current) => ({ ...current, clip_planes: [] })).catch((cause) => setPanelError(cause, 'Unable to update clipping.'))} />
+                    <ActionButton label={fieldPresentation.slices.length ? 'Remove Slices' : 'Add Slice From Plane'} tone="secondary" disabled={isPresentationBusy} onClick={() => void updateFieldPresentation((current) => ({ ...current, slices: current.slices.length ? [] : [{ plane: { normal: clipNormal, signed_offset_angstrom: clipOffset, interpolation: 'trilinear' }, dimensions: [128, 128], contour_levels: [] }] })).catch((cause) => setPanelError(cause, 'Unable to update slices.'))} />
+                    <ActionButton label={fieldPresentation.slices.some((slice) => slice.contour_levels.length > 0) ? 'Remove Contours' : 'Add Three Contours'} tone="secondary" disabled={isPresentationBusy || fieldPresentation.slices.length === 0} onClick={() => void updateFieldPresentation((current) => ({ ...current, slices: current.slices.map((slice) => ({ ...slice, contour_levels: slice.contour_levels.length ? [] : [-volumetricBound * 0.1, 0, volumetricBound * 0.1] })) })).catch((cause) => setPanelError(cause, 'Unable to update contours.'))} />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                    <SelectInput label="Field Material" value={fieldPresentation.field_material_mode} onChange={(value) => void updateFieldPresentation((current) => ({ ...current, field_material_mode: value === 'unlit' ? 'unlit' : 'lit' })).catch((cause) => setPanelError(cause, 'Unable to update field material.'))} disabled={isPanelBusy}>
+                    <SelectInput label="Field Material" value={fieldPresentation.field_material_mode} onChange={(value) => void updateFieldPresentation((current) => ({ ...current, field_material_mode: value === 'unlit' ? 'unlit' : 'lit' })).catch((cause) => setPanelError(cause, 'Unable to update field material.'))} disabled={isPresentationBusy}>
                         <option value="lit">Lit</option><option value="unlit">Unlit</option>
                     </SelectInput>
-                    <label className="flex items-end gap-2 pb-1 text-xs text-[var(--cc-muted)]"><input type="checkbox" checked={fieldPresentation.use_explicit_transfer_function} disabled={isPanelBusy} onChange={(event) => void updateFieldPresentation((current) => ({ ...current, use_explicit_transfer_function: event.target.checked })).catch((cause) => setPanelError(cause, 'Unable to update transfer function.'))} />Explicit transfer</label>
+                    <label className="flex items-end gap-2 pb-1 text-xs text-[var(--cc-muted)]"><input type="checkbox" checked={fieldPresentation.use_explicit_transfer_function} disabled={isPresentationBusy} onChange={(event) => void updateFieldPresentation((current) => ({ ...current, use_explicit_transfer_function: event.target.checked })).catch((cause) => setPanelError(cause, 'Unable to update transfer function.'))} />Explicit transfer</label>
                 </div>
             </div>
 
@@ -872,6 +882,10 @@ export default function VolumetricPanel({ setOpenAccordion }: PanelProps) {
                                 isovaluePending.current = false;
                                 committedIsovalue.current = value;
                                 setIsovalue(value);
+                                if (volumeRenderMode === 'both') {
+                                    setDensityCutoff(value);
+                                    setDensityCutoffDraft(value);
+                                }
                             }
                         })
                         .catch((cause) => {

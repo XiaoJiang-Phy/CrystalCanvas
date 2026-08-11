@@ -174,7 +174,6 @@ fn field_only_mutations_have_one_field_event_and_no_structural_transaction_side_
 
     for required in [
         "pub fn get_field_scene_info",
-        "pub fn add_field_layer",
         "pub fn remove_field_layer",
         "pub fn reorder_field_layer",
         "pub fn select_active_field_layer",
@@ -188,13 +187,17 @@ fn field_only_mutations_have_one_field_event_and_no_structural_transaction_side_
         );
     }
     assert!(
+        commands.contains("pub async fn add_field_layer"),
+        "FIELD-1 field import must remain an async typed command so parsing stays off the command thread"
+    );
+    assert!(
         crystal_state.contains("invalidate_structure_bound_data")
             && crystal_state.contains("field_scene"),
         "structural invalidation must clear all field layers"
     );
 
     for operation in [
-        "pub fn add_field_layer",
+        "pub async fn add_field_layer",
         "pub fn remove_field_layer",
         "pub fn reorder_field_layer",
         "pub fn select_active_field_layer",

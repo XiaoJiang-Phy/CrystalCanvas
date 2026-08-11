@@ -81,11 +81,45 @@ fn blender_binary() -> Option<PathBuf> {
         })
 }
 
+fn release_artifact_directory() -> PathBuf {
+    PathBuf::from(
+        std::env::var("CRYSTALCANVAS_RELEASE_ARTIFACT_DIR")
+            .expect("set CRYSTALCANVAS_RELEASE_ARTIFACT_DIR to generate a release fixture"),
+    )
+}
+
 #[test]
+#[ignore = "writes an explicit software-only v0.8 field GLB fixture"]
+fn writes_release_v0_8_software_field_glb_fixture() {
+    let directory = release_artifact_directory();
+    std::fs::create_dir_all(&directory).expect("release fixture directory must be creatable");
+    let primary_path = directory.join("software-contract-field.glb");
+    let sidecar_path =
+        crystal_canvas::export_recipe::publication_sidecar_path(&primary_path).unwrap();
+    let marker_path =
+        crystal_canvas::export_recipe::publication_pair_commit_path(&primary_path).unwrap();
+    assert!(
+        !primary_path.exists() && !sidecar_path.exists() && !marker_path.exists(),
+        "release fixture generation never overwrites an existing artifact triplet"
+    );
+
+    let scene = canonical_field_scene();
+    let mut source = CrystalState::default();
+    source.name = "software-contract-field".to_owned();
+    let mut recipe = PublicationGlbRecipe::from_field_scene(&source, &scene)
+        .expect("canonical field recipe must be valid");
+    let artifact = build_blender_glb_field_scene(&scene, &recipe.export_id)
+        .expect("canonical field GLB must build");
+    recipe.semantic_inventory = artifact.semantic_inventory;
+    write_publication_glb_pair(&primary_path, &artifact.bytes, recipe)
+        .expect("software field GLB fixture must be emitted as a complete artifact triplet");
+}
+
+#[test]
+#[ignore = "requires an explicitly selected Blender 4.4 binary and native Metal-capable host"]
 fn blender_44_headless_imports_canonical_structure_and_field_artifact() {
     let Some(blender) = blender_binary() else {
-        eprintln!("SKIP: set CRYSTALCANVAS_BLENDER_BIN to enable the selected Blender import gate");
-        return;
+        panic!("set CRYSTALCANVAS_BLENDER_BIN to the selected Blender 4.4 executable");
     };
     let version = Command::new(&blender)
         .arg("--version")

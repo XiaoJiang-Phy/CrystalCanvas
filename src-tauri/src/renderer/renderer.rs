@@ -1198,6 +1198,7 @@ fn offscreen_readback_layout(
 fn publication_render_plan(
     request: PublicationExportRequest,
     limits: PublicationExportLimits,
+    field_resources: Option<&FieldPublicationResources>,
 ) -> Result<PublicationRenderPlan, PublicationExportRejection> {
     if limits.max_texture_dimension_2d == 0 {
         return Err(PublicationExportRejection::TextureDimensionLimit);
@@ -1219,6 +1220,11 @@ fn publication_render_plan(
             tile_overlap_pixels: 0,
         };
         let estimate = publication_export_resource_estimate(request, plan)?;
+        let estimate = if let Some(resources) = field_resources {
+            add_field_publication_resource_estimate(estimate, resources)?
+        } else {
+            estimate
+        };
         if estimate.transient_gpu_bytes <= publication_export_budgets().max_transient_gpu_bytes {
             return Ok(plan);
         }
@@ -1228,6 +1234,42 @@ fn publication_render_plan(
         let axis = usize::from(tile_dimensions[1] > tile_dimensions[0]);
         tile_dimensions[axis] = tile_dimensions[axis].div_ceil(2).max(1);
     }
+}
+
+fn add_field_publication_resource_estimate(
+    mut estimate: PublicationExportResourceEstimate,
+    resources: &FieldPublicationResources,
+) -> Result<PublicationExportResourceEstimate, PublicationExportRejection> {
+    let tile_pixels = estimate
+        .tile_rgba_bytes
+        .checked_div(4)
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    estimate.field_slice_bytes = if resources.has_slice {
+        tile_pixels
+            .checked_mul(8)
+            .ok_or(PublicationExportRejection::TransientGpuBudget)?
+    } else {
+        0
+    };
+    estimate.field_contour_bytes = if resources.has_contour {
+        tile_pixels
+            .checked_mul(4)
+            .ok_or(PublicationExportRejection::TransientGpuBudget)?
+    } else {
+        0
+    };
+    estimate.field_staging_bytes = estimate
+        .field_slice_bytes
+        .checked_add(estimate.field_contour_bytes)
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    estimate.transient_gpu_bytes = estimate
+        .transient_gpu_bytes
+        .checked_add(resources.footprint.resident_field_bytes)
+        .and_then(|value| value.checked_add(estimate.field_slice_bytes))
+        .and_then(|value| value.checked_add(estimate.field_contour_bytes))
+        .and_then(|value| value.checked_add(estimate.field_staging_bytes))
+        .ok_or(PublicationExportRejection::TransientGpuBudget)?;
+    Ok(estimate)
 }
 
 fn publication_export_resource_estimate(
@@ -1969,8 +2011,13 @@ fn evaluate_publication_export_admission_inner(
         return Err(PublicationExportRejection::ActivePhononState);
     }
     let budgets = publication_export_budgets();
-    let render_plan = publication_render_plan(request, limits)?;
-    let mut estimate = publication_export_resource_estimate(request, render_plan)?;
+    let render_plan = publication_render_plan(request, limits, field_resources.as_ref())?;
+    let estimate = publication_export_resource_estimate(request, render_plan)?;
+    let estimate = if let Some(resources) = field_resources.as_ref() {
+        add_field_publication_resource_estimate(estimate, resources)?
+    } else {
+        estimate
+    };
     let (
         field_layer_count,
         field_has_slice,
@@ -1979,38 +2026,6 @@ fn evaluate_publication_export_admission_inner(
         field_scene_hash,
         field_resource_footprint,
     ) = if let Some(resources) = field_resources {
-        let tile_pixels = estimate
-            .tile_rgba_bytes
-            .checked_div(4)
-            .ok_or(PublicationExportRejection::TransientGpuBudget)?;
-        // The admitted fallback composes directly into the export color
-        // target. Slice and contour representations reserve their own
-        // bounded tile-local targets when selected.
-        estimate.field_slice_bytes = if resources.has_slice {
-            tile_pixels
-                .checked_mul(8)
-                .ok_or(PublicationExportRejection::TransientGpuBudget)?
-        } else {
-            0
-        };
-        estimate.field_contour_bytes = if resources.has_contour {
-            tile_pixels
-                .checked_mul(4)
-                .ok_or(PublicationExportRejection::TransientGpuBudget)?
-        } else {
-            0
-        };
-        estimate.field_staging_bytes = estimate
-            .field_slice_bytes
-            .checked_add(estimate.field_contour_bytes)
-            .ok_or(PublicationExportRejection::TransientGpuBudget)?;
-        estimate.transient_gpu_bytes = estimate
-            .transient_gpu_bytes
-            .checked_add(resources.footprint.resident_field_bytes)
-            .and_then(|value| value.checked_add(estimate.field_slice_bytes))
-            .and_then(|value| value.checked_add(estimate.field_contour_bytes))
-            .and_then(|value| value.checked_add(estimate.field_staging_bytes))
-            .ok_or(PublicationExportRejection::TransientGpuBudget)?;
         (
             resources.layer_count,
             resources.has_slice,
@@ -4965,6 +4980,67 @@ mod publication_export_tests {
         assert!(ndc.x.abs() <= inner + 1.0e-5, "x={}", ndc.x);
         assert!(ndc.y.abs() <= inner + 1.0e-5, "y={}", ndc.y);
         assert!((0.0..=1.0).contains(&ndc.z), "z={}", ndc.z);
+    }
+
+    #[test]
+    fn field_publication_plan_retiles_after_counting_resident_and_tile_local_resources() {
+        let request = PublicationExportRequest {
+            width: 2560,
+            height: 1600,
+            publication_bond_instance_count: 10,
+            needs_transparent_depth: true,
+            has_measurement_overlays: false,
+            has_hopping_overlays: false,
+            has_isosurface: true,
+            has_volume: true,
+            has_phonon_presentation: false,
+            has_atom_drag: false,
+            show_bz: false,
+            has_measurement_state: false,
+            has_selection_highlights: false,
+            has_wannier_overlay: false,
+            has_active_phonon_state: false,
+        };
+        let limits = PublicationExportLimits {
+            max_texture_dimension_2d: 8192,
+            max_buffer_size: 256 * 1024 * 1024,
+            publication_msaa_x4: true,
+        };
+        let resources = FieldPublicationResources {
+            layer_count: 1,
+            has_slice: true,
+            has_contour: true,
+            footprint: FieldResourceFootprint {
+                resident_field_bytes: MAX_ACTIVE_FIELD_GPU_BYTES,
+                ..FieldResourceFootprint::default()
+            },
+            field_scene_hash: "field-publication-plan-test".to_owned(),
+        };
+        let full_frame_plan = PublicationRenderPlan {
+            requested_samples: 4,
+            selected_samples: 4,
+            tile_dimensions: [request.width, request.height],
+            tile_layout: [1, 1],
+            tile_overlap_pixels: 0,
+        };
+        let full_frame_estimate = add_field_publication_resource_estimate(
+            publication_export_resource_estimate(request, full_frame_plan).unwrap(),
+            &resources,
+        )
+        .unwrap();
+        assert!(
+            full_frame_estimate.transient_gpu_bytes > MAX_PUBLICATION_TOTAL_GPU_BYTES,
+            "the regression fixture must require field-aware tiling"
+        );
+
+        let plan = publication_render_plan(request, limits, Some(&resources)).unwrap();
+        assert!(plan.tile_layout[0] > 1 || plan.tile_layout[1] > 1);
+        let estimate = add_field_publication_resource_estimate(
+            publication_export_resource_estimate(request, plan).unwrap(),
+            &resources,
+        )
+        .unwrap();
+        assert!(estimate.transient_gpu_bytes <= MAX_PUBLICATION_TOTAL_GPU_BYTES);
     }
 
     #[test]

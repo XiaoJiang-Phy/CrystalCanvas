@@ -131,7 +131,7 @@ export function useTauriMenu({
                     console.log('[App] set_render_flags OK:', { showCell: renderFlagsRef.current.cell, showBonds: renderFlagsRef.current.bonds });
                 }).catch(console.error);
             } else if (action === 'show_about') {
-                alert("CrystalCanvas\nVersion 0.6.2\nPowered by Tauri, React, wgpu, and C++.\nLicense: MIT OR Apache-2.0");
+                alert("CrystalCanvas\nVersion 0.8.0\nPowered by Tauri, React, wgpu, and C++.\nLicense: MIT OR Apache-2.0");
             }
         }).then(f => unlistenMenu = f).catch(console.warn);
 

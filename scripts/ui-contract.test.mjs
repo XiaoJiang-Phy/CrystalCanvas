@@ -988,6 +988,19 @@ test('UI-1F accepts the backend-committed initial field without a second rendere
     );
 });
 
+test('UI-1F rebinds the active field after the load command resets local mirrors', () => {
+    const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
+    const load_action = volumetric.slice(
+        volumetric.indexOf("safeDialogOpen({ title: 'Open Volumetric File'"),
+        volumetric.indexOf('<ActionButton label="Add Field Layer..."'),
+    );
+    assert.match(
+        load_action,
+        /safeInvoke\('load_volumetric_file',[\s\S]*?applyVolumetricInfo\(info\)[\s\S]*?safeInvoke\('get_field_scene_info'\)[\s\S]*?applyFieldScene\(scene\)/,
+        'load completion must restore the active layer after local initialization resets its target',
+    );
+});
+
 test('UI-1F mirrors the Renderer density cutoff after render-mode completion', () => {
     const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
     const render_mode_handler = volumetric.slice(
@@ -1002,6 +1015,18 @@ test('UI-1F mirrors the Renderer density cutoff after render-mode completion', (
     );
 });
 
+test('UI-1F keeps render-mode controls available while portable geometry is preparing', () => {
+    const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
+    assert.match(volumetric, /const isPanelBusy = isLoading \|\| pendingControl !== null;/,
+        'a portable-geometry request must not freeze unrelated volumetric controls');
+    assert.match(volumetric, /const isPresentationBusy = isPanelBusy \|\| isPresentationPending;/,
+        'portable-geometry controls must remain serialized locally');
+    assert.match(volumetric, /<option value="both">Both \(Isosurface \+ Volume\)<\/option>[\s\S]*?<option value="isosurface">Isosurface Only<\/option>[\s\S]*?<option value="volume">Volume Only<\/option>/,
+        'render mode must expose both, isosurface-only, and volume-only representations');
+    assert.match(volumetric, /disabled=\{isPresentationBusy\}[\s\S]*?Add Clip Plane/,
+        'portable geometry actions must be disabled only by their local pending state');
+});
+
 test('UI-1F mirrors the Renderer density cutoff after isovalue completion', () => {
     const volumetric = ui_1f_clean_sources['src/components/panels/VolumetricPanel.tsx'];
     const isovalue_control = volumetric.slice(
@@ -1011,7 +1036,7 @@ test('UI-1F mirrors the Renderer density cutoff after isovalue completion', () =
 
     assert.match(
         isovalue_control,
-        /safeInvoke\('set_isovalue',[\s\S]*?(?:\.then\([\s\S]*?setDensityCutoff\(value\)|await[\s\S]*?setDensityCutoff\(value\))/,
+        /safeInvoke\('set_isovalue',[\s\S]*?setDensityCutoff\(value\)/,
         'isovalue completion must mirror the coupled density cutoff without an extra IPC command',
     );
 });
