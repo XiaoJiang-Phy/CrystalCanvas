@@ -1,6 +1,6 @@
 # CrystalCanvas Algorithms and Implementation Notes
 
-> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
+> Baseline: `v0.8.1` | Development line: `v0.9.0` | Updated: 2026-09-18
 
 This document connects the current visualization and geometry algorithms to their implementation and regression gates. It guides contributors who change existing behavior. It is not a validation report for a material, calculation, or source file.
 
@@ -71,14 +71,14 @@ Do not change either public shape as a side effect of an algorithm edit. Add a c
 
 **Implementation**: `cpp/src/physics_kernel.cpp`, `src-tauri/src/crystal_state.rs`, and `src-tauri/src/commands/geometry.rs`
 
-The slab path accepts a non-zero Miller triplet $(hkl)$, a positive layer count, and a finite non-negative vacuum thickness. Rust also applies bounded Miller-index, atom-count, determinant, and allocation checks before entering the C++ kernel.
+The slab path accepts a non-zero Miller triplet $(hkl)$, a positive normal-repeat count, and a finite non-negative vacuum thickness. Rust also applies bounded Miller-index, atom-count, determinant, and allocation checks before entering the C++ kernel.
 
 The current construction proceeds as follows:
 
 1. Reduce the Miller direction and construct a non-singular integer surface basis $S$.
 2. Require the first two columns of $S$ to satisfy the surface-plane condition; the third column is a complementary lattice direction.
 3. Multiply the complementary column by the requested layer count. The planned determinant magnitude therefore scales with the number of layers.
-4. Generate the expanded structure and remove coincident Cartesian positions using the kernel's explicit duplicate tolerance.
+4. Generate one representative per source site and periodic image in the half-open supercell. Preserve coincident input sites; integer tags carry source indices so Rust copies each site's species, label and occupancy.
 5. Form the output surface normal from the in-plane lattice vectors,
 
    $$
@@ -87,10 +87,14 @@ The current construction proceeds as follows:
         {|\mathbf a'\times\mathbf b'|}.
    $$
 
-6. Project the transformed $\mathbf c'$ direction onto $\hat{\mathbf n}$ to obtain the occupied height, then construct the final out-of-plane vector with the requested vacuum along that normal.
+6. Project the transformed $\mathbf c'$ direction onto $\hat{\mathbf n}$ to obtain the repeat-cell height, then construct the final out-of-plane vector with the requested vacuum along that normal.
 7. Remap atom positions into the final cell and reconstruct a validated intrinsic `CrystalState`.
 
-The current UI rejects P1 input because its Miller indices are interpreted relative to conventional axes and no trustworthy conventional orientation can be inferred from P1 alone. `preview_slab` is non-committing; `apply_slab` redetects symmetry and commits once.
+Miller indices refer to the current input-cell basis, including valid P1 cells. No conventional-cell orientation is inferred from a space-group number. Changing the cell basis requires transforming the indices for the intended plane. `preview_slab` is non-committing; `apply_slab` redetects symmetry and commits once.
+
+`layers` counts periods of the gcd-reduced Miller direction, not atomic height clusters. `vacuum_a` adds to the repeat-cell height, rather than specifying the gap between outermost atoms or padding on each side of the atomic envelope. QR standardization may rotate the Cartesian frame.
+
+The legacy `shift_termination` command only repositions the selected height cluster at fractional z=0, wrapping the periodic cell. It does not select a different bulk termination and can split the displayed slab across the box boundary. It requires c perpendicular to a and b, a positive finite clustering tolerance, and capacity-checked layer centers.
 
 Slab changes require a real, declared regression matrix. At minimum, independently assert layer count, termination behavior, stoichiometry, shortest Cartesian separation, primitive/conventional equivalence where expected, and failure atomicity. A surprising structure is evidence to investigate, not permission to replace the algorithm from intuition alone.
 

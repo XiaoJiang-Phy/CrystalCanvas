@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <Eigen/Dense>
 #include "physics_kernel.hpp"
+#include "physics_kernel_internal.hpp"
 #include <vector>
 #include <cmath>
 #include <numeric>
@@ -326,4 +327,59 @@ TEST(SlabBuilderTest, GetSlabSizeV2_MatchesBuildOutput) {
     // Upper bound must be >= actual atom count, and not absurdly large
     EXPECT_GE(upper, res.n_atoms);
     EXPECT_LE(upper, res.n_atoms * 4);
+}
+
+TEST(SlabBuilderTest, CoincidentSitesAndOpaqueTagsArePreserved) {
+    auto input = make_sc_crystal(3.0);
+    input.positions = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e-6, 0.0, 0.0};
+    input.types = {19, 23, 29};
+    const auto result = run_slab_v2(input, 1, 1, 1, 3, 10.0);
+    ASSERT_EQ(result.n_atoms, 9);
+    for (int tag : input.types) EXPECT_EQ(std::count(result.types.begin(), result.types.end(), tag), 3);
+}
+
+TEST(SlabBuilderTest, ObliqueCellMetricAndNormalRepeatHeight) {
+    auto input = make_sc_crystal(3.0);
+    input.lattice << 3.0, 0.7, -0.4, 0.0, 4.0, 0.6, 0.0, 0.0, 5.0;
+    input.positions = {0.13, 0.27, 0.39, 0.71, 0.61, 0.53};
+    input.types = {101, 203};
+    const std::vector<Eigen::Vector3i> planes = {
+        {1, 0, 0}, {0, 0, -1}, {1, 1, 1}, {2, -1, 3}, {4, 2, 0}};
+    for (const auto& plane : planes) {
+        SCOPED_TRACE(plane.transpose());
+        const int divisor = std::gcd(std::gcd(std::abs(plane.x()), std::abs(plane.y())), std::abs(plane.z()));
+        const Eigen::Vector3d reduced = plane.cast<double>() / divisor;
+        const double period = 1.0 / (input.lattice.inverse().transpose() * reduced).norm();
+        const auto bare = run_slab_v2(input, plane.x(), plane.y(), plane.z(), 3, 0.0);
+        const auto padded = run_slab_v2(input, plane.x(), plane.y(), plane.z(), 3, 11.0);
+        ASSERT_EQ(bare.n_atoms, 6);
+        ASSERT_EQ(padded.n_atoms, 6);
+        EXPECT_NEAR(bare.lattice.col(2).norm(), 3.0 * period, 1e-10);
+        EXPECT_NEAR(padded.lattice.col(2).norm(), 3.0 * period + 11.0, 1e-10);
+        EXPECT_NEAR(bare.lattice.determinant(), 3.0 * input.lattice.determinant(), 1e-9);
+        EXPECT_NEAR(padded.lattice.col(0).dot(padded.lattice.col(2)), 0.0, 1e-10);
+        EXPECT_NEAR(padded.lattice.col(1).dot(padded.lattice.col(2)), 0.0, 1e-10);
+        Eigen::Matrix<int, 3, 3, Eigen::ColMajor> basis;
+        ASSERT_TRUE(get_surface_basis(input.lattice, plane.x(), plane.y(), plane.z(), basis));
+        ColMajorMatrix3d reference_cell = input.lattice * basis.cast<double>();
+        const Eigen::Vector3d normal = (input.lattice.inverse().transpose() * reduced).normalized();
+        reference_cell.col(2) = normal * (3.0 * period + 11.0);
+        const ColMajorMatrix3d rotation = padded.lattice * reference_cell.inverse();
+        EXPECT_TRUE((rotation.transpose() * rotation).isApprox(ColMajorMatrix3d::Identity(), 1e-10));
+        for (int i = 0; i < bare.n_atoms; ++i) {
+            const Eigen::Map<const Eigen::Vector3d> f_bare(&bare.positions[3 * i]);
+            const Eigen::Map<const Eigen::Vector3d> f_padded(&padded.positions[3 * i]);
+            const Eigen::Vector3d delta = padded.lattice * f_padded - bare.lattice * f_bare;
+            EXPECT_NEAR(delta.x(), 0.0, 1e-10);
+            EXPECT_NEAR(delta.y(), 0.0, 1e-10);
+            EXPECT_NEAR(delta.z(), 5.5, 1e-10);
+            EXPECT_EQ(bare.types[i], padded.types[i]);
+            const int source_index = padded.types[i] == 101 ? 0 : 1;
+            const Eigen::Map<const Eigen::Vector3d> source(&input.positions[3 * source_index]);
+            const Eigen::Vector3d input_cartesian = rotation.transpose()
+                * (padded.lattice * f_padded) - 5.5 * normal;
+            const Eigen::Vector3d image = input.lattice.inverse() * input_cartesian - source;
+            EXPECT_TRUE((image - image.array().round().matrix()).isZero(1e-10));
+        }
+    }
 }

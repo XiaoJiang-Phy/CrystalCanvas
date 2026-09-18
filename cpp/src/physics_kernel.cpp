@@ -564,8 +564,10 @@ void ext_gcd(int64_t h, int64_t k, int64_t& u, int64_t& v, int64_t& g)
 
         size_t out_idx = 0;
         for (size_t i = 0; i < n_atoms; ++i) {
+            const size_t source_begin = out_idx;
             Eigen::Vector3d f(positions[3*i], positions[3*i+1], positions[3*i+2]);
             if (!f.allFinite()) return 0;
+            f -= f.array().floor().matrix().eval();
             const int type = types[i];
             for (int nx = plan.min_shift[0]; nx <= plan.max_shift[0]; ++nx) {
                 for (int ny = plan.min_shift[1]; ny <= plan.max_shift[1]; ++ny) {
@@ -590,6 +592,7 @@ void ext_gcd(int64_t h, int64_t k, int64_t& u, int64_t& v, int64_t& g)
                     }
                 }
             }
+            if (out_idx - source_begin != plan.output_atoms / n_atoms) return 0;
         }
         if (out_idx != plan.output_atoms) return 0;
         const ColMajorMatrix3d output_lattice = L * p_double;
@@ -718,59 +721,9 @@ void build_slab(
 
         Eigen::Map<ColMajorMatrix3d> L_out(out_lattice);
         if (!L_out.allFinite()) return 0;
-        std::vector<int> indices(total_new_atoms);
-        std::iota(indices.begin(), indices.end(), 0);
-        std::vector<Eigen::Vector3d> cart_pos(total_new_atoms);
-        for (int i = 0; i < total_new_atoms; ++i) {
-            const Eigen::Vector3d fractional(
-                out_positions[3 * i], out_positions[3 * i + 1], out_positions[3 * i + 2]);
-            if (!fractional.allFinite()) return 0;
-            cart_pos[i] = L_out * fractional;
-            if (!cart_pos[i].allFinite()) return 0;
-        }
-
-        std::sort(indices.begin(), indices.end(), [&](int left, int right) {
-            const Eigen::Vector3d& lhs = cart_pos[left];
-            const Eigen::Vector3d& rhs = cart_pos[right];
-            if (lhs.x() != rhs.x()) return lhs.x() < rhs.x();
-            if (lhs.y() != rhs.y()) return lhs.y() < rhs.y();
-            if (lhs.z() != rhs.z()) return lhs.z() < rhs.z();
-            return left < right;
-        });
-
-        std::vector<int> unique_indices;
-        unique_indices.reserve(total_new_atoms);
-        for (const int index : indices) {
-            bool duplicate = false;
-            for (auto it = unique_indices.rbegin(); it != unique_indices.rend(); ++it) {
-                const int unique_index = *it;
-                if (cart_pos[index].x() - cart_pos[unique_index].x() > 1e-3) break;
-                const double distance = (cart_pos[index] - cart_pos[unique_index]).stableNorm();
-                if (!std::isfinite(distance)) return 0;
-                if (distance < 1e-4) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (!duplicate) unique_indices.push_back(index);
-        }
-        if (unique_indices.empty()
-            || unique_indices.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
-            return 0;
-        }
-
-        const int n_unique = static_cast<int>(unique_indices.size());
-        std::vector<double> final_pos(static_cast<size_t>(n_unique) * 3);
-        std::vector<int> final_types(n_unique);
-        for (int i = 0; i < n_unique; ++i) {
-            const int original_index = unique_indices[i];
-            final_pos[3 * i] = out_positions[3 * original_index];
-            final_pos[3 * i + 1] = out_positions[3 * original_index + 1];
-            final_pos[3 * i + 2] = out_positions[3 * original_index + 2];
-            final_types[i] = out_types[original_index];
-        }
-        std::copy(final_pos.begin(), final_pos.end(), out_positions);
-        std::copy(final_types.begin(), final_types.end(), out_types);
+        // Enumeration is per source site. Coincident sites can carry distinct
+        // species, occupancies or labels and must never be merged by distance.
+        const int output_count = total_new_atoms;
 
         const Eigen::Vector3d a_vec = L_out.col(0);
         const Eigen::Vector3d b_vec = L_out.col(1);
@@ -809,7 +762,7 @@ void build_slab(
             return 0;
         }
 
-        for (int i = 0; i < n_unique; ++i) {
+        for (int i = 0; i < output_count; ++i) {
             const double fx = out_positions[3 * i];
             const double fy = out_positions[3 * i + 1];
             const double fz = out_positions[3 * i + 2];
@@ -837,81 +790,107 @@ void build_slab(
         }
         if (!upper.allFinite()) return 0;
         L_out = upper;
-        return n_unique;
+        return output_count;
     } catch (...) {
         return 0;
     }
 }
 
+namespace {
+// Layer heights use fractional z only when c is normal to the surface plane.
+bool slab_normal_length(const double* lattice, double& c_len) noexcept {
+    if (lattice == nullptr) return false;
+    Eigen::Map<const ColMajorMatrix3d> cell(lattice);
+    if (!cell.allFinite()) return false;
+    const double a_len = cell.col(0).stableNorm();
+    const double b_len = cell.col(1).stableNorm();
+    c_len = cell.col(2).stableNorm();
+    if (!std::isfinite(a_len) || !std::isfinite(b_len) || !std::isfinite(c_len)
+        || a_len <= 0.0 || b_len <= 0.0 || c_len <= 0.0) return false;
+    const Eigen::Vector3d a = cell.col(0) / a_len;
+    const Eigen::Vector3d b = cell.col(1) / b_len;
+    const Eigen::Vector3d c = cell.col(2) / c_len;
+    return a.cross(b).stableNorm() > 1e-10
+        && std::abs(a.dot(c)) <= 1e-10 && std::abs(b.dot(c)) <= 1e-10;
+}
+}
+
 [[nodiscard]] int cluster_slab_layers(
-    const double* positions, size_t n_atoms,
-    const double* lattice,
-    double layer_tolerance_a,
-    double* out_layer_centers, size_t max_layers)
+    const double* positions, size_t n_atoms, const double* lattice,
+    double layer_tolerance_a, double* out_layer_centers, size_t max_layers)
 {
-    if (n_atoms == 0 || max_layers == 0) return 0;
-    
-    Eigen::Map<const ColMajorMatrix3d> L(lattice);
-    double c_len = L.col(2).norm();
-
-    std::vector<double> z_carts(n_atoms);
-    for (size_t i = 0; i < n_atoms; ++i) {
-        z_carts[i] = positions[3*i+2] * c_len;
-    }
-
-    std::sort(z_carts.begin(), z_carts.end());
-
-    int layer_count = 0;
-    double current_sum = z_carts[0];
-    int current_cluster_size = 1;
-
-    for (size_t i = 1; i < n_atoms; ++i) {
-        if (z_carts[i] - z_carts[i-1] > layer_tolerance_a) {
-            if (static_cast<size_t>(layer_count) < max_layers) {
-                out_layer_centers[layer_count] = current_sum / current_cluster_size;
+    try {
+        double c_len = 0.0;
+        if (positions == nullptr || out_layer_centers == nullptr
+            || n_atoms == 0 || n_atoms > MAX_STRUCTURAL_ATOMS || max_layers == 0
+            || !std::isfinite(layer_tolerance_a) || layer_tolerance_a <= 0.0
+            || !slab_normal_length(lattice, c_len)) return 0;
+        std::vector<double> heights(n_atoms);
+        for (size_t i = 0; i < n_atoms; ++i) {
+            for (size_t axis = 0; axis < 3; ++axis) {
+                if (!std::isfinite(positions[3 * i + axis])) return 0;
             }
-            layer_count++;
-            
-            current_sum = z_carts[i];
-            current_cluster_size = 1;
-        } else {
-            current_sum += z_carts[i];
-            current_cluster_size++;
+            const double z = positions[3 * i + 2];
+            heights[i] = (z - std::floor(z)) * c_len;
+            if (!std::isfinite(heights[i])) return 0;
         }
+        std::sort(heights.begin(), heights.end());
+        size_t layer_count = 0;
+        double center = heights[0];
+        size_t cluster_size = 1;
+        for (size_t i = 1; i < n_atoms; ++i) {
+            if (heights[i] - heights[i - 1] > layer_tolerance_a) {
+                if (layer_count < max_layers) out_layer_centers[layer_count] = center;
+                ++layer_count;
+                center = heights[i];
+                cluster_size = 1;
+            } else {
+                ++cluster_size;
+                center += (heights[i] - center) / static_cast<double>(cluster_size);
+            }
+        }
+        if (layer_count < max_layers) out_layer_centers[layer_count] = center;
+        return static_cast<int>(layer_count + 1);
+    } catch (...) {
+        return 0;
     }
+}
 
-    if (static_cast<size_t>(layer_count) < max_layers) {
-        out_layer_centers[layer_count] = current_sum / current_cluster_size;
+bool shift_slab_termination_checked(
+    double* positions, size_t n_atoms, const double* lattice, int target_layer_idx,
+    const double* layer_centers, int n_layers, size_t centers_capacity) noexcept
+{
+    double c_len = 0.0;
+    if (positions == nullptr || layer_centers == nullptr || n_atoms == 0
+        || n_atoms > MAX_STRUCTURAL_ATOMS || n_layers <= 0
+        || static_cast<size_t>(n_layers) > centers_capacity
+        || target_layer_idx < 0 || target_layer_idx >= n_layers
+        || !slab_normal_length(lattice, c_len)) return false;
+    const double z_target = layer_centers[target_layer_idx];
+    if (!std::isfinite(z_target) || z_target < 0.0 || z_target >= c_len) return false;
+    const double delta = z_target / c_len;
+    // Validate the complete input before any in-place write.
+    for (size_t i = 0; i < n_atoms * 3; ++i) {
+        if (!std::isfinite(positions[i])) return false;
     }
-    layer_count++;
-
-    return layer_count;
+    for (size_t i = 0; i < n_atoms; ++i) {
+        const double z = positions[3 * i + 2];
+        double shifted = (z - std::floor(z)) - delta;
+        shifted -= std::floor(shifted);
+        if (shifted >= 1.0 - 1e-12) shifted = 0.0;
+        positions[3 * i + 2] = shifted;
+    }
+    return true;
 }
 
 void shift_slab_termination(
-    double* positions, size_t n_atoms,
-    const double* lattice, int target_layer_idx,
+    double* positions, size_t n_atoms, const double* lattice, int target_layer_idx,
     const double* layer_centers, int n_layers)
 {
-    if (n_atoms == 0 || target_layer_idx < 0 || target_layer_idx >= n_layers) return;
-
-    Eigen::Map<const ColMajorMatrix3d> L(lattice);
-    double c_len = L.col(2).norm();
-
-    double z_target = layer_centers[target_layer_idx];
-    double delta_f = z_target / c_len;
-
-    for (size_t i = 0; i < n_atoms; ++i) {
-        double fz = positions[3*i+2] - delta_f;
-        fz = fz - std::floor(fz);
-        
-        // Safety against precise 1.0 wrap representation errors
-        if (fz >= 1.0 - 1e-12) {
-            fz = 0.0;
-        }
-        
-        positions[3*i+2] = fz;
-    }
+    // Legacy callers must provide n_layers readable centers.
+    static_cast<void>(shift_slab_termination_checked(
+        positions, n_atoms, lattice, target_layer_idx, layer_centers, n_layers,
+        n_layers > 0 ? static_cast<size_t>(n_layers) : 0));
 }
 
 bool check_overlap_mic(const double* lattice, const double* positions,

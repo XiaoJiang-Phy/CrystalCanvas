@@ -1,6 +1,6 @@
 # CrystalCanvas IPC Contract Reference
 
-> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
+> Baseline: `v0.8.1` | Development line: `v0.9.0` | Updated: 2026-09-18
 
 This document describes the reviewed Rust/TypeScript IPC boundary. The machine-checked sources of truth are [ipc/inventory.json](../ipc/inventory.json), [src/ipc/commands.generated.ts](../src/ipc/commands.generated.ts), and [src/ipc/contracts.ts](../src/ipc/contracts.ts). After you change a command, event, or wire type, run `npm run ipc:inventory` and `npm run check:ipc`.
 
@@ -103,7 +103,7 @@ The argument column below is the frontend TypeScript wire shape. `—` means no 
 | `apply_supercell` | `{ matrix: [[...], [...], [...]] }` | `null` | nested 3×3 integer contract; command boundary adapts it for the kernel; atomic commit |
 | `preview_slab` | `{ miller, layers, vacuumA }` | `CrystalState` | no version or undo entry |
 | `apply_slab` | `{ miller, layers, vacuumA }` | `null` | validated atomic commit |
-| `shift_termination` | `{ targetLayerIdx, layerToleranceA? }` | `number` | returns the selected/available termination result defined by the backend |
+| `shift_termination` | `{ targetLayerIdx, layerToleranceA? }` | `number` | repositions a height cluster at periodic z=0; returns total cluster count; does not rebuild a termination |
 | `apply_niggli_reduce` | — | `null` | committed cell transform |
 | `apply_cell_standardize` | `{ toPrimitive }` | `null` | `true` for primitive, `false` for conventional |
 

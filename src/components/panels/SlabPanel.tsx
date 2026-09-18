@@ -61,12 +61,13 @@ export default function SlabPanel() {
                 <NumberInput label="k" value={slab.k} onChange={(value) => setSlab((current) => ({ ...current, k: value }))} disabled={isBusy} invalid={invalidMiller} />
                 <NumberInput label="l" value={slab.l} onChange={(value) => setSlab((current) => ({ ...current, l: value }))} disabled={isBusy} invalid={invalidMiller} />
             </div>
-            <RangeInput label="Layers" value={slab.layers} displayValue={String(slab.layers)} min={1} max={10} step={1} onChange={(value) => setSlab((current) => ({ ...current, layers: value }))} disabled={isBusy} />
-            <RangeInput label="Vacuum" value={slab.vacuum} displayValue={`${slab.vacuum} Å`} min={0} max={30} step={1} onChange={(value) => setSlab((current) => ({ ...current, vacuum: value }))} disabled={isBusy} />
+            <p className="text-xs text-slate-400">Miller indices use the current cell. Repeats count reduced-plane periods, not atomic layers.</p>
+            <RangeInput label="Normal repeats" value={slab.layers} displayValue={String(slab.layers)} min={1} max={10} step={1} onChange={(value) => setSlab((current) => ({ ...current, layers: value }))} disabled={isBusy} />
+            <RangeInput label="Added vacuum" value={slab.vacuum} displayValue={`${slab.vacuum} Å`} min={0} max={30} step={1} onChange={(value) => setSlab((current) => ({ ...current, vacuum: value }))} disabled={isBusy} />
             {error && <PanelError error={error} message={error.message} />}
             <div className="grid grid-cols-2 gap-2">
                 <ActionButton label="Cut" onClick={handleSlabCut} disabled={isBusy} busy={activeOperation === 'cut'} />
-                <ActionButton label="Reset" onClick={handleReset} disabled={isBusy} busy={activeOperation === 'reset'} tone="secondary" />
+                <ActionButton label="Reset view" onClick={handleReset} disabled={isBusy} busy={activeOperation === 'reset'} tone="secondary" />
             </div>
         </div>
     );

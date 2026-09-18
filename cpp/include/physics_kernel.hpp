@@ -67,13 +67,13 @@ struct SupercellResult {
 /// Build a supercell using the caller-provided output capacity.
 /// @param lattice Input 3x3 lattice
 /// @param positions Input fractional positions (n_atoms x 3)
-/// @param types Input atomic types (n_atoms)
+/// @param types Input opaque integer tags, copied unchanged (n_atoms)
 /// @param n_atoms Number of original atoms
 /// @param expansion 3x3 integer expansion matrix
 /// @param output_capacity Number of atoms available in the output buffers
 /// @param out_lattice Output 3x3 lattice
 /// @param out_positions Output fractional positions (pre-allocated)
-/// @param out_types Output array of atomic types (pre-allocated)
+/// @param out_types Output opaque tags copied from types (pre-allocated)
 /// @return Number of atoms written, or 0 on failure.
 [[nodiscard]] int build_supercell_checked(
     const double* lattice, const double* positions,
@@ -98,7 +98,7 @@ int get_slab_size(const double *lattice, const int32_t *miller, int layers,
                   double vacuum_A, size_t n_atoms);
 
 /// Two-step API: first query size, then fill buffers.
-/// get_slab_size_v2 returns an upper-bound atom count.
+/// get_slab_size_v2 returns n_atoms * n_layers (normal repeats).
 [[nodiscard]] int get_slab_size_v2(
     const double* lattice, const int32_t* miller,
     int n_layers, size_t n_atoms);
@@ -113,19 +113,22 @@ int get_slab_size(const double *lattice, const int32_t *miller, int layers,
 /// @param vacuum_A Vacuum padding in Angstroms
 /// @param out_lattice Output 3x3 lattice ([9])
 /// @param out_positions Output fractional positions (pre-allocated)
-/// @param out_types Output array of atomic types (pre-allocated)
+/// @param out_types Output opaque tags copied from types (pre-allocated)
 void build_slab(const double *lattice, const double *positions,
                 const int *types, size_t n_atoms, const int32_t *miller,
                 int layers, double vacuum_A, double *out_lattice,
                 double *out_positions, int *out_types);
 
-/// Build slab with deduplication and vacuum injection.
+/// Build slab preserving every source site and adding vacuum.
+/// Miller indices use the input-cell basis and are reduced by their gcd.
+/// types are opaque integer tags copied unchanged (Rust passes source indices).
+/// n_layers counts normal repeats, not atomic planes; vacuum_a is added height.
 /// The output lattice is c-axis orthogonalized and QR-standardized, so its
 /// Cartesian frame may be rigidly rotated relative to the input frame.
 /// out_positions are fractional coordinates in out_lattice; consumers must
 /// derive Cartesian directions and surface normals from out_lattice.
 /// @param output_capacity Number of atoms available in the output buffers.
-/// @return Actual number of unique atoms written, or 0 on failure.
+/// @return Number of source-site replicas written, or 0 on failure.
 [[nodiscard]] int build_slab_v2(
     const double* lattice, const double* positions,
     const int* types, size_t n_atoms,
@@ -133,7 +136,9 @@ void build_slab(const double *lattice, const double *positions,
     size_t output_capacity, double* out_lattice,
     double* out_positions, int* out_types) noexcept;
 
-/// Identify distinct atomic layers along the slab normal.
+/// Identify layers along c, which must be perpendicular to a and b.
+/// Positive finite tolerance; periodic z is wrapped to [0,1).
+/// Returns the full count even if max_layers truncates the written centers.
 /// @param positions Fractional positions (n_atoms x 3, flat)
 /// @param n_atoms Number of existing atoms
 /// @param lattice 3x3 input lattice (ColMajor [9])
@@ -147,7 +152,8 @@ void build_slab(const double *lattice, const double *positions,
     double layer_tolerance_a,
     double* out_layer_centers, size_t max_layers);
 
-/// Shift slab termination to expose a different surface layer.
+/// Reposition a slab layer at z=0; this does not rebuild a termination.
+/// Legacy interface: layer_centers must contain n_layers readable entries.
 /// Modifies positions in-place.
 /// @param positions Fractional positions (n_atoms x 3, flat)
 /// @param n_atoms Number of existing atoms
@@ -159,6 +165,11 @@ void shift_slab_termination(
     double* positions, size_t n_atoms,
     const double* lattice, int target_layer_idx,
     const double* layer_centers, int n_layers);
+
+/// Capacity-checked repositioning; false leaves positions unchanged.
+bool shift_slab_termination_checked(
+    double* positions, size_t n_atoms, const double* lattice, int target_layer_idx,
+    const double* layer_centers, int n_layers, size_t centers_capacity) noexcept;
 
 /// Check if a new atom overlaps with existing atoms using Minimum Image
 /// Convention

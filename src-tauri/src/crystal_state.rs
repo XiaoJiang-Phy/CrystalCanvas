@@ -234,17 +234,6 @@ fn lattice_parameters_from_col_major(lattice: &[f64; 9]) -> Result<[f64; 6], &'s
     Ok([norms[0], norms[1], norms[2], alpha, beta, gamma])
 }
 
-fn atomic_number_sources(atomic_numbers: &[u8]) -> Result<[Option<usize>; 256], &'static str> {
-    let mut sources = [None; 256];
-    for (index, atomic_number) in atomic_numbers.iter().copied().enumerate() {
-        if atomic_number == 0 {
-            return Err("input structure contains an invalid atomic number");
-        }
-        sources[usize::from(atomic_number)].get_or_insert(index);
-    }
-    Ok(sources)
-}
-
 pub fn validate_slab_request(
     miller: [i32; 3],
     layers: i32,
@@ -1118,7 +1107,8 @@ impl CrystalState {
             self.cart_positions[atom.index] = atom.cartesian;
         }
     }
-    /// Generate a slab based on Miller indices and layers.
+    /// Generate a slab using Miller indices in the current input-cell basis.
+    /// Layers counts normal repeats; vacuum is added to their cell height.
     /// Returns a new CrystalState representing the slab.
     pub fn generate_slab(
         &self,
@@ -1126,6 +1116,8 @@ impl CrystalState {
         layers: i32,
         vacuum_a: f64,
     ) -> Result<Self, String> {
+        self.validate_structural_invariants()
+            .map_err(str::to_string)?;
         let n_atoms = self.intrinsic_sites;
         if n_atoms == 0 {
             return Err("Cannot generate slab from empty crystal".to_string());
@@ -1142,27 +1134,19 @@ impl CrystalState {
         )
         .map_err(str::to_string)?;
 
-        if self.spacegroup_number == 1 {
-            return Err(
-                "Slab generation requires a conventional unit cell with symmetry \
-                 (spacegroup ≠ P1). Miller indices (hkl) are defined relative to \
-                 conventional axes. Please load or convert to a conventional cell first."
-                    .to_string(),
-            );
-        }
-
         let lattice_col_major = self.get_lattice_col_major();
 
         let input_components = n_atoms
             .checked_mul(3)
             .ok_or_else(|| "slab input capacity overflow".to_string())?;
         let mut flat_positions = Vec::with_capacity(input_components);
-        let mut types = Vec::with_capacity(n_atoms);
+        let mut source_site_indices = Vec::with_capacity(n_atoms);
         for i in 0..n_atoms {
             flat_positions.push(self.fract_x[i]);
             flat_positions.push(self.fract_y[i]);
             flat_positions.push(self.fract_z[i]);
-            types.push(self.atomic_numbers[i] as i32);
+            // The kernel copies opaque integer tags; use site identities, not elements.
+            source_site_indices.push(i as i32);
         }
 
         let n_upper = unsafe {
@@ -1179,13 +1163,13 @@ impl CrystalState {
             .ok_or_else(|| "slab output capacity overflow".to_string())?;
         let mut out_lattice = [0.0f64; 9];
         let mut out_positions = vec![0.0f64; output_components];
-        let mut out_types = vec![0i32; n_upper_usize];
+        let mut out_source_site_indices = vec![0i32; n_upper_usize];
 
         let n_actual = unsafe {
             ffi::build_slab_v2(
                 lattice_col_major.as_ptr(),
                 flat_positions.as_ptr(),
-                types.as_ptr(),
+                source_site_indices.as_ptr(),
                 n_atoms,
                 miller.as_ptr(),
                 layers,
@@ -1193,19 +1177,17 @@ impl CrystalState {
                 n_upper_usize,
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
-                out_types.as_mut_ptr(),
+                out_source_site_indices.as_mut_ptr(),
             )
         };
 
-        if n_actual <= 0 || n_actual as usize > n_upper_usize {
-            return Err("build_slab_v2 returned 0 atoms".to_string());
+        if n_actual <= 0 || n_actual as usize != n_upper_usize {
+            return Err("build_slab_v2 returned an unexpected site count".to_string());
         }
         let n_actual_usize = n_actual as usize;
 
         let [new_a, new_b, new_c, new_alpha, new_beta, new_gamma] =
             lattice_parameters_from_col_major(&out_lattice).map_err(str::to_string)?;
-        let type_sources =
-            atomic_number_sources(&self.atomic_numbers[..n_atoms]).map_err(str::to_string)?;
 
         let mut new_state = CrystalState {
             name: format!(
@@ -1225,7 +1207,7 @@ impl CrystalState {
             fract_x: Vec::with_capacity(n_actual_usize),
             fract_y: Vec::with_capacity(n_actual_usize),
             fract_z: Vec::with_capacity(n_actual_usize),
-            occupancies: vec![1.0; n_actual_usize],
+            occupancies: Vec::with_capacity(n_actual_usize),
             atomic_numbers: Vec::with_capacity(n_actual_usize),
             cart_positions: Vec::new(),
             version: self.version,
@@ -1251,17 +1233,20 @@ impl CrystalState {
                 out_positions[3 * i + 2],
             ];
             validate_fractional_position(position).map_err(str::to_string)?;
-            let t = u8::try_from(out_types[i])
-                .map_err(|_| "FFI slab output contains an invalid atomic number".to_string())?;
-            let source_index = type_sources[usize::from(t)]
-                .ok_or_else(|| "FFI slab output contains an unknown atomic number".to_string())?;
+            let source_index = usize::try_from(out_source_site_indices[i])
+                .ok()
+                .filter(|&index| index < n_atoms)
+                .ok_or_else(|| "FFI output contains an invalid source site index".to_string())?;
 
             new_state.labels.push(self.labels[source_index].clone());
             new_state.elements.push(self.elements[source_index].clone());
             new_state.fract_x.push(position[0]);
             new_state.fract_y.push(position[1]);
             new_state.fract_z.push(position[2]);
-            new_state.atomic_numbers.push(t);
+            new_state
+                .atomic_numbers
+                .push(self.atomic_numbers[source_index]);
+            new_state.occupancies.push(self.occupancies[source_index]);
         }
 
         new_state.fractional_to_cartesian();
@@ -1273,13 +1258,19 @@ impl CrystalState {
         Ok(new_state)
     }
 
-    /// Shift slab termination to expose a different surface layer.
+    /// Reposition a slab layer at fractional z=0 using periodic wrapping.
+    /// This does not reconstruct a surface termination.
     /// Returns the number of detected layers for UI feedback.
     pub fn shift_termination(
         &mut self,
         target_layer_idx: i32,
         layer_tolerance_a: f64,
     ) -> Result<i32, String> {
+        self.validate_structural_invariants()
+            .map_err(str::to_string)?;
+        if !layer_tolerance_a.is_finite() || layer_tolerance_a <= 0.0 {
+            return Err("Layer tolerance must be finite and positive".to_string());
+        }
         let n_atoms = self.intrinsic_sites;
         if n_atoms == 0 {
             return Err("Cannot shift termination of empty crystal".to_string());
@@ -1294,7 +1285,7 @@ impl CrystalState {
             flat_positions.push(self.fract_z[i]);
         }
 
-        let max_layers: usize = 128;
+        let max_layers = n_atoms;
         let mut layer_centers = vec![0.0f64; max_layers];
 
         let n_layers = unsafe {
@@ -1308,6 +1299,10 @@ impl CrystalState {
             )
         };
 
+        if n_layers <= 0 || n_layers as usize > max_layers {
+            return Err("Layer clustering failed or exceeded output capacity".to_string());
+        }
+
         if target_layer_idx < 0 || target_layer_idx >= n_layers {
             return Err(format!(
                 "Layer index {} out of range [0, {})",
@@ -1315,15 +1310,33 @@ impl CrystalState {
             ));
         }
 
-        unsafe {
-            ffi::shift_slab_termination(
+        let shifted = unsafe {
+            ffi::shift_slab_termination_checked(
                 flat_positions.as_mut_ptr(),
                 n_atoms,
                 lattice_col_major.as_ptr(),
                 target_layer_idx,
                 layer_centers.as_ptr(),
                 n_layers,
-            );
+                max_layers,
+            )
+        };
+        if !shifted {
+            return Err("Slab repositioning rejected invalid geometry or layer data".to_string());
+        }
+
+        let renderer_lattice = self.renderer_lattice_col_major();
+        let mut cart_positions = Vec::with_capacity(n_atoms);
+        for position in flat_positions.chunks_exact(3) {
+            let cartesian = std::array::from_fn::<_, 3, _>(|axis| {
+                (renderer_lattice[axis] * position[0]
+                    + renderer_lattice[3 + axis] * position[1]
+                    + renderer_lattice[6 + axis] * position[2]) as f32
+            });
+            if !cartesian.iter().all(|component| component.is_finite()) {
+                return Err("Repositioned Cartesian coordinates are not finite f32".to_string());
+            }
+            cart_positions.push(cartesian);
         }
 
         for i in 0..n_atoms {
@@ -1332,13 +1345,15 @@ impl CrystalState {
             self.fract_z[i] = flat_positions[3 * i + 2];
         }
 
-        self.fractional_to_cartesian();
+        self.cart_positions = cart_positions;
 
         Ok(n_layers)
     }
 
     /// Generate a supercell based on a 3x3 expansion matrix (ColMajor).
     pub fn generate_supercell(&self, expansion: &[i32; 9]) -> Result<Self, String> {
+        self.validate_structural_invariants()
+            .map_err(str::to_string)?;
         let n_atoms = self.num_atoms();
         if n_atoms == 0 {
             return Err("Cannot generate supercell from empty crystal".to_string());
@@ -1382,12 +1397,13 @@ impl CrystalState {
             .checked_mul(3)
             .ok_or_else(|| "supercell input capacity overflow".to_string())?;
         let mut flat_positions = Vec::with_capacity(input_components);
-        let mut types = Vec::with_capacity(n_atoms);
+        let mut source_site_indices = Vec::with_capacity(n_atoms);
         for i in 0..n_atoms {
             flat_positions.push(self.fract_x[i]);
             flat_positions.push(self.fract_y[i]);
             flat_positions.push(self.fract_z[i]);
-            types.push(self.atomic_numbers[i] as i32);
+            // The kernel copies opaque integer tags; use site identities, not elements.
+            source_site_indices.push(i as i32);
         }
 
         let output_components = expected_atoms
@@ -1395,19 +1411,19 @@ impl CrystalState {
             .ok_or_else(|| "supercell output capacity overflow".to_string())?;
         let mut out_lattice = [0.0f64; 9];
         let mut out_positions = vec![0.0f64; output_components];
-        let mut out_types = vec![0i32; expected_atoms];
+        let mut out_source_site_indices = vec![0i32; expected_atoms];
 
         let n_new = unsafe {
             ffi::build_supercell_checked(
                 lattice_col_major.as_ptr(),
                 flat_positions.as_ptr(),
-                types.as_ptr(),
+                source_site_indices.as_ptr(),
                 n_atoms,
                 expansion.as_ptr(),
                 expected_atoms,
                 out_lattice.as_mut_ptr(),
                 out_positions.as_mut_ptr(),
-                out_types.as_mut_ptr(),
+                out_source_site_indices.as_mut_ptr(),
             )
         };
         if n_new <= 0 || n_new as usize != expected_atoms {
@@ -1417,8 +1433,6 @@ impl CrystalState {
 
         let [new_a, new_b, new_c, new_alpha, new_beta, new_gamma] =
             lattice_parameters_from_col_major(&out_lattice).map_err(str::to_string)?;
-        let type_sources =
-            atomic_number_sources(&self.atomic_numbers[..n_atoms]).map_err(str::to_string)?;
 
         let mut new_state = CrystalState {
             name: format!("{}_supercell", self.name),
@@ -1435,7 +1449,7 @@ impl CrystalState {
             fract_x: Vec::with_capacity(n_new_usize),
             fract_y: Vec::with_capacity(n_new_usize),
             fract_z: Vec::with_capacity(n_new_usize),
-            occupancies: vec![1.0; n_new_usize],
+            occupancies: Vec::with_capacity(n_new_usize),
             atomic_numbers: Vec::with_capacity(n_new_usize),
             cart_positions: Vec::new(),
             version: self.version,
@@ -1461,19 +1475,20 @@ impl CrystalState {
                 out_positions[3 * i + 2],
             ];
             validate_fractional_position(position).map_err(str::to_string)?;
-            let t = u8::try_from(out_types[i]).map_err(|_| {
-                "FFI supercell output contains an invalid atomic number".to_string()
-            })?;
-            let source_index = type_sources[usize::from(t)].ok_or_else(|| {
-                "FFI supercell output contains an unknown atomic number".to_string()
-            })?;
+            let source_index = usize::try_from(out_source_site_indices[i])
+                .ok()
+                .filter(|&index| index < n_atoms)
+                .ok_or_else(|| "FFI output contains an invalid source site index".to_string())?;
 
             new_state.labels.push(self.labels[source_index].clone());
             new_state.elements.push(self.elements[source_index].clone());
             new_state.fract_x.push(position[0]);
             new_state.fract_y.push(position[1]);
             new_state.fract_z.push(position[2]);
-            new_state.atomic_numbers.push(t);
+            new_state
+                .atomic_numbers
+                .push(self.atomic_numbers[source_index]);
+            new_state.occupancies.push(self.occupancies[source_index]);
         }
 
         new_state.fractional_to_cartesian();

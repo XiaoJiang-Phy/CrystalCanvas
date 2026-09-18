@@ -175,16 +175,12 @@ fn test_generate_slab_zero_layers() {
     }
 }
 
-/// Negative vacuum: generate_slab must not panic, clamp to 0
+/// Negative vacuum must be rejected without a panic.
 #[test]
 fn test_generate_slab_negative_vacuum_no_panic() {
     let state = make_sc_state(3.0);
-    // Should not panic; result may succeed with 0 vacuum or Err
     let result = state.generate_slab([1, 0, 0], 3, -50.0);
-    assert!(
-        result.is_ok() || result.is_err(),
-        "Must not panic with negative vacuum"
-    );
+    assert!(result.is_err(), "Negative vacuum must be rejected");
 }
 
 /// Empty crystal: shift_termination must return Err, not panic
@@ -410,4 +406,113 @@ fn test_nacl_supercell_then_110_slab() {
         unique_z.len(),
         unique_z
     );
+}
+
+/// Software regression: source metadata survives coincident and same-element sites.
+#[test]
+fn source_sites_survive_supercell_then_slab() {
+    let mut state = make_fcc_al_state();
+    state.spacegroup_number = 1;
+    state.spacegroup_hm = "P1".into();
+    state.fract_x[1] = state.fract_x[0];
+    state.fract_y[1] = state.fract_y[0];
+    state.fract_z[1] = state.fract_z[0];
+    state.occupancies = vec![0.25, 0.75, 0.5, 1.0];
+    // Distinct species at the same position must also survive.
+    state.elements[1] = "Si".into();
+    state.atomic_numbers[1] = 14;
+    let expanded = state
+        .generate_supercell(&[2, 0, 0, 0, 1, 0, 0, 0, 1])
+        .unwrap();
+    let slab = expanded.generate_slab([1, 1, 1], 3, 12.0).unwrap();
+    assert_eq!(slab.num_atoms(), 24);
+    for source in 0..4 {
+        let replicas: Vec<_> = slab
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| **label == state.labels[source])
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(replicas.len(), 6);
+        for index in replicas {
+            assert_eq!(slab.occupancies[index], state.occupancies[source]);
+            assert_eq!(slab.elements[index], state.elements[source]);
+            assert_eq!(slab.atomic_numbers[index], state.atomic_numbers[source]);
+        }
+    }
+}
+
+#[test]
+fn valid_p1_and_periodic_input_images_are_accepted() {
+    let mut state = make_sc_state(3.0);
+    state.spacegroup_number = 1;
+    state.spacegroup_hm = "P1".into();
+    let reference = state.generate_slab([2, 1, -1], 3, 10.0).unwrap();
+    state.fract_x[0] = 7.0;
+    state.fract_y[0] = -4.0;
+    state.fract_z[0] = 2.0;
+    let shifted = state.generate_slab([2, 1, -1], 3, 10.0).unwrap();
+    assert_eq!(shifted.fract_x, reference.fract_x);
+    assert_eq!(shifted.fract_y, reference.fract_y);
+    assert_eq!(shifted.fract_z, reference.fract_z);
+}
+
+#[test]
+fn reposition_more_than_128_layers() {
+    let mut state = make_sc_state(200.0);
+    let count = 129;
+    state.labels = (0..count).map(|i| format!("X{i}")).collect();
+    state.elements = vec!["H".into(); count];
+    state.atomic_numbers = vec![1; count];
+    state.occupancies = vec![1.0; count];
+    state.fract_x = vec![0.0; count];
+    state.fract_y = vec![0.0; count];
+    state.fract_z = (0..count).map(|i| i as f64 / count as f64).collect();
+    state.cart_positions = vec![[0.0; 3]; count];
+    state.intrinsic_sites = count;
+    assert_eq!(state.shift_termination(128, 0.1).unwrap(), 129);
+    assert!(state.fract_z[128].abs() < 1e-12);
+    let previous = state.fract_z.clone();
+    assert!(state.shift_termination(129, 0.1).is_err());
+    assert_eq!(state.fract_z, previous);
+}
+
+#[test]
+fn invalid_reposition_inputs_leave_state_unchanged() {
+    let mut state = make_sc_state(3.0)
+        .generate_slab([0, 0, 1], 3, 10.0)
+        .unwrap();
+    let before = state.fract_z.clone();
+    for tolerance in [0.0, -0.1, f64::NAN, f64::INFINITY] {
+        assert!(state.shift_termination(0, tolerance).is_err());
+        assert_eq!(state.fract_z, before);
+    }
+    state.cell_beta = 75.0;
+    assert!(state.shift_termination(0, 0.1).is_err());
+    assert_eq!(state.fract_z, before);
+}
+
+#[test]
+fn malformed_site_arrays_return_errors_without_panicking() {
+    let mut state = make_fcc_al_state();
+    state.occupancies.pop();
+    assert!(state.generate_slab([1, 0, 0], 2, 10.0).is_err());
+    assert!(
+        state
+            .generate_supercell(&[2, 0, 0, 0, 1, 0, 0, 0, 1])
+            .is_err()
+    );
+    assert!(state.shift_termination(0, 0.1).is_err());
+}
+
+#[test]
+fn reposition_cartesian_overflow_does_not_commit() {
+    let mut state = make_fcc_al_state();
+    state.cell_c = 1e40;
+    let before_z = state.fract_z.clone();
+    let before_cart = state.cart_positions.clone();
+    assert!(state.shift_termination(0, 0.1).is_err());
+    assert_eq!(state.fract_z, before_z);
+    assert_eq!(state.cart_positions, before_cart);
 }

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <limits>
 
 // [Breaker Mode] S3 Gate Tests — cluster_slab_layers / shift_slab_termination
 
@@ -341,4 +342,44 @@ TEST(SlabLayersTest, VeryLargeTolerance_AllMerged) {
         s.positions.data(), s.n_atoms, s.lattice.data(),
         1000.0, centers.data(), 16);
     EXPECT_EQ(n, 1);
+}
+
+TEST(SlabLayersTest, CheckedShiftRejectsTruncatedCentersWithoutWrites) {
+    const auto lattice = make_sc(200.0);
+    std::vector<double> positions(129 * 3, 0.0);
+    for (size_t i = 0; i < 129; ++i) positions[3 * i + 2] = double(i) / 129.0;
+    std::vector<double> centers(128, 0.0);
+    const int count = cluster_slab_layers(positions.data(), 129, lattice.data(),
+                                         0.1, centers.data(), centers.size());
+    ASSERT_EQ(count, 129);
+    const auto before = positions;
+    EXPECT_FALSE(shift_slab_termination_checked(positions.data(), 129, lattice.data(),
+                                               128, centers.data(), count, centers.size()));
+    EXPECT_EQ(positions, before);
+    centers.resize(129);
+    ASSERT_EQ(cluster_slab_layers(positions.data(), 129, lattice.data(), 0.1,
+                                 centers.data(), centers.size()), 129);
+    EXPECT_TRUE(shift_slab_termination_checked(positions.data(), 129, lattice.data(),
+                                              128, centers.data(), count, centers.size()));
+    EXPECT_NEAR(positions[128 * 3 + 2], 0.0, 1e-12);
+}
+
+TEST(SlabLayersTest, InvalidGeometryAndNonfiniteDataAreRejected) {
+    auto lattice = make_sc(3.0);
+    double positions[] = {0.0, 0.0, 0.5};
+    double centers[] = {17.0};
+    for (double tolerance : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::quiet_NaN()}) {
+        EXPECT_EQ(cluster_slab_layers(positions, 1, lattice.data(), tolerance, centers, 1), 0);
+        EXPECT_EQ(centers[0], 17.0);
+    }
+    lattice(0, 2) = 1.0;
+    EXPECT_EQ(cluster_slab_layers(positions, 1, lattice.data(), 0.1, centers, 1), 0);
+    EXPECT_FALSE(shift_slab_termination_checked(positions, 1, lattice.data(), 0, centers, 1, 1));
+    EXPECT_EQ(positions[2], 0.5);
+    lattice = make_sc(3.0);
+    positions[0] = std::numeric_limits<double>::quiet_NaN();
+    centers[0] = 1.0;
+    EXPECT_FALSE(shift_slab_termination_checked(positions, 1, lattice.data(), 0, centers, 1, 1));
+    EXPECT_EQ(positions[2], 0.5);
 }

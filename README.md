@@ -10,7 +10,7 @@ CrystalCanvas is a research-oriented visualization application built with Rust, 
 
 The project does not aim to become a general electronic-structure solver, workflow manager, database browser, or AI research platform. DFT, DFPT, Wannier, EPC, transport, superconductivity, and many-body calculations remain in specialized external codes. CrystalCanvas focuses on the part ordinary two-dimensional plotting tools handle poorly: structure-aware three-dimensional scientific visualization.
 
-> **Latest release**: `v0.8.0`
+> **Latest release**: `v0.8.1`
 >
 > **Current development line**: `v0.9.0` reciprocal space and Fermi surfaces
 >
@@ -20,7 +20,7 @@ The project does not aim to become a general electronic-structure solver, workfl
 
 ## Download
 
-[![Download for macOS](https://img.shields.io/badge/Download_v0.8.0-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
+[![Download for macOS](https://img.shields.io/badge/Download_v0.8.1-macOS_(Intel_%26_Apple_Silicon)-007AFF?style=for-the-badge&logo=apple)](https://github.com/XiaoJiang-Phy/CrystalCanvas/releases/latest)
 
 > [!WARNING]
 > The application is not signed with a paid Apple Developer certificate. If macOS blocks the first launch, move `CrystalCanvas.app` to `/Applications`, right-click it, choose **Open**, and confirm once more.
@@ -90,6 +90,8 @@ Quantitative scalar colors must remain interpretable. Lighting and ambient occlu
 ---
 
 ## Roadmap
+
+`v0.8.1` repairs slab layer-buffer bounds and preserves source-site labels, species and occupancies through supercell/slab construction. Miller indices use the current input cell, including valid P1.
 
 `v0.8.0` adds composable volumetric field scenes, bounded interactive controls, field-aware publication recipes, and portable Blender field geometry. Its software validation does not establish a physical interpretation of imported scalar values.
 

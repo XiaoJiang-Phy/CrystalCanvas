@@ -1,6 +1,6 @@
 # CrystalCanvas User Manual
 
-> Baseline: `v0.8.0` | Development line: `v0.9.0` | Updated: 2026-08-11
+> Baseline: `v0.8.1` | Development line: `v0.9.0` | Updated: 2026-09-18
 
 CrystalCanvas is a desktop application for structure-aware three-dimensional scientific visualization. It displays supplied crystal structures, scalar fields, phonon modes, Wannier hopping networks, and reciprocal-space scenes. It does not run DFT, EPC, transport, superconductivity, or other electronic-structure solvers.
 
@@ -66,7 +66,7 @@ The structure tools provide:
 - lattice-parameter editing with validation;
 - Niggli reduction plus primitive/conventional cell standardization;
 - supercell preview and commit;
-- slab preview, commit, and termination shifting;
+- slab preview, commit, and layer repositioning;
 - undo and redo through the native menu;
 - bond and coordination analysis; and
 - distance, angle, and dihedral measurements.
@@ -75,7 +75,9 @@ Structural changes are validated and committed atomically. If an operation fails
 
 ### Slabs
 
-The **Slab (hkl)** inspector accepts Miller indices, a layer count, and vacuum thickness in Å. Slab generation requires a conventional cell with detected symmetry. Replace a P1 input with an appropriate conventional representation before you generate the slab. **Preview** does not commit the structure. **Apply** commits it.
+The **Slab (hkl)** inspector interprets Miller indices in the current input cell, including valid P1 cells. **Normal repeats** counts periods of the reduced Miller direction, not distinct atomic layers. **Added vacuum** increases the repeat-cell height by the stated length in Å; it is not padding on each side of the outermost atoms. **Cut** commits the slab. **Reset view** only resets the camera.
+
+The backend `preview_slab` operation is non-committing. The legacy `shift_termination` operation repositions a layer at the periodic-cell boundary; it does not construct a different chemical termination.
 
 ---
 

@@ -82,7 +82,7 @@ pub mod ffi {
         /// Returns Number of new atoms (n_atoms * determinant(expansion))
         unsafe fn get_supercell_size(n_atoms: usize, expansion: *const i32) -> i32;
 
-        /// Build a supercell with a checked output capacity.
+        /// Build a supercell with checked capacity, copying opaque integer tags.
         unsafe fn build_supercell_checked(
             lattice: *const f64,
             positions: *const f64,
@@ -96,7 +96,7 @@ pub mod ffi {
         ) -> i32;
 
         /// Get slab size (deprecated — use get_slab_size_v2)
-        #[deprecated(note = "Use get_slab_size_v2 for correct deduplication")]
+        #[deprecated(note = "Use get_slab_size_v2 for bounded site-preserving construction")]
         unsafe fn get_slab_size(
             lattice: *const f64,
             miller: *const i32,
@@ -106,7 +106,7 @@ pub mod ffi {
         ) -> i32;
 
         /// Build slab (deprecated — use build_slab_v2)
-        #[deprecated(note = "Use build_slab_v2 for correct deduplication")]
+        #[deprecated(note = "Use build_slab_v2 for bounded site-preserving construction")]
         unsafe fn build_slab(
             lattice: *const f64,
             positions: *const f64,
@@ -128,7 +128,7 @@ pub mod ffi {
             n_atoms: usize,
         ) -> i32;
 
-        /// Build slab with deduplication and vacuum injection
+        /// Build slab preserving opaque source tags and adding vacuum
         unsafe fn build_slab_v2(
             lattice: *const f64,
             positions: *const f64,
@@ -153,7 +153,7 @@ pub mod ffi {
             max_layers: usize,
         ) -> i32;
 
-        /// Shift slab termination to expose a different surface layer
+        /// Reposition a slab layer; centers must contain n_layers readable entries
         unsafe fn shift_slab_termination(
             positions: *mut f64,
             n_atoms: usize,
@@ -162,6 +162,17 @@ pub mod ffi {
             layer_centers: *const f64,
             n_layers: i32,
         );
+
+        /// Checked layer repositioning; false leaves positions unchanged.
+        unsafe fn shift_slab_termination_checked(
+            positions: *mut f64,
+            n_atoms: usize,
+            lattice: *const f64,
+            target_layer_idx: i32,
+            layer_centers: *const f64,
+            n_layers: i32,
+            centers_capacity: usize,
+        ) -> bool;
 
         /// Check MIC Overlap
         unsafe fn check_overlap_mic(

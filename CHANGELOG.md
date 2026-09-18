@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-09-18
+
+### Fixed
+
+- Prevent out-of-bounds layer-center reads when repositioning slabs with more than 128 height clusters; reject invalid tolerance, geometry and truncated center buffers before mutation.
+- Preserve each source site's label, species and fractional occupancy through supercell and slab construction, including distinct sites at coincident positions.
+- Remove proximity-based slab deduplication and validate the replication count per input site. Normalize periodic input coordinates before bounded image enumeration.
+
+### Changed
+
+- Interpret Miller indices in the current input-cell basis and accept valid P1 cells.
+- Clarify normal-repeat counts, added vacuum height and camera reset in the slab inspector. The legacy termination command only repositions periodic coordinates; it does not rebuild chemical terminations.
+
+### Validation scope
+
+- Regression coverage targets software geometry, metadata preservation and buffer safety under the explicitly authorized bounded exception. It does not certify material-specific surfaces or physical correctness.
+
 ## [0.8.0] - 2026-08-11
 
 ### Added

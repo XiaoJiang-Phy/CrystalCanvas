@@ -49,3 +49,12 @@
 - **Evidence condition**: The maintainer must record a reviewer identity, UTC time, candidate baseline, Blender 4.4 version, and concise PASS statements for Intel/Metal plus Blender headless and GUI validation. Apple Silicon / Metal must remain `NOT_AVAILABLE`.
 - **Risk and impact**: Manual evidence-file hashes and native artifact collection are not required. The attestation is not independently reproducible from committed evidence. Apple Silicon compatibility is not established and must not be claimed; the release can contain regressions that occur only on Apple Silicon or its Metal driver stack.
 - **Authorization boundary**: This exception permits only the limited v0.8.0 desktop-validation matrix. It does not waive the Intel/Metal or Blender gates, convert unavailable Apple Silicon validation to PASS, or authorize a claim of Apple Silicon compatibility.
+
+## 2026-09-18 — v0.8.1 bounded slab correctness repair (Known Exception)
+
+- **Authorized by**: user, explicit approval in this session.
+- **Scope**: Repair slab layer-buffer capacity, source-site/occupancy preservation and geometric deduplication; execute bounded software regressions. Miller indices refer to the current input cell; valid P1 inputs are accepted.
+- **Preserved conventions**: `layers` counts normal repeats of the reduced Miller plane; vacuum is appended to the repeat-cell height. The existing termination operation is coordinate repositioning, not termination reconstruction.
+- **Evidence condition**: The prior registered structure preflight remains NOT_AUDITABLE/INDETERMINATE; this exception does not change it to PASS.
+- **Risk and impact**: Software invariants and regressions do not establish material-specific surface validity, stoichiometry, polarity, relaxation, or physical correctness.
+- **Authorization boundary**: Limited to the described software repairs and regression execution. Existing software tests and release gates remain mandatory; no physical certification or publication-gate waiver is granted.
