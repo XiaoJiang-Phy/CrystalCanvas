@@ -1,4 +1,4 @@
-# v0.8.1 release candidate
+# v0.8.1 release
 
 This patch adds an optional structurally equivalent top/bottom slab mode, repairs slab layer-buffer bounds and preserves source-site metadata through supercell/slab construction. Miller indices use the current input cell; valid P1 inputs are accepted. Normal-repeat and added-height vacuum conventions remain unchanged. The legacy termination command is periodic coordinate repositioning, not bulk termination reconstruction.
 
@@ -18,9 +18,9 @@ Feature baseline: `eaaaa847e6830d567995896432fa823b13c53983`.
 
 The user authorized waiving Blender headless and GUI validation for **v0.8.1 only**. The evidence records `WAIVED`, never `PASS`. The attempted Blender 4.4 sandbox run crashed during GPU initialization, and the normal-permission retry was not executed after an approval-service rejection. Neither result establishes Blender compatibility. The waiver does not apply to later releases or native platform validation.
 
-## Remaining closure
+## Maintainer acceptance
 
-`release-evidence.json` remains `RELEASE_CANDIDATE` pending current-candidate native visual review and platform-validation closure. Historical v0.8.0 attestations are not reused. No release tag is pushed until publish-mode RELEASE-2 passes.
+Xiao Jiang tested the rebuilt symmetric-mode candidate, reported no issues and explicitly authorized publication on 2026-09-18. `release-evidence.json` records `RELEASE_READY` with current-candidate Intel/Metal review. Apple Silicon remains `NOT_AVAILABLE`; compatibility is not established or claimed. Historical v0.8.0 attestations are not reused. Publication uses the existing tag-triggered release workflow after publish-mode RELEASE-2 passes.
 
 The bounded software-only exception and Blender waiver are recorded in `EVOLUTION.log`. Software regressions do not certify material-specific surfaces or physical correctness.
 

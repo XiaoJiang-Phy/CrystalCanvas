@@ -1,11 +1,8 @@
 {
   "schema_version": 2,
   "release_version": "0.8.1",
-  "status": "RELEASE_CANDIDATE",
-  "blockers": [
-    "Visual retest of the rebuilt symmetric-mode candidate is pending.",
-    "Apple Silicon is unavailable; no compatibility claim is supported."
-  ],
+  "status": "RELEASE_READY",
+  "blockers": [],
   "feature_baseline_commit": "eaaaa847e6830d567995896432fa823b13c53983",
   "nodes": {
     "FIELD-1": {
@@ -44,11 +41,10 @@
     "clean_worktree"
   ],
   "manual_validation": {
-    "native_fidelity_verdict": "PENDING",
+    "native_fidelity_verdict": "NATIVE_LIMITED_BLENDER_FALLBACK",
     "macos_intel_metal": {
-      "status": "PENDING",
-      "evidence": "Prior ordinary-mode candidate was reviewed by Xiao Jiang. The new optional symmetric mode passes the specified rutile regression and awaits review in the rebuilt app.",
-      "reason": "New symmetric-mode candidate needs the requested visual retest; prior review is not reused as PASS."
+      "status": "PASS",
+      "evidence": "Xiao Jiang tested the rebuilt v0.8.1 symmetric-mode candidate and explicitly reported no issues and authorized publication. Requested case: rutile.cif, 2x2x2 supercell, (110), 3 normal repeats, 18 A added vacuum."
     },
     "macos_apple_silicon_metal": {
       "status": "NOT_AVAILABLE",
@@ -74,7 +70,10 @@
         "blender_gui_import"
       ],
       "record": "EVOLUTION.log#2026-09-18-v081-blender-validation-waiver"
-    }
+    },
+    "reviewed_by": "Xiao Jiang",
+    "reviewed_at": "2026-09-18T13:07:05Z",
+    "validated_feature_baseline_commit": "eaaaa847e6830d567995896432fa823b13c53983"
   },
   "artifacts": [
     {
