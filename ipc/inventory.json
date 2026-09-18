@@ -165,6 +165,7 @@
     "apply_slab": [
       "layers",
       "miller",
+      "symmetric",
       "vacuumA"
     ],
     "apply_supercell": [
@@ -273,6 +274,7 @@
     "preview_slab": [
       "layers",
       "miller",
+      "symmetric",
       "vacuumA"
     ],
     "preview_supercell": [
@@ -550,6 +552,12 @@
           "optional": false,
           "rust_type": "[i32; 3]",
           "type": "[number,number,number]"
+        },
+        {
+          "name": "symmetric",
+          "optional": true,
+          "rust_type": "Option<bool>",
+          "type": "boolean|null"
         },
         {
           "name": "vacuumA",
@@ -1033,6 +1041,12 @@
           "optional": false,
           "rust_type": "[i32; 3]",
           "type": "[number,number,number]"
+        },
+        {
+          "name": "symmetric",
+          "optional": true,
+          "rust_type": "Option<bool>",
+          "type": "boolean|null"
         },
         {
           "name": "vacuumA",
@@ -2114,6 +2128,7 @@
       "args": [
         "layers",
         "miller",
+        "symmetric",
         "vacuumA"
       ],
       "response_type": null

@@ -516,3 +516,128 @@ fn reposition_cartesian_overflow_does_not_commit() {
     assert_eq!(state.fract_z, before_z);
     assert_eq!(state.cart_positions, before_cart);
 }
+
+/// Independent finite-cell inversion matching: only in-plane axes are periodic.
+fn has_finite_inversion(slab: &CrystalState) -> bool {
+    let cell = slab.renderer_lattice_col_major();
+    for partner in 0..slab.num_atoms() {
+        if slab.atomic_numbers[0] != slab.atomic_numbers[partner]
+            || slab.occupancies[0] != slab.occupancies[partner]
+        {
+            continue;
+        }
+        let tx = slab.fract_x[0] + slab.fract_x[partner];
+        let ty = slab.fract_y[0] + slab.fract_y[partner];
+        let mut used = vec![false; slab.num_atoms()];
+        let matches = (0..slab.num_atoms()).all(|i| {
+            for (j, matched) in used.iter_mut().enumerate() {
+                if *matched
+                    || slab.atomic_numbers[i] != slab.atomic_numbers[j]
+                    || slab.occupancies[i] != slab.occupancies[j]
+                {
+                    continue;
+                }
+                let mut dx = tx - slab.fract_x[i] - slab.fract_x[j];
+                let mut dy = ty - slab.fract_y[i] - slab.fract_y[j];
+                dx -= dx.round();
+                dy -= dy.round();
+                let dz = 1.0 - slab.fract_z[i] - slab.fract_z[j];
+                let distance_squared: f64 = (0..3)
+                    .map(|axis| {
+                        (cell[axis] * dx + cell[3 + axis] * dy + cell[6 + axis] * dz).powi(2)
+                    })
+                    .sum();
+                if distance_squared < 1e-14 {
+                    *matched = true;
+                    return true;
+                }
+            }
+            false
+        });
+        if matches {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn rutile_222_110_symmetric_three_repeats_preserves_composition() {
+    let input = crystal_canvas::io::import::load_file(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../tests/data/rutile.cif"
+    ))
+    .unwrap();
+    let mut bulk = input
+        .generate_supercell(&[2, 0, 0, 0, 2, 0, 0, 0, 2])
+        .unwrap();
+    assert_eq!(bulk.num_atoms(), 48);
+    // Unique labels make source multiplicity independently observable.
+    for (i, label) in bulk.labels.iter_mut().enumerate() {
+        *label = format!("source_{i}");
+    }
+    let before = bulk.fract_z.clone();
+    let ordinary = bulk.generate_slab([1, 1, 0], 3, 18.0).unwrap();
+    let symmetric = bulk
+        .generate_slab_with_symmetry([1, 1, 0], 3, 18.0, true)
+        .unwrap();
+    assert_eq!(symmetric.num_atoms(), 144);
+    assert_eq!(
+        symmetric
+            .atomic_numbers
+            .iter()
+            .filter(|&&z| z == 22)
+            .count(),
+        48
+    );
+    assert_eq!(
+        symmetric.atomic_numbers.iter().filter(|&&z| z == 8).count(),
+        96
+    );
+    for i in 0..48 {
+        let indices: Vec<_> = symmetric
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| **label == bulk.labels[i])
+            .map(|(j, _)| j)
+            .collect();
+        assert_eq!(indices.len(), 3);
+        for j in indices {
+            assert_eq!(symmetric.occupancies[j], bulk.occupancies[i]);
+            assert_eq!(symmetric.atomic_numbers[j], bulk.atomic_numbers[i]);
+        }
+    }
+    assert!(has_finite_inversion(&symmetric));
+    let minimum = symmetric
+        .fract_z
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let maximum = symmetric
+        .fract_z
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!((minimum + maximum - 1.0).abs() < 1e-12);
+    assert!((symmetric.cell_c - ordinary.cell_c).abs() < 1e-10);
+    assert_eq!(bulk.fract_z, before);
+    let ordinary_via_mode = bulk
+        .generate_slab_with_symmetry([1, 1, 0], 3, 18.0, false)
+        .unwrap();
+    assert_eq!(ordinary.fract_x, ordinary_via_mode.fract_x);
+    assert_eq!(ordinary.fract_y, ordinary_via_mode.fract_y);
+    assert_eq!(ordinary.fract_z, ordinary_via_mode.fract_z);
+}
+
+#[test]
+fn symmetric_mode_rejects_occupancy_inequivalence_without_mutation() {
+    let mut input = make_fcc_al_state();
+    input.occupancies = vec![0.2, 0.4, 0.6, 0.8];
+    let positions = input.fract_z.clone();
+    let occupations = input.occupancies.clone();
+    let result = input.generate_slab_with_symmetry([0, 0, 1], 3, 18.0, true);
+    assert!(result.is_err());
+    assert_eq!(input.fract_z, positions);
+    assert_eq!(input.occupancies, occupations);
+}

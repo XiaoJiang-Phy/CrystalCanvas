@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { IpcException, type IpcError } from '../../ipc/contracts';
 import { safeInvoke } from '../../utils/tauri-mock';
-import { ActionButton, NumberInput, PanelError, RangeInput } from './shared';
+import { ActionButton, NumberInput, PanelError, RangeInput, SelectInput } from './shared';
 
 export default function SlabPanel() {
     const [slab, setSlab] = useState({ h: 1, k: 1, l: 1, layers: 3, vacuum: 15.0 });
+    const [symmetric, setSymmetric] = useState(false);
     const [error, setError] = useState<IpcError | null>(null);
     const [activeOperation, setActiveOperation] = useState<'cut' | 'reset' | null>(null);
 
@@ -29,7 +30,8 @@ export default function SlabPanel() {
             await safeInvoke('apply_slab', {
                 miller: [slab.h, slab.k, slab.l],
                 layers: slab.layers,
-                vacuumA: slab.vacuum
+                vacuumA: slab.vacuum,
+                symmetric
             });
         } catch (cause) {
             setMutationError(cause, 'Unable to create the cutting plane.');
@@ -62,6 +64,11 @@ export default function SlabPanel() {
                 <NumberInput label="l" value={slab.l} onChange={(value) => setSlab((current) => ({ ...current, l: value }))} disabled={isBusy} invalid={invalidMiller} />
             </div>
             <p className="text-xs text-slate-400">Miller indices use the current cell. Repeats count reduced-plane periods, not atomic layers.</p>
+            <SelectInput label="Surface mode" value={symmetric ? 'symmetric' : 'ordinary'} onChange={(value) => setSymmetric(value === 'symmetric')} disabled={isBusy}>
+                <option value="ordinary">Ordinary cut</option>
+                <option value="symmetric">Equivalent top / bottom</option>
+            </SelectInput>
+            {symmetric && <p className="text-xs text-slate-400">Preserves composition and occupancy. Reports an error if no equivalent surfaces are found.</p>}
             <RangeInput label="Normal repeats" value={slab.layers} displayValue={String(slab.layers)} min={1} max={10} step={1} onChange={(value) => setSlab((current) => ({ ...current, layers: value }))} disabled={isBusy} />
             <RangeInput label="Added vacuum" value={slab.vacuum} displayValue={`${slab.vacuum} Å`} min={0} max={30} step={1} onChange={(value) => setSlab((current) => ({ ...current, vacuum: value }))} disabled={isBusy} />
             {error && <PanelError error={error} message={error.message} />}

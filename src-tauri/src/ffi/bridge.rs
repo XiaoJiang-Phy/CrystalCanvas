@@ -143,6 +143,21 @@ pub mod ffi {
             out_types: *mut i32,
         ) -> i32;
 
+        /// Build a centered finite slab with equivalent surfaces; return source indices.
+        unsafe fn build_symmetric_slab(
+            lattice: *const f64,
+            positions: *const f64,
+            site_classes: *const i32,
+            n_atoms: usize,
+            miller: *const i32,
+            n_layers: i32,
+            vacuum_a: f64,
+            output_capacity: usize,
+            out_lattice: *mut f64,
+            out_positions: *mut f64,
+            out_source_indices: *mut i32,
+        ) -> i32;
+
         /// Identify distinct atomic layers along the slab normal
         unsafe fn cluster_slab_layers(
             positions: *const f64,

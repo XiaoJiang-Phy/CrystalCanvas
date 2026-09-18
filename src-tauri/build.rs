@@ -10,6 +10,7 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=../cpp/src/physics_kernel.cpp");
+    println!("cargo:rerun-if-changed=../cpp/src/symmetric_slab.cpp");
     println!("cargo:rerun-if-changed=../cpp/include/physics_kernel.hpp");
     println!("cargo:rerun-if-changed=../cpp/src/crystal_parser.cpp");
     println!("cargo:rerun-if-changed=../cpp/include/crystal_parser.hpp");

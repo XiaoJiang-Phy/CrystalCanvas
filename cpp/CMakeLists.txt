@@ -18,7 +18,7 @@ add_subdirectory(third_party/spglib)
 add_subdirectory(third_party/eigen EXCLUDE_FROM_ALL)
 
 # Core physics library
-add_library(crystal_kernel STATIC src/physics_kernel.cpp)
+add_library(crystal_kernel STATIC src/physics_kernel.cpp src/symmetric_slab.cpp)
 
 target_include_directories(crystal_kernel
     PUBLIC include

@@ -47,6 +47,7 @@ set(SPGLIB_INCLUDE_DIR "${THIRD_PARTY_DIR}/spglib/src")
 add_executable(test_spglib_robustness 
     test_spglib_robustness.cpp
     ../src/physics_kernel.cpp
+    ../src/symmetric_slab.cpp
 )
 target_include_directories(test_spglib_robustness PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -76,6 +77,7 @@ add_test(NAME SpglibTest COMMAND test_spglib_robustness)
 add_executable(test_supercell_eigen 
     test_supercell_eigen.cpp
     ../src/physics_kernel.cpp
+    ../src/symmetric_slab.cpp
 )
 target_link_libraries(test_supercell_eigen PRIVATE GTest::gtest_main Spglib_symspg)
 target_include_directories(test_supercell_eigen PRIVATE
@@ -92,6 +94,7 @@ add_test(NAME SupercellTest COMMAND test_supercell_eigen)
 add_executable(test_slab_eigen 
     test_slab_eigen.cpp
     ../src/physics_kernel.cpp
+    ../src/symmetric_slab.cpp
 )
 target_link_libraries(test_slab_eigen PRIVATE GTest::gtest_main Spglib_symspg)
 target_include_directories(test_slab_eigen PRIVATE
@@ -108,6 +111,7 @@ add_test(NAME SlabTest COMMAND test_slab_eigen)
 add_executable(test_slab_surface_basis 
     test_slab_surface_basis.cpp
     ../src/physics_kernel.cpp
+    ../src/symmetric_slab.cpp
 )
 target_link_libraries(test_slab_surface_basis PRIVATE GTest::gtest_main Spglib_symspg)
 target_include_directories(test_slab_surface_basis PRIVATE
@@ -124,6 +128,7 @@ add_test(NAME SlabSurfaceBasisTest COMMAND test_slab_surface_basis)
 add_executable(test_slab_builder
     test_slab_builder.cpp
     ../src/physics_kernel.cpp
+    ../src/symmetric_slab.cpp
 )
 target_link_libraries(test_slab_builder PRIVATE GTest::gtest_main Spglib_symspg)
 target_include_directories(test_slab_builder PRIVATE
@@ -140,6 +145,7 @@ add_test(NAME SlabBuilderTest COMMAND test_slab_builder)
 add_executable(test_slab_layers
     test_slab_layers.cpp
     ../src/physics_kernel.cpp
+    ../src/symmetric_slab.cpp
 )
 target_link_libraries(test_slab_layers PRIVATE GTest::gtest_main Spglib_symspg)
 target_include_directories(test_slab_layers PRIVATE

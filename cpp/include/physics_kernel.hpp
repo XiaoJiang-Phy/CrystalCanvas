@@ -136,6 +136,17 @@ void build_slab(const double *lattice, const double *positions,
     size_t output_capacity, double* out_lattice,
     double* out_positions, int* out_types) noexcept;
 
+/// Select a composition-preserving cut with equivalent finite top/bottom surfaces.
+/// site_classes must encode both species and occupancy; source indices are returned.
+/// Structural tolerance is 1e-5 angstrom. Output is atom-envelope centered.
+/// Success: n_atoms*n_layers. Failure leaves outputs unchanged: 0 invalid/build error,
+/// -1 unavailable normal-reversing symmetry, -2 no admissible cut, -3 search budget.
+int build_symmetric_slab(
+    const double* lattice, const double* positions, const int* site_classes,
+    size_t n_atoms, const int32_t* miller, int n_layers, double vacuum_a,
+    size_t output_capacity, double* out_lattice, double* out_positions,
+    int* out_source_indices) noexcept;
+
 /// Identify layers along c, which must be perpendicular to a and b.
 /// Positive finite tolerance; periodic z is wrapped to [0,1).
 /// Returns the full count even if max_layers truncates the written centers.

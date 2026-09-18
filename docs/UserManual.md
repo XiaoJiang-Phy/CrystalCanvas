@@ -77,6 +77,10 @@ Structural changes are validated and committed atomically. If an operation fails
 
 The **Slab (hkl)** inspector interprets Miller indices in the current input cell, including valid P1 cells. **Normal repeats** counts periods of the reduced Miller direction, not distinct atomic layers. **Added vacuum** increases the repeat-cell height by the stated length in Å; it is not padding on each side of the outermost atoms. **Cut** commits the slab. **Reset view** only resets the camera.
 
+Choose **Surface mode → Equivalent top / bottom** to request structurally equivalent surfaces. This mode preserves composition and occupancy and centers the atomic envelope. If it cannot find a suitable cut, it reports an error and leaves the structure unchanged. **Ordinary cut** retains the original construction. Neither mode certifies the electrostatic potential.
+
+For the rutile regression: load `tests/data/rutile.cif`, apply a 2×2×2 supercell, choose (110), Normal repeats 3, Added vacuum 18 Å, and select Equivalent top / bottom before pressing Cut.
+
 The backend `preview_slab` operation is non-committing. The legacy `shift_termination` operation repositions a layer at the periodic-cell boundary; it does not construct a different chemical termination.
 
 ---

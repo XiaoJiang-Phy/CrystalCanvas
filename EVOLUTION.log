@@ -66,3 +66,18 @@
 - **Reason and evidence**: This patch does not change the Blender exporter. New version-bound GLB/raster artifact triplets and export-contract checks remain required. The attempted Blender 4.4 headless run crashed during GPU initialization; an unsandboxed retry was not executed after automatic approval-service rejection.
 - **Risk and impact**: Blender import compatibility of the v0.8.1 candidate has not been established by this run.
 - **Authorization boundary**: No waiver of Rust/C++/IPC/build checks, native platform review, artifact integrity, clean-worktree checks, or physical validation requirements.
+
+## 2026-09-18 — v0.8.1 qualified desktop review
+
+- **Reviewer**: Xiao Jiang; feedback recorded at 2026-09-18T08:38:16Z.
+- **Reported outcome**: Other tested behavior has no reported issues. Reviewer raises the need for symmetric top/bottom slab terminations in connection with electrostatic symmetry.
+- **Platform availability**: Reviewer explicitly reports no Apple Silicon device. Record NOT_AVAILABLE; do not claim compatibility.
+- **Disposition**: Preserve the qualification; candidate remains pending resolution of symmetric-termination scope. Screenshot alone does not establish structural symmetry, surface charge, dipole, or electrostatic potential. No physical PASS or new model-change exception is inferred.
+
+## 2026-09-18 — symmetric slab geometry extension (Known Exception)
+
+- **Authorized by**: user, explicit confirmation: “对的，只需要在晶体结构上是对称的就行”. Normal repeats is confirmed as 3 for the rutile regression.
+- **Scope**: Add an optional symmetric slab mode, select a bulk cut phase, and run bounded structural-geometry regressions, including rutile.cif → 2×2×2 → (110), 3 repeats, 18 Å added vacuum. Preserve composition, occupancies and source-site multiplicity; no atom deletion or mirrored bulk assembly.
+- **Evidence condition**: Registered structure preflight remains NOT_AUDITABLE due to unavailable optional structure adapter dependencies. The user explicitly permits geometry checks without physical preflight PASS for this change.
+- **Acceptance boundary**: Verify a species/occupancy-preserving bijection that reverses the slab normal without normal-axis periodic wrapping, plus failure atomicity and existing software regressions. No assertion of electrostatic symmetry, zero dipole, surface stability or material-specific physical correctness.
+- **Release boundary**: Build a new candidate for reviewer testing before publication. The v0.8.1 Blender-only waiver remains unchanged.

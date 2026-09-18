@@ -11,6 +11,7 @@ pub fn preview_slab(
     miller: [i32; 3],
     layers: i32,
     vacuum_a: f64,
+    symmetric: Option<bool>,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
 ) -> IpcResult<crate::crystal_state::CrystalState> {
     crate::crystal_state::validate_slab_request(miller, layers, vacuum_a)
@@ -22,7 +23,7 @@ pub fn preview_slab(
         vacuum_a
     );
     with_state_read_try(&crystal_state, |cs| {
-        cs.generate_slab(miller, layers, vacuum_a)
+        cs.generate_slab_with_symmetry(miller, layers, vacuum_a, symmetric.unwrap_or(false))
             .map_err(IpcError::invalid_argument)
     })
 }
@@ -85,6 +86,7 @@ pub fn apply_slab(
     miller: [i32; 3],
     layers: i32,
     vacuum_a: f64,
+    symmetric: Option<bool>,
     app: tauri::AppHandle,
     crystal_state: State<'_, std::sync::Mutex<crate::crystal_state::CrystalState>>,
     renderer_state: State<'_, std::sync::Mutex<crate::renderer::renderer::Renderer>>,
@@ -108,7 +110,7 @@ pub fn apply_slab(
         &undo_state,
         |cs| {
             let mut prepared = cs
-                .generate_slab(miller, layers, vacuum_a)
+                .generate_slab_with_symmetry(miller, layers, vacuum_a, symmetric.unwrap_or(false))
                 .map_err(IpcError::invalid_argument)?;
             prepared.detect_spacegroup();
             Ok(prepared)

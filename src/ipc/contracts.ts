@@ -196,7 +196,7 @@ export interface IpcCommandContract {
     add_measurement: { args: { indices: number[] }; result: MeasurementOverlay };
     apply_cell_standardize: { args: { toPrimitive: boolean }; result: null };
     apply_niggli_reduce: { args: undefined; result: null };
-    apply_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: null };
+    apply_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number; symmetric?: boolean | null }; result: null };
     apply_supercell: { args: { matrix: [[number, number, number], [number, number, number], [number, number, number]] }; result: null };
     begin_atom_drag: { args: { indices: number[] }; result: string };
     cancel_atom_drag: { args: { sessionId: string }; result: null };
@@ -235,7 +235,7 @@ export interface IpcCommandContract {
     reorder_field_layer: { args: { layerId: number; targetIndex: number; expectedRevision: number }; result: FieldSceneInfo };
     pan_camera: { args: { dx: number; dy: number }; result: null };
     pick_atom: { args: { x: number; y: number; screenW: number; screenH: number }; result: number | null };
-    preview_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number }; result: CrystalState };
+    preview_slab: { args: { miller: [number, number, number]; layers: number; vacuumA: number; symmetric?: boolean | null }; result: CrystalState };
     preview_supercell: { args: { expansion: [number, number, number, number, number, number, number, number, number] }; result: CrystalState };
     redo: { args: undefined; result: null };
     reset_camera: { args: undefined; result: null };

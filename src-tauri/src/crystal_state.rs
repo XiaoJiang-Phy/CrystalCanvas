@@ -1116,6 +1116,18 @@ impl CrystalState {
         layers: i32,
         vacuum_a: f64,
     ) -> Result<Self, String> {
+        self.generate_slab_with_symmetry(miller, layers, vacuum_a, false)
+    }
+
+    /// Symmetric mode changes only the bulk cut phase and centers the atomic envelope.
+    /// It requires equivalent finite surfaces, without changing site multiplicities.
+    pub fn generate_slab_with_symmetry(
+        &self,
+        miller: [i32; 3],
+        layers: i32,
+        vacuum_a: f64,
+        symmetric: bool,
+    ) -> Result<Self, String> {
         self.validate_structural_invariants()
             .map_err(str::to_string)?;
         let n_atoms = self.intrinsic_sites;
@@ -1165,21 +1177,60 @@ impl CrystalState {
         let mut out_positions = vec![0.0f64; output_components];
         let mut out_source_site_indices = vec![0i32; n_upper_usize];
 
-        let n_actual = unsafe {
-            ffi::build_slab_v2(
-                lattice_col_major.as_ptr(),
-                flat_positions.as_ptr(),
-                source_site_indices.as_ptr(),
-                n_atoms,
-                miller.as_ptr(),
-                layers,
-                vacuum_a,
-                n_upper_usize,
-                out_lattice.as_mut_ptr(),
-                out_positions.as_mut_ptr(),
-                out_source_site_indices.as_mut_ptr(),
-            )
+        let n_actual = if symmetric {
+            let mut classes = std::collections::BTreeMap::new();
+            let site_classes: Vec<i32> = (0..n_atoms)
+                .map(|index| {
+                    let occupancy = if self.occupancies[index] == 0.0 {
+                        0.0
+                    } else {
+                        self.occupancies[index]
+                    };
+                    let key = (self.atomic_numbers[index], occupancy.to_bits());
+                    let next = classes.len() as i32 + 1;
+                    *classes.entry(key).or_insert(next)
+                })
+                .collect();
+            unsafe {
+                ffi::build_symmetric_slab(
+                    lattice_col_major.as_ptr(),
+                    flat_positions.as_ptr(),
+                    site_classes.as_ptr(),
+                    n_atoms,
+                    miller.as_ptr(),
+                    layers,
+                    vacuum_a,
+                    n_upper_usize,
+                    out_lattice.as_mut_ptr(),
+                    out_positions.as_mut_ptr(),
+                    out_source_site_indices.as_mut_ptr(),
+                )
+            }
+        } else {
+            unsafe {
+                ffi::build_slab_v2(
+                    lattice_col_major.as_ptr(),
+                    flat_positions.as_ptr(),
+                    source_site_indices.as_ptr(),
+                    n_atoms,
+                    miller.as_ptr(),
+                    layers,
+                    vacuum_a,
+                    n_upper_usize,
+                    out_lattice.as_mut_ptr(),
+                    out_positions.as_mut_ptr(),
+                    out_source_site_indices.as_mut_ptr(),
+                )
+            }
         };
+        if symmetric && n_actual <= 0 {
+            return Err(match n_actual {
+                -1 => "No usable symmetry reverses this surface normal (including species and occupancies). Try ordinary mode.",
+                -2 => "No composition-preserving symmetric cut is available. No atoms were changed. Use ordinary mode or a different plane.",
+                -3 => "Symmetric cut search exceeded its bounded budget. Use a smaller input cell or ordinary mode.",
+                _ => "Symmetric slab construction failed geometry or capacity checks; no atoms were changed.",
+            }.to_string());
+        }
 
         if n_actual <= 0 || n_actual as usize != n_upper_usize {
             return Err("build_slab_v2 returned an unexpected site count".to_string());

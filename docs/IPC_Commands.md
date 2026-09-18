@@ -101,8 +101,8 @@ The argument column below is the frontend TypeScript wire shape. `—` means no 
 |---|---|---|---|
 | `preview_supercell` | `{ expansion: [n0, …, n8] }` | `CrystalState` | checked flat nine-integer contract; no commit |
 | `apply_supercell` | `{ matrix: [[...], [...], [...]] }` | `null` | nested 3×3 integer contract; command boundary adapts it for the kernel; atomic commit |
-| `preview_slab` | `{ miller, layers, vacuumA }` | `CrystalState` | no version or undo entry |
-| `apply_slab` | `{ miller, layers, vacuumA }` | `null` | validated atomic commit |
+| `preview_slab` | `{ miller, layers, vacuumA, symmetric? }` | `CrystalState` | no version or undo entry |
+| `apply_slab` | `{ miller, layers, vacuumA, symmetric? }` | `null` | validated atomic commit |
 | `shift_termination` | `{ targetLayerIdx, layerToleranceA? }` | `number` | repositions a height cluster at periodic z=0; returns total cluster count; does not rebuild a termination |
 | `apply_niggli_reduce` | — | `null` | committed cell transform |
 | `apply_cell_standardize` | `{ toPrimitive }` | `null` | `true` for primitive, `false` for conventional |

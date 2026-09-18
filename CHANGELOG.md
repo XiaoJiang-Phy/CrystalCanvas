@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.1] - 2026-09-18
 
+### Added
+
+- Optional equivalent-top/bottom slab mode: select a composition-preserving cut, center the atomic envelope and verify finite-slab structural symmetry. Unsupported cuts return an error without changing the structure; no electrostatic guarantee is implied.
+
 ### Fixed
 
 - Prevent out-of-bounds layer-center reads when repositioning slabs with more than 128 height clusters; reject invalid tolerance, geometry and truncated center buffers before mutation.

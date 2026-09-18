@@ -383,3 +383,46 @@ TEST(SlabBuilderTest, ObliqueCellMetricAndNormalRepeatHeight) {
         }
     }
 }
+
+TEST(SlabBuilderTest, SymmetricModeAcceptsMirrorWithoutInversion) {
+    const auto lattice = make_sc(6.0);
+    const double positions[] = {0.13, 0.21, 0.2, 0.13, 0.21, 0.8,
+                                0.37, 0.42, 0.3, 0.37, 0.42, 0.7,
+                                0.61, 0.17, 0.4, 0.61, 0.17, 0.6};
+    const int classes[] = {1, 1, 2, 2, 3, 3};
+    const int32_t miller[] = {0, 0, 1};
+    ColMajorMatrix3d cell;
+    std::vector<double> output(18);
+    std::vector<int> sources(6);
+    ASSERT_EQ(build_symmetric_slab(lattice.data(), positions, classes, 6, miller, 1,
+                                  12.0, 6, cell.data(), output.data(), sources.data()), 6);
+    EXPECT_NEAR(cell(2, 2), 18.0, 1e-10);
+    for (int i = 0; i < 6; ++i) {
+        bool found = false;
+        for (int j = 0; j < 6; ++j) {
+            if (classes[sources[i]] != classes[sources[j]]) continue;
+            if (std::abs(output[3*i] - output[3*j]) < 1e-10 &&
+                std::abs(output[3*i+1] - output[3*j+1]) < 1e-10 &&
+                std::abs(output[3*i+2] + output[3*j+2] - 1.0) < 1e-10) found = true;
+        }
+        EXPECT_TRUE(found);
+    }
+}
+
+TEST(SlabBuilderTest, SymmetricModeDoesNotAcceptBulkPeriodicityAsFiniteSymmetry) {
+    const auto lattice = make_sc(4.0);
+    const double positions[] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.5};
+    const int classes[] = {1, 2};
+    const int32_t miller[] = {0, 0, 1};
+    ColMajorMatrix3d cell = ColMajorMatrix3d::Constant(17.0);
+    std::vector<double> output(12, 23.0);
+    std::vector<int> sources(4, 29);
+    EXPECT_EQ(build_symmetric_slab(lattice.data(), positions, classes, 2, miller, 2,
+                                  18.0, 4, cell.data(), output.data(), sources.data()), -2);
+    EXPECT_EQ(cell, ColMajorMatrix3d::Constant(17.0));
+    EXPECT_EQ(output, std::vector<double>(12, 23.0));
+    EXPECT_EQ(sources, std::vector<int>(4, 29));
+    EXPECT_EQ(build_symmetric_slab(lattice.data(), positions, classes, 2, miller, 2,
+                                  18.0, 3, cell.data(), output.data(), sources.data()), 0);
+    EXPECT_EQ(output, std::vector<double>(12, 23.0));
+}

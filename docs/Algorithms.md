@@ -94,6 +94,10 @@ Miller indices refer to the current input-cell basis, including valid P1 cells. 
 
 `layers` counts periods of the gcd-reduced Miller direction, not atomic height clusters. `vacuum_a` adds to the repeat-cell height, rather than specifying the gap between outermost atoms or padding on each side of the atomic envelope. QR standardization may rotate the Cartesian frame.
 
+The optional symmetric mode (`symmetric: true`) selects a bulk cut phase using operations that reverse the requested normal. It excludes cuts through sites, preserves every input site's multiplicity and occupancy, and centers the atomic envelope without changing the added-height vacuum convention. A final species/occupancy-preserving bijection must map the finite slab onto itself while reversing its normal; only the two in-plane directions may wrap. Mirror and inversion operations are both eligible. The Cartesian matching tolerance is 1e-5 Å. The search is limited to 128 distinct cut phases and 4,000,000 candidate site comparisons.
+
+If no admissible symmetric cut is found, the operation fails without committing state. It never deletes atoms, assembles mirrored bulk fragments or falls back silently to ordinary mode. This is a structural geometry check, not a certification of electrostatic symmetry or zero dipole. Omitting the optional IPC argument retains ordinary mode.
+
 The legacy `shift_termination` command only repositions the selected height cluster at fractional z=0, wrapping the periodic cell. It does not select a different bulk termination and can split the displayed slab across the box boundary. It requires c perpendicular to a and b, a positive finite clustering tolerance, and capacity-checked layer centers.
 
 Slab changes require a real, declared regression matrix. At minimum, independently assert layer count, termination behavior, stoichiometry, shortest Cartesian separation, primitive/conventional equivalence where expected, and failure atomicity. A surprising structure is evidence to investigate, not permission to replace the algorithm from intuition alone.
