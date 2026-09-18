@@ -97,6 +97,35 @@ function isoUtcTimestamp(value, label) {
         `${label} must be a valid UTC timestamp`);
 }
 
+const BLENDER_WAIVER_081 = {
+    release_version: '0.8.1',
+    authorized_by: 'user',
+    scope: ['blender_headless_import', 'blender_gui_import'],
+    record: 'EVOLUTION.log#2026-09-18-v081-blender-validation-waiver',
+};
+
+function hasBlenderWaiver(manual, version = RELEASE_VERSION) {
+    if (!('blender_validation_waiver' in manual)) return false;
+    assert.equal(version, '0.8.1', 'Blender waiver applies only to v0.8.1');
+    assert.deepEqual(manual.blender_validation_waiver, BLENDER_WAIVER_081,
+        'Blender waiver must match the explicitly authorized scope');
+    return true;
+}
+
+function validateBlenderEntries(manual, releaseReady) {
+    const waived = hasBlenderWaiver(manual);
+    for (const name of ['blender_headless_import', 'blender_gui_import']) {
+        if (waived) {
+            assert.equal(manual[name]?.status, 'WAIVED', `${name} must disclose the waiver`);
+            nonEmptyString(manual[name].evidence, `${name}.evidence`);
+            nonEmptyString(manual[name].reason, `${name}.reason`);
+        } else {
+            requireCandidateEntry(manual[name], `manual_validation.${name}`, releaseReady);
+            if (releaseReady) assert.equal(manual[name].status, 'PASS', `${name} must pass`);
+        }
+    }
+}
+
 function validateManualAttestation(manual, featureBaselineCommit, releaseReady) {
     if (!releaseReady) return;
     nonEmptyString(manual.reviewed_by, 'manual_validation.reviewed_by');
@@ -105,8 +134,10 @@ function validateManualAttestation(manual, featureBaselineCommit, releaseReady) 
         'manual_validation.validated_feature_baseline_commit');
     assert.equal(manual.validated_feature_baseline_commit, featureBaselineCommit,
         'manual validation must bind to the declared feature baseline');
-    assert.match(manual.blender_version, /^Blender 4\.4(?:\.\d+)?\b/,
-        'manual validation must identify Blender 4.4');
+    if (!hasBlenderWaiver(manual)) {
+        assert.match(manual.blender_version, /^Blender 4\.4(?:\.\d+)?\b/,
+            'manual validation must identify Blender 4.4');
+    }
 
 }
 
@@ -219,8 +250,7 @@ function validateEvidenceShape(evidence) {
     const releaseReady = evidence.status === 'RELEASE_READY' || PUBLISH_MODE;
     requireCandidateEntry(manual.macos_intel_metal, 'manual_validation.macos_intel_metal', releaseReady);
     requireCandidateEntry(manual.macos_apple_silicon_metal, 'manual_validation.macos_apple_silicon_metal', releaseReady);
-    requireCandidateEntry(manual.blender_headless_import, 'manual_validation.blender_headless_import', releaseReady);
-    requireCandidateEntry(manual.blender_gui_import, 'manual_validation.blender_gui_import', releaseReady);
+    validateBlenderEntries(manual, releaseReady);
     nonEmptyString(manual.software_scope, 'manual_validation.software_scope');
     if (manual.macos_apple_silicon_metal.status === 'NOT_AVAILABLE') {
         assert.equal(manual.macos_apple_silicon_metal.reason, APPLE_SILICON_LIMITATION,
@@ -231,7 +261,7 @@ function validateEvidenceShape(evidence) {
         assert.equal(evidence.status, 'RELEASE_READY', 'publish mode requires RELEASE_READY evidence');
         assert.deepEqual(evidence.blockers, [], 'release blockers must be empty');
         if (manual.native_fidelity_verdict === 'NATIVE_PRIMARY') {
-            for (const name of MANUAL_GATE_NAMES) {
+            for (const name of MANUAL_GATE_NAMES.filter((name) => !name.startsWith('blender_'))) {
                 assert.equal(manual[name].status, 'PASS', `manual_validation.${name} must pass before publication`);
             }
         } else {
@@ -243,10 +273,7 @@ function validateEvidenceShape(evidence) {
                 'Apple Silicon must remain explicitly unavailable under the limited fallback');
             assert.equal(manual.macos_apple_silicon_metal.reason, APPLE_SILICON_LIMITATION,
                 'the limited fallback must not imply Apple Silicon compatibility');
-            for (const name of ['blender_headless_import', 'blender_gui_import']) {
-                assert.equal(manual[name].status, 'PASS',
-                    `manual_validation.${name} must pass under the limited fallback`);
-            }
+
         }
     } else {
         assert.ok(Array.isArray(evidence.blockers) && evidence.blockers.length > 0,
@@ -254,6 +281,37 @@ function validateEvidenceShape(evidence) {
     }
     return { manual, featureBaselineCommit: evidence.feature_baseline_commit, releaseReady };
 }
+
+test('RELEASE-2 limits the Blender waiver to the authorized v0.8.1 scope', () => {
+    const manual = { blender_validation_waiver: structuredClone(BLENDER_WAIVER_081) };
+    assert.equal(hasBlenderWaiver(manual, '0.8.1'), true);
+    for (const version of ['0.8.0', '0.8.2', '0.9.0']) {
+        assert.throws(() => hasBlenderWaiver(manual, version), /only to v0.8.1/);
+    }
+    manual.blender_validation_waiver.scope.push('macos_intel_metal');
+    assert.throws(() => hasBlenderWaiver(manual, '0.8.1'), /authorized scope/);
+    assert.equal(hasBlenderWaiver({}), false);
+    assert.throws(() => validateBlenderEntries({
+        blender_headless_import: { status: 'WAIVED', evidence: 'none', reason: 'none' },
+        blender_gui_import: { status: 'WAIVED', evidence: 'none', reason: 'none' },
+    }, true), /status/);
+});
+
+test('RELEASE-2 still blocks publication without native platform validation', async () => {
+    const evidence = await readJson(EVIDENCE_PATH);
+    evidence.status = 'RELEASE_READY';
+    evidence.blockers = [];
+    const manual = evidence.manual_validation;
+    manual.native_fidelity_verdict = 'NATIVE_PRIMARY';
+    manual.macos_intel_metal = { status: 'PENDING', evidence: 'Not reviewed', reason: 'Pending review' };
+    manual.macos_apple_silicon_metal = { status: 'PASS', evidence: 'Test-only control' };
+    if (!hasBlenderWaiver(manual)) {
+        for (const name of ['blender_headless_import', 'blender_gui_import']) {
+            manual[name] = { status: 'PASS', evidence: 'Test-only control' };
+        }
+    }
+    assert.throws(() => validateEvidenceShape(evidence), /macos_intel_metal must pass/);
+});
 
 test('RELEASE-2 rejects forged candidate evidence and stale node lineage', () => {
     assert.throws(() => validateEvidenceShape({}), /schema|release_version|feature_baseline_commit/i);

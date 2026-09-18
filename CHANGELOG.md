@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Validation scope
 
+- Blender headless and GUI validation are explicitly waived for this slab-only v0.8.1 patch. Blender compatibility is not newly certified; subsequent releases retain their validation requirements.
+
 - Regression coverage targets software geometry, metadata preservation and buffer safety under the explicitly authorized bounded exception. It does not certify material-specific surfaces or physical correctness.
 
 ## [0.8.0] - 2026-08-11

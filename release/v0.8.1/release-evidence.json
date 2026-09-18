@@ -1,0 +1,102 @@
+{
+  "schema_version": 2,
+  "release_version": "0.8.1",
+  "status": "RELEASE_CANDIDATE",
+  "blockers": [
+    "Current-candidate native desktop review and platform validation remain pending; Blender gates are explicitly waived for v0.8.1 only."
+  ],
+  "feature_baseline_commit": "c02ef636aa2c7504c9753a1f0f00ae35abc815ea",
+  "nodes": {
+    "FIELD-1": {
+      "status": "APPROVED",
+      "implementation_commits": [
+        "eca34cbf9a16ba1ccd8934c4939928e07b49f98c"
+      ]
+    },
+    "FIGURE-2": {
+      "status": "APPROVED",
+      "implementation_commits": [
+        "9601191d03e0dc5f4a5df7006b542b42d285af49",
+        "a050e66792ccbfe5dcee343efe9903609139dacb",
+        "f0fe699ec031339f8b60df29533f01868fb64fac"
+      ]
+    },
+    "DELIVERY-2": {
+      "status": "APPROVED",
+      "implementation_commits": [
+        "ff87b4f7e3dbd7b392dc6782429912e056d19eed"
+      ]
+    }
+  },
+  "required_standard_gates": [
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test_all_targets",
+    "cpp_ctest",
+    "pnpm_install_frozen",
+    "ipc_inventory",
+    "ipc_contract",
+    "ipc_tests",
+    "typescript",
+    "frontend_build",
+    "diff_check",
+    "clean_worktree"
+  ],
+  "manual_validation": {
+    "native_fidelity_verdict": "PENDING",
+    "macos_intel_metal": {
+      "status": "PENDING",
+      "evidence": "Current-candidate Intel/Metal hidden-window SYNC smoke passed (exit 0); v0.8.1 x86_64 app bundle built. Visual/manual review remains pending.",
+      "reason": "Requires current-candidate validation; v0.8.0 attestation is not reused."
+    },
+    "macos_apple_silicon_metal": {
+      "status": "PENDING",
+      "evidence": "No v0.8.1 candidate validation recorded yet.",
+      "reason": "Requires current-candidate validation; v0.8.0 attestation is not reused."
+    },
+    "blender_headless_import": {
+      "status": "WAIVED",
+      "evidence": "User explicitly authorized a v0.8.1-only Blender validation waiver; see EVOLUTION.log. Prior sandbox run crashed during Blender GPU initialization; normal-permission retry was not executed.",
+      "reason": "Slab-only patch; Blender export implementation is unchanged. No Blender validation PASS is claimed."
+    },
+    "blender_gui_import": {
+      "status": "WAIVED",
+      "evidence": "User explicitly authorized a v0.8.1-only Blender validation waiver; see EVOLUTION.log.",
+      "reason": "Slab-only patch; Blender export implementation is unchanged. No Blender validation PASS is claimed."
+    },
+    "software_scope": "Software geometry, source-site metadata, buffer safety, renderer and export contracts only. Not a physical validation of materials, surfaces or scalar fields.",
+    "blender_validation_waiver": {
+      "release_version": "0.8.1",
+      "authorized_by": "user",
+      "scope": [
+        "blender_headless_import",
+        "blender_gui_import"
+      ],
+      "record": "EVOLUTION.log#2026-09-18-v081-blender-validation-waiver"
+    }
+  },
+  "artifacts": [
+    {
+      "kind": "raster",
+      "validation_scope": "software_contract",
+      "identity": "software-contract-raster",
+      "path": "release/v0.8.1/artifacts/software-contract-raster.png",
+      "sha256": "05170368cb8970a1d20333e3c77ca8bd9b31f67b6e375c30e278d32b066f8ec4",
+      "sidecar_path": "release/v0.8.1/artifacts/software-contract-raster.crystalcanvas.json",
+      "sidecar_sha256": "59fa696cbea3c3a069cfb2774f115f7518bdcecd3c9d547051b55738524e79a8",
+      "commit_path": "release/v0.8.1/artifacts/software-contract-raster.crystalcanvas.commit.json",
+      "commit_sha256": "4608650a85d8c8ed0f649ea5eca0a817cb4f2405bf58095097b244c160b1200e"
+    },
+    {
+      "kind": "glb",
+      "validation_scope": "software_contract",
+      "identity": "0fa4f724f56275796f36a7ee65e27ff3890efd737a7685836d00ff12b59c5c97-1789701594460",
+      "path": "release/v0.8.1/artifacts/software-contract-field.glb",
+      "sha256": "ebddc2ccbef485970e1802f4b44018b738c13c4ee1d87264e94f62df1317903a",
+      "sidecar_path": "release/v0.8.1/artifacts/software-contract-field.crystalcanvas.json",
+      "sidecar_sha256": "7d557eb74bec322c82e1e515e3730b0ec28b0c069bc9a942194b6131840e119a",
+      "commit_path": "release/v0.8.1/artifacts/software-contract-field.crystalcanvas.commit.json",
+      "commit_sha256": "140874f72429b7e6a319b70b0bc30b5413af577ab8e319d5eb8a50eab9f715c6"
+    }
+  ]
+}

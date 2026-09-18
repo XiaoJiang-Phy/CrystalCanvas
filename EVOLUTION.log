@@ -58,3 +58,11 @@
 - **Evidence condition**: The prior registered structure preflight remains NOT_AUDITABLE/INDETERMINATE; this exception does not change it to PASS.
 - **Risk and impact**: Software invariants and regressions do not establish material-specific surface validity, stoichiometry, polarity, relaxation, or physical correctness.
 - **Authorization boundary**: Limited to the described software repairs and regression execution. Existing software tests and release gates remain mandatory; no physical certification or publication-gate waiver is granted.
+
+## 2026-09-18-v081-blender-validation-waiver
+
+- **Authorized by**: user, explicit instruction: “v0.8.1 补丁版限定豁免 Blender 验证”.
+- **Scope**: v0.8.1 only: waive Blender headless and GUI validation for the slab-correctness patch. These gates are recorded as WAIVED, never PASS. Later versions retain the original requirements.
+- **Reason and evidence**: This patch does not change the Blender exporter. New version-bound GLB/raster artifact triplets and export-contract checks remain required. The attempted Blender 4.4 headless run crashed during GPU initialization; an unsandboxed retry was not executed after automatic approval-service rejection.
+- **Risk and impact**: Blender import compatibility of the v0.8.1 candidate has not been established by this run.
+- **Authorization boundary**: No waiver of Rust/C++/IPC/build checks, native platform review, artifact integrity, clean-worktree checks, or physical validation requirements.
