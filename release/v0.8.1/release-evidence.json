@@ -6,7 +6,7 @@
     "Visual retest of the rebuilt symmetric-mode candidate is pending.",
     "Apple Silicon is unavailable; no compatibility claim is supported."
   ],
-  "feature_baseline_commit": "c02ef636aa2c7504c9753a1f0f00ae35abc815ea",
+  "feature_baseline_commit": "eaaaa847e6830d567995896432fa823b13c53983",
   "nodes": {
     "FIELD-1": {
       "status": "APPROVED",
